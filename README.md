@@ -1,280 +1,96 @@
-# TSFM-FAIS
+# 工作2：面向下游预测效用的填补策略选择
 
-## 题目方向
+## 1. 题目备选
 
-本仓库对应工作 3：**面向下游预测效用的填补策略选择**。
+中文题目可以考虑：面向时序基础模型预测效用的缺失填补策略选择；FAIS：面向时序基础模型的预测感知填补器选择；从固定填补到场景化选择：面向 TSFM 的时序缺失修复策略推荐；面向下游预测的时序缺失填补选择；无统一最优填补器：面向 TSFM 的下游效用感知填补决策。
 
-推荐题目：
+英文题目可以考虑：Forecast-Aware Imputer Selection for Time Series Foundation Models；FAIS: Forecast-Aware Imputer Selection for TSFM Forecasting；Downstream-Aware Imputation Selection for Time Series Foundation Models；Choosing the Right Imputer for Foundation Model Forecasting；Scenario-Aware Imputation Strategy Selection for Time Series Foundation Models。
 
-- **Forecast-Aware Imputer Selection for Time Series Foundation Models**
-- **No One-Size-Fits-All: Downstream-Aware Imputation Selection for TSFMs**
-- **FAIS: Forecast-Aware Imputer Selection for Time Series Foundation Model Forecasting**
-- **Choosing the Right Imputer for Foundation Model Forecasting**
+## 2. 论文定位
 
-中文题目备选：
+工作2建议作为第二篇推进。它可以最大程度复用工作1的实验结果，技术风险低于直接提出新填补器，并且有明确独立性。它的核心问题是：给定数据结构、缺失模式和目标 TSFM，应该选择哪个填补策略才能获得较低的下游预测风险。由于 TimesFM、Chronos、Sundial 等模型的输入处理和预测输出形式存在差异，固定采用某一个填补方法很难成为稳健的部署策略。([Proceedings of Machine Learning Research][1])
 
-- **面向时序基础模型预测效用的缺失填补策略选择**
-- **没有统一最佳填补器：面向 TSFM 的下游效用感知填补选择**
-- **FAIS：面向时序基础模型的预测感知填补器选择**
-- **面向下游预测的时序缺失修复策略推荐**
-- **从固定填补到场景化选择：面向 TSFM 的 imputer selection**
+## 3. 一句话背景与意义
 
-## 三句话总结
+不同数据域、缺失几何和目标 TSFM 下的最优填补器并不稳定，真实部署中固定使用单一填补策略容易产生不可控的下游预测风险。
 
-| 项目 | 内容 |
-| --- | --- |
-| 背景精华 | 固定使用某个填补方法不符合 TSFM 部署实际，因为最佳填补器会随数据结构、缺失形态和目标模型变化。 |
-| 最突出贡献 | 提出 `FAIS`，把填补器选择从经验规则变成面向下游预测效用的 model-aware、data-aware 决策问题。 |
-| 计算问题 | 上下文排序或最小 regret 选择，即预测各候选填补器在当前场景下的 forecast degradation 并选择最低风险方案。 |
+## 4. 一句话方法亮点与方法概述
 
-## 论文定位
+本文将填补策略选择形式化为场景条件下的最小 regret 决策问题，并利用数据结构特征、缺失几何特征、候选填补器代理扰动和目标 TSFM 信息预测各填补器的下游风险。
 
-本工作是一篇选择/决策论文。它不提出新的填补器，而是解决：
+## 5. 核心研究问题
 
-> 给定数据结构、缺失模式和目标 TSFM，应该选择哪个填补策略才能获得最小下游预测退化？
+RQ1：是否存在跨模型、跨数据集、跨缺失率稳定最优的填补器。
 
-动机来自已有发现：不同 TSFM、数据域和缺失条件下不存在统一最佳填补器。`linear` 通常稳健，但并不总是最优；`mean` 平均风险较高，但在 `visiontspp` 等模型上可能通过强平滑获得收益。因此，真实部署中更合理的做法不是固定使用某个填补器，而是根据场景进行选择。
+RQ2：数据结构特征和缺失几何特征能否预测最佳填补器。
 
-本工作与其他并行工作的边界：
+RQ3：候选填补器的代理结构扰动能否提升选择效果。
 
-- 不做工作 1 的机制分析，只使用其结构特征和退化结果作为选择依据。
-- 不做工作 2 的新填补器，只把 `SPImpute` 当成可选候选方法。
-- 不做工作 4 的多重填补和不确定性传播，只选择一个或一类策略。
+RQ4：selector 相比固定 linear 或固定平均最优方法，能否降低 downstream regret。
 
-## 核心研究问题
+## 6. 任务形式化
 
-1. `RQ1`：是否存在跨模型、跨数据集稳定最优的填补器？
-2. `RQ2`：数据结构特征和缺失几何特征能否预测最佳填补器？
-3. `RQ3`：候选填补器的代理结构扰动能否提升选择效果？
-4. `RQ4`：selector 相比固定 `linear` 或固定最佳平均方法，能否降低 downstream regret？
+定义场景为
 
-## 方法名称
+[
+s=(D,v,f,p,r,L,g,M),
+]
 
-建议使用：
+其中 (D) 表示数据集或数据域，(v) 表示变量，(f) 表示采样频率，(p) 表示缺失模式，(r) 表示缺失率，(L) 表示块长，(g) 表示缺失几何特征，(M) 表示目标 TSFM。候选填补器集合可以定义为
 
-```text
-FAIS: Forecast-Aware Imputer Selection
-```
+[
+\mathcal{I}={\text{mean},\text{forward},\text{backward},\text{linear},\text{seasonal},\text{Kalman},\text{native}}.
+]
 
-## 任务形式化
+目标是选择
 
-定义场景：
+[
+i^*(s)=\arg\min_{i\in\mathcal{I}}\Delta_{\text{forecast}}(i\mid s),
+]
 
-```text
-scenario = (dataset, variate, frequency, missing_pattern, missing_ratio, block_length, target_TSFM)
-```
+其中 (\Delta_{\text{forecast}}) 表示相对于 clean prediction 的下游损失增加。主评价指标应采用 regret：
 
-候选填补器集合：
+[
+\text{regret}(s)
+================
 
-```text
-I = {mean, forward, backward, linear, seasonal, Kalman, native}
-```
+## \Delta_{\text{forecast}}(\hat{i}\mid s)
 
-可扩展：
+\min_{i\in\mathcal{I}}\Delta_{\text{forecast}}(i\mid s).
+]
 
-```text
-I = I + {SPImpute, multiple-imputation}
-```
+这种定义比单纯分类准确率更符合实际使用，因为选择器即使没有选中 oracle best，只要选中的方法性能接近 oracle best，实际风险也较低。
 
-目标：
+## 7. 特征设计
 
-```text
-select i* = argmin_i ForecastDegradation(i | scenario)
-```
+数据结构特征包括趋势强度、趋势线性、季节强度、季节相关、残差自相关、谱熵、ADF 平稳性、主周期估计、序列长度和采样频率。缺失几何特征包括缺失率、最大块长、平均块长、块数量、最后一个缺失块到预测起点的距离、缺失是否靠近 context 尾部、缺失块占主周期比例。候选填补器代理特征包括 pseudo-mask reconstruction error、structure drift、smoothness change、low-frequency energy change、boundary discontinuity 和 observed-position distortion。模型特征包括 TSFM one-hot、context length、输出类型、是否支持 native missing，以及是否输出样本或分位数。
 
-标签来自已有预测结果：
+其中，候选填补器代理特征是工作2的关键。选择器不应只看原始数据和缺失模式，还应看每个候选填补器会怎样改变数据结构。这样可以把工作1中的机制变量转化为可用于决策的输入特征。
 
-- 预测 MSE 最优填补器。
-- 预测 sMAPE 最优填补器。
-- 相对 clean 退化最小填补器。
+## 8. 方法路线
 
-## 特征设计
+第一层是 rule-based selector，用于提供可解释基线。例如，强季节且块长接近主周期时优先考虑 seasonal 或 Kalman；序列平滑且缺失块较短时优先考虑 linear；目标模型对平滑输入更敏感时可以考虑 mean 或强平滑策略。
 
-### 数据结构特征
+第二层是 classifier selector，将每个 scenario 的最佳填补器作为类别标签，使用 logistic regression、random forest 或 XGBoost 预测最优方法。该路线实现简单，但容易忽略不同错误选择之间的代价差异。
 
-- 趋势强度
-- 趋势线性
-- 季节强度
-- 季节相关
-- 残差自相关
-- 谱熵
-- ADF 平稳性
-- 主周期估计
-- 序列长度
-- 采样频率
+第三层是 ranker selector，建议作为主方法。它以 scenario features、imputer proxy features 和 model features 为输入，预测每个候选填补器的 forecast degradation，再选择预测风险最低的方法。可选模型包括 RandomForestRegressor、XGBoostRegressor、LightGBM ranker 和 ElasticNet。ElasticNet 可以作为解释性基线，树模型可以作为主实验方法。
 
-### 缺失几何特征
+## 9. 数据切分
 
-- 缺失率
-- 最大块长
-- 平均块长
-- 块数量
-- 最后一个缺失块到预测起点的距离
-- 缺失是否靠近 context 尾部
-- 缺失块占主周期比例
+工作2必须避免随机行切分，因为随机切分容易让相似数据集、相似缺失率和相同模型同时出现在训练集和测试集中，从而高估选择器能力。主文至少报告 leave-dataset-out，附录可以报告 leave-model-out 和 leave-ratio-out。leave-dataset-out 用于验证跨数据域泛化，leave-model-out 用于验证对新 TSFM 的迁移能力，leave-ratio-out 用于验证对新缺失强度的稳健性。
 
-### 候选填补器代理特征
+## 10. 实验设计与评价指标
 
-对每个 imputer 先计算：
+主实验候选填补器可以先使用 mean、forward、backward、linear、seasonal、Kalman 和 native。后续可以把工作3的 SPImpute 作为扩展候选加入，但工作2主文不应依赖工作3。主评价指标为 regret、gain versus linear、top-2 hit、best-10% hit、低风险率和 selector stability。低风险率可以定义为选择结果的预测损失不超过 oracle best 某一阈值的比例，例如 10%。
 
-- pseudo-mask reconstruction error
-- structure drift
-- smoothness change
-- low-frequency energy change
-- observed-position distortion
+## 11. 主图设计
 
-这部分是 `FAIS` 的关键。选择器不是只看数据，也看每个候选填补器会怎样改变数据。
+主图可以包括 FAIS 框架图；linear default、average-best、rule selector、classifier selector、ranker selector 和 oracle 的 regret 对比图；leave-dataset-out 结果表；特征重要性图；固定 linear 失败但 selector 成功的 case study。
 
-### 模型特征
+## 12. 与其他工作的边界
 
-- TSFM one-hot
-- context length
-- 输出类型：点预测、分位数、采样
-- 是否支持 native missing
+工作2不提出新填补器，也不研究多重填补。它的贡献是将已有填补器的使用从固定策略转化为场景化选择，并用 regret 度量选择结果的下游代价。它可以利用工作1的结构漂移指标，也可以在扩展实验中加入工作3的方法，但工作2本身应独立成立。
 
-## 方法路线
+## 13. 最小可发表版本
 
-### Rule-based Selector
-
-可解释规则：
-
-```text
-if target_model == visiontspp and sequence is noisy:
-    prefer mean or strong smoothing
-elif seasonality is strong and block_length >= 0.5P:
-    prefer seasonal or structure-preserving imputation
-else:
-    prefer linear
-```
-
-作为 baseline 和解释工具。
-
-### Classifier Selector
-
-多分类：
-
-```text
-input: scenario features
-label: best imputer
-model: logistic regression / random forest / XGBoost
-```
-
-### Ranker Selector
-
-主方法建议用 ranker：
-
-```text
-input: scenario features + imputer proxy features + model features
-output: predicted degradation
-select imputer with minimum predicted degradation
-```
-
-可用模型：
-
-- `RandomForestRegressor`
-- `XGBoostRegressor`
-- `LightGBM ranker`
-- `ElasticNet` 作为解释性 baseline
-
-## 数据切分
-
-避免随机行切分，必须做更严格切分：
-
-1. `leave-dataset-out`
-2. `leave-model-out`
-3. `leave-ratio-out`
-
-主文至少报告 `leave-dataset-out`。如果要证明泛化能力更强，可以额外报告 `leave-model-out`。
-
-## 评价指标
-
-不要只看分类准确率，主指标应当是 regret：
-
-```text
-regret = degradation(selected) - degradation(oracle_best)
-```
-
-其他指标：
-
-- `gain_vs_linear`
-- top-2 hit
-- best-10% hit
-- 低风险率：预测退化不超过 10% 的比例
-- selector 稳定性
-
-## 实验设计
-
-### 候选填补器
-
-最小候选集：
-
-- `mean`
-- `forward`
-- `backward`
-- `linear`
-- `seasonal`
-
-增强候选集：
-
-- `Kalman`
-- `native`
-- `SPImpute`
-- multiple-imputation summary strategy
-
-为了并行投稿，主实验可以先用已有 imputer；`SPImpute` 和 multiple imputation 作为扩展候选，不作为本文成立的必要条件。
-
-### TSFM 模型
-
-建议至少包含：
-
-- `chronos2`
-- `timesfm2p5`
-- `sundial`
-- `visiontspp`
-
-如果已有结果允许，可加入：
-
-- `timesfm2p0`
-- `kairos23m`
-- `kairos50m`
-
-### 缺失设置
-
-主实验：
-
-- `BM`
-- `length50`
-- `10% / 20% / 30%`
-
-扩展实验：
-
-- 尾部缺失
-- 相对块长 `0.5P / 1P / 2P`
-
-## 主图设计
-
-1. `FAIS` 框架图。
-2. `linear default / average-best / rule / classifier / ranker / oracle` 的 regret 对比。
-3. leave-dataset-out 结果表。
-4. 特征重要性图。
-5. case study：固定 `linear` 失败但 selector 成功的场景。
-
-## 最小可发表版本
-
-最小版本：
-
-- 候选：`mean / forward / backward / linear / seasonal`
-- 特征：数据结构 + 缺失几何 + TSFM one-hot + imputer proxy drift
-- 方法：rule + random forest ranker
-- 切分：leave-dataset-out
-- 指标：regret + gain_vs_linear
-
-## 风险与备选
-
-| 风险 | 备选 |
-| --- | --- |
-| selector 准确率不高 | 改用 regret 指标，只要推荐方法接近 oracle 即可 |
-| leave-model-out 太难 | 主文报告 leave-dataset-out，leave-model-out 放附录 |
-| 特征过多导致解释困难 | 做特征分组消融和特征重要性分析 |
-| 固定 linear 已很强 | 强调 selector 降低尾部风险和极端退化 |
-
+最小版本可以包括 mean、forward、backward、linear 和 seasonal 五类候选填补器，使用数据结构、缺失几何、TSFM one-hot 和 imputer proxy drift 作为特征，方法上实现 rule selector 和 random forest ranker，切分采用 leave-dataset-out，指标报告 regret 和 gain versus linear。
