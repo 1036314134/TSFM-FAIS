@@ -1,0 +1,23 @@
+schema_version: 1
+imputers:
+  - {id: locf, family: persistence, mode: per_channel, fit_scope: none, supports_tail: true, requires_period: false, stochastic: false, device: cpu, cost_tier: 1}
+  - {id: linear_interp, family: interpolation, mode: per_channel, fit_scope: none, supports_tail: false, requires_period: false, stochastic: false, device: cpu, cost_tier: 1}
+  - {id: seasonal_lag, family: seasonal, mode: per_channel, fit_scope: none, supports_tail: true, requires_period: true, stochastic: false, device: cpu, cost_tier: 1}
+  - {id: kalman_local_trend, family: state_space, mode: per_channel, fit_scope: none, supports_tail: true, requires_period: false, stochastic: false, device: cpu, cost_tier: 2}
+  - {id: kalman_ar, family: state_space, mode: per_channel, fit_scope: none, supports_tail: true, requires_period: false, stochastic: false, device: cpu, cost_tier: 2}
+  - {id: stl_kalman, family: decomposition, mode: per_channel, fit_scope: none, supports_tail: true, requires_period: true, stochastic: false, device: cpu, cost_tier: 2}
+  - {id: gp_rbf, family: gaussian_process, mode: per_channel, fit_scope: none, supports_tail: true, requires_period: false, stochastic: false, device: cpu, cost_tier: 3}
+  - {id: knn_multivariate, family: neighbor, mode: joint_multivariate, fit_scope: dataset, supports_tail: true, requires_period: false, stochastic: false, device: cpu, cost_tier: 2}
+  - {id: mice, family: chained_regression, mode: joint_multivariate, fit_scope: dataset, supports_tail: true, requires_period: false, stochastic: true, device: cpu, cost_tier: 2}
+  - {id: missforest, family: forest, mode: joint_multivariate, fit_scope: dataset, supports_tail: true, requires_period: false, stochastic: true, device: cpu, cost_tier: 3}
+  - {id: softimpute, family: low_rank, mode: joint_multivariate, fit_scope: dataset, supports_tail: true, requires_period: false, stochastic: false, device: cpu, cost_tier: 2}
+  - {id: trmf, family: low_rank_temporal, mode: joint_multivariate, fit_scope: dataset, supports_tail: true, requires_period: false, stochastic: true, device: cpu, cost_tier: 3, optional_extra: deep-imputers}
+  - {id: brits, family: recurrent, mode: joint_multivariate, fit_scope: dataset, supports_tail: false, requires_period: false, stochastic: true, device: any, cost_tier: 3, optional_extra: deep-imputers}
+  - {id: gpvae, family: probabilistic_latent, mode: joint_multivariate, fit_scope: dataset, supports_tail: true, requires_period: false, stochastic: true, device: any, cost_tier: 4, optional_extra: deep-imputers}
+  - {id: saits, family: attention, mode: joint_multivariate, fit_scope: dataset, supports_tail: true, requires_period: false, stochastic: true, device: any, cost_tier: 3, optional_extra: deep-imputers}
+  - {id: csdi, family: diffusion, mode: joint_multivariate, fit_scope: dataset, supports_tail: true, requires_period: false, stochastic: true, device: any, cost_tier: 5, optional_extra: deep-imputers}
+  - {id: imputeformer, family: spatiotemporal_attention, mode: joint_multivariate, fit_scope: dataset, supports_tail: true, requires_period: false, stochastic: true, device: any, cost_tier: 4, optional_extra: deep-imputers}
+  - {id: helix, family: cross_dimensional, mode: joint_multivariate, fit_scope: dataset, supports_tail: true, requires_period: false, stochastic: true, device: any, cost_tier: 4, optional_extra: deep-imputers}
+  - {id: timemixerpp, family: multiscale, mode: joint_multivariate, fit_scope: dataset, supports_tail: true, requires_period: false, stochastic: true, device: any, cost_tier: 4, optional_extra: deep-imputers}
+  - {id: totem, family: tokenized, mode: joint_multivariate, fit_scope: dataset, supports_tail: true, requires_period: false, stochastic: true, device: any, cost_tier: 4, optional_extra: deep-imputers}
+

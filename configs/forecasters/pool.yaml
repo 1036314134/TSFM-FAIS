@@ -1,0 +1,8 @@
+schema_version: 1
+forecasters:
+  - {id: chronos2, mode: joint_multivariate, model_name: amazon/chronos-2, max_context: 8192, output_type: quantile, optional_extra: forecast-chronos}
+  - {id: timesfm2p5, mode: independent_univariate, model_name: google/timesfm-2.5-200m-pytorch, max_context: 4096, output_type: quantile, optional_extra: forecast-timesfm}
+  - {id: chronosbolt, mode: independent_univariate, model_name: amazon/chronos-bolt-base, max_context: 2048, output_type: quantile, optional_extra: forecast-chronos}
+  - {id: sundial, mode: independent_univariate, model_name: thuml/sundial-base-128m, max_context: 2880, output_type: sample, optional_extra: forecast-sundial}
+  - {id: tirex, mode: independent_univariate, model_name: NX-AI/TiRex, max_context: 2048, output_type: quantile, optional_extra: forecast-tirex}
+

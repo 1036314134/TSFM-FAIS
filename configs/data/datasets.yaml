@@ -1,0 +1,39 @@
+schema_version: 1
+data_root: ../../../TSFM-SPImpute/data/Origin
+datasets:
+  # Complete multivariate CSV releases.
+  - {dataset_id: electricity, family_id: electricity, format: csv, path: csv/electricity.csv, frequency: H, period: 24, domain: energy, timestamp_column: date, expected_num_variates: 321, provenance: release_complete}
+  - {dataset_id: ETTh1, family_id: ett, format: csv, path: csv/ETTh1.csv, frequency: H, period: 24, domain: energy, timestamp_column: date, expected_num_variates: 7, provenance: release_complete}
+  - {dataset_id: ETTh2, family_id: ett, format: csv, path: csv/ETTh2.csv, frequency: H, period: 24, domain: energy, timestamp_column: date, expected_num_variates: 7, provenance: release_complete}
+  - {dataset_id: ETTm1, family_id: ett, format: csv, path: csv/ETTm1.csv, frequency: 15T, period: 96, domain: energy, timestamp_column: date, expected_num_variates: 7, provenance: release_complete}
+  - {dataset_id: ETTm2, family_id: ett, format: csv, path: csv/ETTm2.csv, frequency: 15T, period: 96, domain: energy, timestamp_column: date, expected_num_variates: 7, provenance: release_complete}
+  - {dataset_id: exchange_rate, family_id: exchange_rate, format: csv, path: csv/exchange_rate.csv, frequency: D, period: 7, domain: finance, timestamp_column: date, expected_num_variates: 8, provenance: release_complete}
+  - {dataset_id: national_illness, family_id: national_illness, format: csv, path: csv/national_illness.csv, frequency: W, period: 52, domain: healthcare, timestamp_column: date, expected_num_variates: 7, provenance: release_complete}
+  - {dataset_id: traffic, family_id: traffic, format: csv, path: csv/traffic.csv, frequency: H, period: 24, domain: transport, timestamp_column: date, expected_num_variates: 21, provenance: release_complete}
+
+  # Arrow IPC snapshots. Each row remains an independent multivariate item.
+  - {dataset_id: azure2019_D_5T, family_id: azure2019, format: arrow, path: arrow/azure2019_D/5T, frequency: 5T, period: 288, domain: computing, expected_num_variates: 3, allow_implicit_regular_time: true}
+  - {dataset_id: azure2019_I_5T, family_id: azure2019, format: arrow, path: arrow/azure2019_I/5T, frequency: 5T, period: 288, domain: computing, expected_num_variates: 3, allow_implicit_regular_time: true}
+  - {dataset_id: azure2019_U_5T, family_id: azure2019, format: arrow, path: arrow/azure2019_U/5T, frequency: 5T, period: 288, domain: computing, expected_num_variates: 3, allow_implicit_regular_time: true}
+  - {dataset_id: Coastal_T_S_15T, family_id: coastal_ts, format: arrow, path: arrow/Coastal_T_S/15T, frequency: 15T, period: 96, domain: nature, expected_num_variates: 3, allow_implicit_regular_time: true}
+  - {dataset_id: Coastal_T_S_20T, family_id: coastal_ts, format: arrow, path: arrow/Coastal_T_S/20T, frequency: 20T, period: 72, domain: nature, expected_num_variates: 3, allow_implicit_regular_time: true}
+  - {dataset_id: Coastal_T_S_H, family_id: coastal_ts, format: arrow, path: arrow/Coastal_T_S/H, frequency: H, period: 24, domain: nature, expected_num_variates: 3, allow_implicit_regular_time: true}
+  - {dataset_id: current_velocity_5T, family_id: current_velocity, format: arrow, path: arrow/current_velocity/5T, frequency: 5T, period: 288, domain: nature, expected_num_variates: 6, allow_implicit_regular_time: true}
+  - {dataset_id: current_velocity_15T, family_id: current_velocity, format: arrow, path: arrow/current_velocity/15T, frequency: 15T, period: 96, domain: nature, expected_num_variates: 6, allow_implicit_regular_time: true}
+  - {dataset_id: current_velocity_20T, family_id: current_velocity, format: arrow, path: arrow/current_velocity/20T, frequency: 20T, period: 72, domain: nature, expected_num_variates: 6, allow_implicit_regular_time: true}
+  - {dataset_id: current_velocity_H, family_id: current_velocity, format: arrow, path: arrow/current_velocity/H, frequency: H, period: 24, domain: nature, expected_num_variates: 6, allow_implicit_regular_time: true}
+  - {dataset_id: EWELD_Load_15T, family_id: eweld_load, format: arrow, path: arrow/EWELD_Load/15T, frequency: 15T, period: 96, domain: energy, expected_num_variates: 10, allow_implicit_regular_time: true}
+  - {dataset_id: Housing_Inventory_M, family_id: housing_inventory, format: arrow, path: arrow/Housing_Inventory/M, frequency: M, period: 12, domain: economics, expected_num_variates: 4, allow_implicit_regular_time: true}
+  - {dataset_id: Job_Claims_W, family_id: job_claims, format: arrow, path: arrow/Job_Claims/W, frequency: W, period: 52, domain: economics, expected_num_variates: 2, allow_implicit_regular_time: true}
+  - {dataset_id: JOLTS_M, family_id: jolts, format: arrow, path: arrow/JOLTS/M, frequency: M, period: 12, domain: economics, expected_num_variates: 6, allow_implicit_regular_time: true}
+  - {dataset_id: NE_China_Wind_H, family_id: ne_china_wind, format: arrow, path: arrow/NE_China_Wind/H, frequency: H, period: 24, domain: energy, expected_num_variates: 4, allow_implicit_regular_time: true}
+  - {dataset_id: OpenElectricity_NEM_5T, family_id: openelectricity_nem, format: arrow, path: arrow/OpenElectricity_NEM/5T, frequency: 5T, period: 288, domain: energy, expected_num_variates: 10, allow_implicit_regular_time: true}
+  - {dataset_id: Port_Activity_D, family_id: port_activity, format: arrow, path: arrow/Port_Activity/D, frequency: D, period: 7, domain: transport, expected_num_variates: 2, allow_implicit_regular_time: true}
+  - {dataset_id: Port_Activity_W, family_id: port_activity, format: arrow, path: arrow/Port_Activity/W, frequency: W, period: 52, domain: transport, expected_num_variates: 2, allow_implicit_regular_time: true}
+  - {dataset_id: Supply_Chain_Customer_D, family_id: supply_chain, format: arrow, path: arrow/Supply_Chain_Customer/D, frequency: D, period: 7, domain: transport, expected_num_variates: 36, allow_implicit_regular_time: true}
+  - {dataset_id: Supply_Chain_Location_D, family_id: supply_chain, format: arrow, path: arrow/Supply_Chain_Location/D, frequency: D, period: 7, domain: transport, expected_num_variates: 51, allow_implicit_regular_time: true}
+  - {dataset_id: Uncertainty_1M_M, family_id: uncertainty, format: arrow, path: arrow/Uncertainty_1M/M, frequency: M, period: 12, domain: economics, expected_num_variates: 3, allow_implicit_regular_time: true}
+  - {dataset_id: US_Labor_M, family_id: us_labor, format: arrow, path: arrow/US_Labor/M, frequency: M, period: 12, domain: economics, expected_num_variates: 14, allow_implicit_regular_time: true}
+  - {dataset_id: Vehicle_Sales_M, family_id: vehicle, format: arrow, path: arrow/Vehicle_Sales/M, frequency: M, period: 12, domain: economics, expected_num_variates: 10, allow_implicit_regular_time: true}
+  - {dataset_id: Vehicle_Supply_M, family_id: vehicle, format: arrow, path: arrow/Vehicle_Supply/M, frequency: M, period: 12, domain: economics, expected_num_variates: 6, allow_implicit_regular_time: true}
+

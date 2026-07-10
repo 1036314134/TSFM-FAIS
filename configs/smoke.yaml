@@ -1,0 +1,20 @@
+schema_version: 1
+seed: 20260710
+registries:
+  data_manifest: data/datasets.yaml
+  imputer_registry: imputers/pool.yaml
+  forecaster_registry: forecasters/pool.yaml
+  router_config: router/block_fais.yaml
+experiment:
+  split: rolling_origin
+  context_length: 48
+  horizon: 8
+  target_indices: all
+  missing_mechanisms: [independent_block, tail_mixed]
+  missing_rates: [0.2]
+  seeds: [20260710]
+runtime:
+  output_root: ../artifacts
+  device: cpu
+  fail_fast: true
+

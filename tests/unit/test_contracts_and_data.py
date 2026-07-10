@@ -1,0 +1,418 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+import numpy as np
+import pandas as pd
+import pyarrow as pa
+import pytest
+import yaml
+from pydantic import ValidationError
+
+from tsfm_fais.config import ExperimentConfig, load_config
+from tsfm_fais.contracts import BudgetSpec, ForecastSpec, SeriesBatch, TimeSeriesItem
+from tsfm_fais.data.audit import audit_dataset
+from tsfm_fais.data.catalog import DatasetManifest, DatasetSpec, load_manifest
+from tsfm_fais.data.episodes import build_episode, rolling_origins
+from tsfm_fais.data.loaders import load_arrow, load_csv
+from tsfm_fais.data.masking import MaskingSpec, inject_missing
+from tsfm_fais.data.splits import family_folds
+
+
+def _item(length: int = 64, dimensions: int = 3) -> TimeSeriesItem:
+    time = np.arange(length, dtype=float)
+    values = np.stack([time + index for index in range(dimensions)], axis=1)
+    return TimeSeriesItem(
+        item_id="toy",
+        values=values,
+        variate_names=tuple(f"v{index}" for index in range(dimensions)),
+        start=pd.Timestamp("2026-01-01"),
+        freq="H",
+        timestamps=pd.date_range("2026-01-01", periods=length, freq="h"),
+        metadata={"period": 24},
+    )
+
+
+def test_series_batch_normalizes_missing_values_to_nan():
+    values = np.arange(18, dtype=float).reshape(1, 6, 3)
+    mask = np.ones_like(values, dtype=bool)
+    mask[:, 2:4, 1] = False
+    batch = SeriesBatch(values, mask)
+    assert np.isnan(batch.values[:, 2:4, 1]).all()
+    assert np.isfinite(batch.values[batch.observed_mask]).all()
+
+
+def test_csv_loader_preserves_all_multivariate_columns_and_items(tmp_path):
+    path = tmp_path / "toy.csv"
+    frame = pd.DataFrame(
+        {
+            "item": ["a"] * 4 + ["b"] * 4,
+            "timestamp": list(pd.date_range("2026-01-01", periods=4, freq="h")) * 2,
+            "x": np.arange(8),
+            "y": np.arange(8) + 10,
+            "z": np.arange(8) + 20,
+        }
+    )
+    frame.to_csv(path, index=False)
+    spec = DatasetSpec(
+        dataset_id="toy",
+        family_id="toy",
+        format="csv",
+        path=path,
+        frequency="H",
+        period=24,
+        timestamp_column="timestamp",
+        item_id_column="item",
+        expected_num_variates=3,
+    )
+    items = load_csv(spec)
+    assert len(items) == 2
+    assert items[0].values.shape == (4, 3)
+    assert items[0].variate_names == ("x", "y", "z")
+    assert items[0].metadata["period"] == 24
+    with pytest.raises(ValueError, match="target columns"):
+        load_csv(spec.model_copy(update={"target_columns": ("missing",)}))
+
+
+def test_arrow_loader_preserves_item_boundaries_and_marks_implicit_time(tmp_path):
+    path = tmp_path / "toy.arrow"
+    table = pa.Table.from_pylist(
+        [
+            {
+                "item_id": "a",
+                "start": datetime(2026, 1, 1),
+                "freq": "H",
+                "target": [[1.0, 2.0, 3.0, 4.0], [10.0, 11.0, 12.0, 13.0]],
+                "variate_names": ["x", "y"],
+            },
+            {
+                "item_id": "b",
+                "start": datetime(2026, 1, 2),
+                "freq": "H",
+                "target": [[5.0, 20.0], [6.0, 21.0], [7.0, 22.0], [8.0, 23.0]],
+                "variate_names": ["x", "y"],
+            },
+        ]
+    )
+    with pa.OSFile(str(path), "wb") as sink, pa.ipc.new_stream(sink, table.schema) as writer:
+        writer.write_table(table)
+    spec = DatasetSpec(
+        dataset_id="toy_arrow",
+        family_id="toy",
+        format="arrow",
+        path=path,
+        frequency="H",
+        period=24,
+        expected_num_variates=2,
+        allow_implicit_regular_time=True,
+    )
+    items = load_arrow(spec)
+    assert [item.item_id for item in items] == ["a", "b"]
+    assert all(item.values.shape == (4, 2) for item in items)
+    assert all(item.timestamps is None for item in items)
+    assert all(item.metadata["implicit_regular_time"] for item in items)
+    assert audit_dataset(spec, items).accepted
+
+    rejected = audit_dataset(spec.model_copy(update={"allow_implicit_regular_time": False}), items)
+    assert "implicit_time_not_allowed" in {issue.code for issue in rejected.issues}
+
+
+@pytest.mark.parametrize(
+    "mutator,code",
+    [
+        (lambda values: values.__setitem__((2, 0), np.nan), "nan"),
+        (lambda values: values.__setitem__((2, 0), np.inf), "infinite"),
+        (lambda values: values.__setitem__((2, 0), -9999), "sentinel"),
+        (lambda values: values.__setitem__((slice(None), 0), 1), "constant"),
+    ],
+)
+def test_audit_rejects_invalid_source_values(tmp_path, mutator, code):
+    item = _item()
+    values = item.values.copy()
+    mutator(values)
+    invalid = TimeSeriesItem(
+        item_id=item.item_id,
+        values=values,
+        variate_names=item.variate_names,
+        start=item.start,
+        freq=item.freq,
+        timestamps=item.timestamps,
+    )
+    spec = DatasetSpec(
+        dataset_id="toy",
+        family_id="toy",
+        format="csv",
+        path=tmp_path / "missing.csv",
+        frequency="H",
+        period=24,
+        expected_num_variates=3,
+    )
+    report = audit_dataset(spec, [invalid])
+    assert not report.accepted
+    assert code in {issue.code for issue in report.issues}
+
+
+def test_audit_rejects_time_and_item_boundary_errors(tmp_path):
+    base = _item(length=8)
+    timestamps = base.timestamps.copy()
+    timestamps = timestamps.delete(3).insert(3, timestamps[2])
+    duplicate_time = TimeSeriesItem(
+        item_id="toy",
+        values=base.values,
+        variate_names=base.variate_names,
+        start=base.start,
+        freq="H",
+        timestamps=timestamps,
+    )
+    spec = DatasetSpec(
+        dataset_id="toy",
+        family_id="toy",
+        format="csv",
+        path=tmp_path / "missing.csv",
+        frequency="H",
+        period=24,
+        expected_num_variates=3,
+    )
+    report = audit_dataset(spec, [duplicate_time, duplicate_time])
+    codes = {issue.code for issue in report.issues}
+    assert {"duplicate_time", "duplicate_item_id"} <= codes
+
+
+def test_audit_accepts_regular_weekly_axis_with_a_different_week_anchor(tmp_path):
+    timestamps = pd.date_range("2026-01-05", periods=8, freq="W-MON")
+    values = np.stack([np.arange(8), np.arange(8) ** 2], axis=1).astype(float)
+    item = TimeSeriesItem("weekly", values, ("x", "y"), timestamps[0], "W", timestamps)
+    spec = DatasetSpec(
+        dataset_id="weekly",
+        family_id="weekly",
+        format="csv",
+        path=tmp_path / "missing.csv",
+        frequency="W",
+        period=52,
+        expected_num_variates=2,
+    )
+    assert audit_dataset(spec, [item]).accepted
+
+
+@pytest.mark.parametrize(
+    "mechanism",
+    [
+        "random_point",
+        "independent_block",
+        "synchronous_block",
+        "staggered_correlated",
+        "value_dependent",
+        "tail_mixed",
+    ],
+)
+def test_all_missingness_mechanisms_are_deterministic(mechanism):
+    values = _item().values
+    spec = MaskingSpec(mechanism=mechanism, missing_rate=0.2, block_fraction=0.1)
+    first = inject_missing(values, spec, 17)
+    second = inject_missing(values, spec, 17)
+    assert np.array_equal(first[1], second[1])
+    assert first[2] == second[2]
+    assert (~first[1]).sum() > 0
+    assert len(first[2]) > 0
+
+
+def test_synchronous_blocks_keep_channel_masks_aligned():
+    values = _item().values
+    _, mask, _ = inject_missing(
+        values,
+        MaskingSpec("synchronous_block", missing_rate=0.2, block_fraction=0.1),
+        17,
+    )
+    assert np.array_equal(mask[:, 0], mask[:, 1])
+    assert np.array_equal(mask[:, 1], mask[:, 2])
+
+
+def test_synchronous_target_is_rounded_without_overshooting_to_next_group():
+    values = np.arange(15, dtype=float).reshape(5, 3)
+    _, mask, _ = inject_missing(
+        values,
+        MaskingSpec(
+            "synchronous_block",
+            missing_rate=13 / 15,
+            block_fraction=0.4,
+            max_blocks=4,
+        ),
+        3,
+    )
+    assert int((~mask).sum()) == 12
+    assert np.array_equal(mask[:, 0], mask[:, 1])
+
+
+def test_experiment_config_rejects_missing_rates_above_evaluation_scope():
+    with pytest.raises(ValidationError, match="0, 0.5"):
+        ExperimentConfig(missing_rates=(0.6,))
+
+
+def test_staggered_correlated_targets_the_strongest_variable_pair():
+    time = np.arange(60, dtype=float)
+    values = np.stack((time, 2.0 * time + 1.0, (-1.0) ** time), axis=1)
+    _, mask, _ = inject_missing(
+        values,
+        MaskingSpec(
+            "staggered_correlated",
+            missing_rate=0.1,
+            block_fraction=0.1,
+            max_blocks=4,
+        ),
+        17,
+    )
+    missing_by_channel = (~mask).sum(axis=0)
+    assert missing_by_channel[0] > 0 and missing_by_channel[1] > 0
+    assert missing_by_channel[2] == 0
+
+
+def test_tail_mixed_always_contains_a_tail_gap():
+    values = _item().values
+    _, mask, _ = inject_missing(values, MaskingSpec("tail_mixed", 0.2), 19)
+    assert (~mask[-1]).any()
+
+
+@pytest.mark.parametrize(
+    "mechanism",
+    ("independent_block", "staggered_correlated", "value_dependent", "tail_mixed"),
+)
+@pytest.mark.parametrize("missing_rate", (0.1, 0.5))
+def test_high_dimensional_block_mechanisms_do_not_degenerate_to_points(
+    mechanism, missing_rate
+):
+    time = np.arange(128, dtype=float)[:, None]
+    channels = np.arange(32, dtype=float)[None, :]
+    values = np.sin(time / 7.0 + channels / 11.0) + channels * 0.001
+    _, mask, blocks = inject_missing(
+        values,
+        MaskingSpec(mechanism, missing_rate=missing_rate, block_fraction=0.1),
+        23,
+    )
+    expected = int(round(values.size * missing_rate))
+    assert abs(int((~mask).sum()) - expected) <= values.shape[1]
+    assert sum(block.length == 1 for block in blocks) <= max(1, len(blocks) // 4)
+
+
+def test_episode_never_reads_after_forecast_future():
+    item = _item(length=80)
+    episode = build_episode(
+        item,
+        "toy",
+        forecast_origin=60,
+        context_length=32,
+        horizon=8,
+        masking=MaskingSpec("tail_mixed", 0.2),
+    )
+    changed = item.values.copy()
+    changed[68:] += 100000
+    changed_item = TimeSeriesItem(
+        item_id=item.item_id,
+        values=changed,
+        variate_names=item.variate_names,
+        start=item.start,
+        freq=item.freq,
+        timestamps=item.timestamps,
+        metadata=item.metadata,
+    )
+    repeated = build_episode(
+        changed_item,
+        "toy",
+        forecast_origin=60,
+        context_length=32,
+        horizon=8,
+        masking=MaskingSpec("tail_mixed", 0.2),
+    )
+    assert np.allclose(episode.clean_context, repeated.clean_context)
+    assert np.array_equal(episode.context.observed_mask, repeated.context.observed_mask)
+
+
+def test_rolling_origins_rejects_non_positive_stride():
+    with pytest.raises(ValueError, match="stride"):
+        rolling_origins(100, 24, 8, stride=0)
+
+
+def test_config_is_strict_resolves_paths_and_rejects_illegal_targets(tmp_path):
+    config_path = tmp_path / "config.yaml"
+    payload = {
+        "schema_version": 1,
+        "registries": {
+            "data_manifest": "data.yaml",
+            "imputer_registry": "imputers.yaml",
+            "forecaster_registry": "forecasters.yaml",
+            "router_config": "router.yaml",
+        },
+        "experiment": {"target_indices": [0, 2]},
+        "runtime": {"output_root": "outputs"},
+    }
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    config = load_config(config_path)
+    assert config.registries.data_manifest == (tmp_path / "data.yaml").resolve()
+    assert config.runtime.output_root == (tmp_path / "outputs").resolve()
+
+    payload["unexpected"] = True
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    with pytest.raises(ValidationError, match="unexpected"):
+        load_config(config_path)
+
+    payload.pop("unexpected")
+    payload["experiment"] = {"target_indices": [-1]}
+    config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    with pytest.raises(ValidationError, match="non-negative"):
+        load_config(config_path)
+
+
+def test_manifest_and_contracts_reject_duplicate_or_illegal_values(tmp_path):
+    spec = DatasetSpec(
+        dataset_id="toy",
+        family_id="toy",
+        format="csv",
+        path=tmp_path / "toy.csv",
+        frequency="H",
+        period=24,
+        value_columns=("x", "y"),
+    )
+    with pytest.raises(ValidationError, match="dataset_id"):
+        DatasetManifest(data_root=tmp_path, datasets=(spec, spec))
+    with pytest.raises(ValueError, match="non-negative"):
+        ForecastSpec("mock", "independent_univariate", 4, target_indices=(-1,))
+    with pytest.raises(ValueError, match="max_runtime_seconds"):
+        BudgetSpec(max_runtime_seconds=0)
+
+
+def test_local_manifest_contains_exactly_32_multivariate_versions():
+    manifest = load_manifest("configs/data/datasets.yaml")
+    assert len(manifest.datasets) == 32
+    assert "weather" not in {spec.dataset_id for spec in manifest.datasets}
+    assert all(
+        "ori" not in {part.lower() for part in spec.path.parts}
+        for spec in manifest.datasets
+    )
+
+
+def test_family_folds_keep_all_related_versions_together(tmp_path):
+    base = DatasetSpec(
+        dataset_id="a1",
+        family_id="a",
+        format="csv",
+        path=tmp_path / "a1.csv",
+        frequency="h",
+        period=24,
+        value_columns=("x", "y"),
+    )
+    manifest = DatasetManifest(
+        data_root=tmp_path,
+        datasets=(
+            base,
+            base.model_copy(update={"dataset_id": "a2", "path": tmp_path / "a2.csv"}),
+            base.model_copy(
+                update={
+                    "dataset_id": "b1",
+                    "family_id": "b",
+                    "path": tmp_path / "b1.csv",
+                }
+            ),
+        ),
+    )
+    folds = {fold.family_id: fold for fold in family_folds(manifest)}
+    assert {dataset.dataset_id for dataset in folds["a"].test} == {"a1", "a2"}
+    assert {dataset.family_id for dataset in folds["a"].train} == {"b"}

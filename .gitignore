@@ -1,0 +1,21 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+.venv/
+.env
+
+# Runtime products are intentionally kept outside version control.
+/artifacts/
+/data/
+/checkpoints/
+/models/
+/results/
+/.hf_cache/
+/wandb/
