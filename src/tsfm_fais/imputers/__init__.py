@@ -1,6 +1,10 @@
 """Imputation candidates, registry, and safe execution."""
 
-from .artifacts import load_dataset_imputer_artifacts
+from .artifacts import (
+    ArtifactLoadResult,
+    DatasetImputerArtifactStore,
+    load_dataset_imputer_artifacts,
+)
 from .base import (
     BaseImputer,
     ImputerDependencyError,
@@ -56,12 +60,14 @@ from .structured import (
 
 __all__ = [
     "BRITSImputer",
+    "ArtifactLoadResult",
     "BaseImputer",
     "CSDIImputer",
     "CandidateRunner",
     "DEFAULT_IMPUTER_REGISTRY",
     "DEFAULT_REGISTRY",
     "DependencyAvailability",
+    "DatasetImputerArtifactStore",
     "GPVAEImputer",
     "GPRBFImputer",
     "HELIXImputer",

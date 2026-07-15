@@ -12,9 +12,9 @@ datasets:
   - {dataset_id: traffic, family_id: traffic, format: csv, path: csv/traffic.csv, frequency: H, period: 24, domain: transport, timestamp_column: date, expected_num_variates: 21, provenance: release_complete}
 
   # Arrow IPC snapshots. Each row remains an independent multivariate item.
-  - {dataset_id: azure2019_D_5T, family_id: azure2019, format: arrow, path: arrow/azure2019_D/5T, frequency: 5T, period: 288, domain: computing, expected_num_variates: 3, allow_implicit_regular_time: true}
-  - {dataset_id: azure2019_I_5T, family_id: azure2019, format: arrow, path: arrow/azure2019_I/5T, frequency: 5T, period: 288, domain: computing, expected_num_variates: 3, allow_implicit_regular_time: true}
-  - {dataset_id: azure2019_U_5T, family_id: azure2019, format: arrow, path: arrow/azure2019_U/5T, frequency: 5T, period: 288, domain: computing, expected_num_variates: 3, allow_implicit_regular_time: true}
+  - {dataset_id: azure2019_D_5T, family_id: azure2019, format: arrow, path: arrow/azure2019_D/5T, frequency: 5T, period: 288, domain: computing, expected_num_variates: 3, allow_implicit_regular_time: true, variate_name_normalization: strip_bracket_suffix}
+  - {dataset_id: azure2019_I_5T, family_id: azure2019, format: arrow, path: arrow/azure2019_I/5T, frequency: 5T, period: 288, domain: computing, expected_num_variates: 3, allow_implicit_regular_time: true, variate_name_normalization: strip_bracket_suffix}
+  - {dataset_id: azure2019_U_5T, family_id: azure2019, format: arrow, path: arrow/azure2019_U/5T, frequency: 5T, period: 288, domain: computing, expected_num_variates: 3, allow_implicit_regular_time: true, variate_name_normalization: strip_bracket_suffix}
   - {dataset_id: Coastal_T_S_15T, family_id: coastal_ts, format: arrow, path: arrow/Coastal_T_S/15T, frequency: 15T, period: 96, domain: nature, expected_num_variates: 3, allow_implicit_regular_time: true}
   - {dataset_id: Coastal_T_S_20T, family_id: coastal_ts, format: arrow, path: arrow/Coastal_T_S/20T, frequency: 20T, period: 72, domain: nature, expected_num_variates: 3, allow_implicit_regular_time: true}
   - {dataset_id: Coastal_T_S_H, family_id: coastal_ts, format: arrow, path: arrow/Coastal_T_S/H, frequency: H, period: 24, domain: nature, expected_num_variates: 3, allow_implicit_regular_time: true}
@@ -36,4 +36,3 @@ datasets:
   - {dataset_id: US_Labor_M, family_id: us_labor, format: arrow, path: arrow/US_Labor/M, frequency: M, period: 12, domain: economics, expected_num_variates: 14, allow_implicit_regular_time: true}
   - {dataset_id: Vehicle_Sales_M, family_id: vehicle, format: arrow, path: arrow/Vehicle_Sales/M, frequency: M, period: 12, domain: economics, expected_num_variates: 10, allow_implicit_regular_time: true}
   - {dataset_id: Vehicle_Supply_M, family_id: vehicle, format: arrow, path: arrow/Vehicle_Supply/M, frequency: M, period: 12, domain: economics, expected_num_variates: 6, allow_implicit_regular_time: true}
-

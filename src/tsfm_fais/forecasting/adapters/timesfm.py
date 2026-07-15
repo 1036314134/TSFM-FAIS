@@ -51,7 +51,28 @@ class TimesFM2p5Adapter(LazyForecastAdapter):
         model_cls = getattr(timesfm, "TimesFM_2p5_200M_torch", None)
         if model_cls is None:
             raise ImportError("installed timesfm package does not expose TimesFM 2.5")
-        return model_cls.from_pretrained(self.model_name, torch_compile=self.torch_compile)
+        try:
+            return model_cls.from_pretrained(
+                self.model_name,
+                torch_compile=self.torch_compile,
+                local_files_only=True,
+            )
+        except TypeError as error:
+            # timesfm 2.0 uses an older huggingface_hub mixin whose
+            # ``from_pretrained`` forwards the hub-only ``proxies`` argument to
+            # the model constructor.  Its public backend loader is otherwise
+            # compatible and correctly handles an already downloaded snapshot.
+            if "proxies" not in str(error) or not hasattr(model_cls, "_from_pretrained"):
+                raise
+            return model_cls._from_pretrained(
+                model_id=self.model_name,
+                revision=None,
+                cache_dir=None,
+                force_download=False,
+                local_files_only=True,
+                token=None,
+                torch_compile=self.torch_compile,
+            )
 
     def _maybe_compile(self, backend: Any, context_length: int, horizon: int) -> None:
         if not hasattr(backend, "compile") or self._configs is None:

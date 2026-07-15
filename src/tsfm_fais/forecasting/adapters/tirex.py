@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -46,6 +47,24 @@ class TiRexAdapter(LazyForecastAdapter):
         load_model = getattr(module, "load_model", None)
         if load_model is None:
             raise ImportError("installed tirex package does not expose load_model")
+        local_path = Path(self.model_name)
+        if local_path.exists():
+            checkpoint = local_path / "model.ckpt" if local_path.is_dir() else local_path
+            if not checkpoint.is_file():
+                raise FileNotFoundError(
+                    f"TiRex checkpoint model.ckpt is missing under {local_path}"
+                )
+            base = getattr(module, "base", None)
+            registry = getattr(getattr(base, "PretrainedModel", None), "REGISTRY", {})
+            model_class = registry.get("TiRex")
+            if model_class is None:
+                raise ImportError("installed tirex package does not register the TiRex model")
+            return model_class.from_pretrained(
+                str(checkpoint),
+                backend=self.backend_name,
+                device=self.device,
+                compile=False,
+            )
         kwargs: dict[str, Any] = {"backend": self.backend_name}
         if self.device:
             kwargs["device"] = self.device

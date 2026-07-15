@@ -11,7 +11,7 @@ from .contracts import (
     SeriesBatch,
     TimeSeriesItem,
 )
-from .pipeline import BlockwiseFAIS, FAISResult
+from .pipeline import BlockwiseFAIS, FAISResult, RoutePlan
 
 __all__ = [
     "BudgetSpec",
@@ -23,6 +23,7 @@ __all__ = [
     "ImputerSpec",
     "MissingBlock",
     "RoutingResult",
+    "RoutePlan",
     "SeriesBatch",
     "TimeSeriesItem",
 ]

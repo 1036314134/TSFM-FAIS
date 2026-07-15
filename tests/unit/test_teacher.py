@@ -51,6 +51,27 @@ def test_teacher_builds_single_block_labels_and_pair_interaction_formula() -> No
     )
     assert len(labels) == 4
     assert all(label.clean_loss >= 0 for label in labels)
+    batched_labels, clean_loss, anchor_loss = builder.unary_labels_batched(
+        "episode",
+        clean_context,
+        clean_future,
+        anchor,
+        (left_block, right_block),
+        candidates,
+        spec,
+    )
+    expected_losses = {
+        (label.block_id, label.candidate_id): label.forecast_loss for label in labels
+    }
+    observed_losses = {
+        (label.block_id, label.candidate_id): label.forecast_loss
+        for label in batched_labels
+    }
+    assert observed_losses.keys() == expected_losses.keys()
+    for key in expected_losses:
+        assert np.isclose(observed_losses[key], expected_losses[key])
+    assert np.isclose(clean_loss, builder._loss(clean_context, clean_future, spec))
+    assert np.isclose(anchor_loss, builder._loss(anchor, clean_future, spec, builder._scales(clean_context, spec.target_indices)))
     filtered = builder.unary_labels(
         "episode",
         clean_context,
@@ -88,3 +109,26 @@ def test_teacher_builds_single_block_labels_and_pair_interaction_formula() -> No
         + builder._loss(anchor, clean_future, spec, scales)
     )
     assert np.isclose(observed_interaction, expected)
+    batched_interaction = builder.pair_interactions_batched(
+        clean_future,
+        anchor,
+        (
+            (
+                left_block,
+                right_block,
+                candidates["left_candidate"],
+                candidates["right_candidate"],
+            ),
+        ),
+        spec,
+        anchor_loss=builder._loss(anchor, clean_future, spec, scales),
+        scale_context=clean_context,
+    )
+    assert len(batched_interaction) == 1
+    assert np.isclose(batched_interaction[0], observed_interaction)
+
+
+def test_mase_scale_falls_back_to_lag_one_when_period_exceeds_context():
+    context = np.asarray([[[0.0], [1.0], [3.0], [6.0]]])
+    scale = TeacherBuilder(_nonlinear_forecast, seasonality=24)._scales(context, (0,))
+    assert np.isclose(scale[0], np.mean([1.0, 2.0, 3.0]))

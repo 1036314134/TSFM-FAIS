@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
 import yaml
 
@@ -44,6 +45,7 @@ class StagePreparation:
     stage: StageName
     store: RunArtifactStore
     manifest: dict[str, Any]
+    resuming: bool = False
 
     def mark_prepared(self, reason: str) -> Path:
         self.manifest["status"] = "prepared"
@@ -317,14 +319,52 @@ def prepare_stage(
     inputs: StageInputs,
     *,
     run_id: str | None = None,
+    resume: bool = False,
 ) -> StagePreparation:
     """Create audit artifacts and validate dependencies without running an experiment."""
 
-    store = RunArtifactStore.create(
-        config.runtime.output_root,
-        run_id or make_run_id(stage),
-    )
-    store.write_baseline(config, config_source)
+    if resume:
+        if stage not in {"fit-imputers", "labels", "impute"}:
+            raise ValueError(
+                "--resume is currently supported only for fit-imputers, labels, and impute"
+            )
+        if stage == "labels" and len(parse_forecaster_ids(inputs.forecaster_id)) != 1:
+            raise ValueError("labels resume requires exactly one forecaster ID")
+        if run_id is None:
+            raise ValueError("--resume requires an explicit --run-id")
+        store = RunArtifactStore.open_existing(config.runtime.output_root, run_id)
+        resolved_path = store.root / "resolved_config.json"
+        stage_path = store.root / "stage_manifest.json"
+        try:
+            resolved_payload = json.loads(resolved_path.read_text(encoding="utf-8"))
+            manifest = json.loads(stage_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise ValueError(
+                f"cannot resume run with invalid baseline metadata: {type(error).__name__}: {error}"
+            ) from error
+        stored_config = resolved_payload.get("config")
+        if not isinstance(stored_config, dict):
+            raise ValueError("cannot resume: resolved_config.json has no config mapping")
+        try:
+            normalized_stored = AppConfig.model_validate(stored_config).model_dump(mode="json")
+        except ValueError as error:
+            raise ValueError(f"cannot resume: stored resolved config is invalid: {error}") from error
+        if normalized_stored != config.model_dump(mode="json"):
+            raise ValueError("cannot resume: resolved config differs from the original run")
+        if not isinstance(manifest, dict) or manifest.get("stage") != stage:
+            raise ValueError(
+                f"cannot resume: stage manifest does not describe {stage}"
+            )
+        if manifest.get("run_id") != store.run_id:
+            raise ValueError("cannot resume: stage manifest run_id mismatch")
+        if manifest.get("inputs") != inputs.to_manifest():
+            raise ValueError("cannot resume: declared stage inputs differ from the original run")
+    else:
+        store = RunArtifactStore.create(
+            config.runtime.output_root,
+            run_id or make_run_id(stage),
+        )
+        store.write_baseline(config, config_source)
     checks: list[dict[str, Any]] = []
     for field in _CONFIG_REQUIREMENTS[stage]:
         path = getattr(config.registries, field)
@@ -339,23 +379,30 @@ def prepare_stage(
         )
     checks.extend(_input_checks(stage, config, inputs))
     invalid = [check for check in checks if not check["valid"]]
-    manifest: dict[str, Any] = {
-        "schema_version": 1,
-        "run_id": store.run_id,
-        "stage": stage,
-        "status": "blocked" if invalid else "prepared",
-        "created_at": utc_now(),
-        "execution_started": False,
-        "automatic_downloads": False,
-        "inputs": inputs.to_manifest(),
-        "checks": checks,
-        "message": (
-            "; ".join(check["message"] for check in invalid)
-            if invalid
-            else "all declared dependencies are available; no experiment has been executed"
-        ),
-    }
-    manifest_path = store.write("stage_manifest.json", manifest)
+    if resume:
+        manifest = dict(manifest)
+        manifest["checks"] = checks
+        manifest["resume_requested"] = True
+        manifest["message"] = "resume inputs validated; execution has not restarted"
+        manifest_path = stage_path
+    else:
+        manifest = {
+            "schema_version": 1,
+            "run_id": store.run_id,
+            "stage": stage,
+            "status": "blocked" if invalid else "prepared",
+            "created_at": utc_now(),
+            "execution_started": False,
+            "automatic_downloads": False,
+            "inputs": inputs.to_manifest(),
+            "checks": checks,
+            "message": (
+                "; ".join(check["message"] for check in invalid)
+                if invalid
+                else "all declared dependencies are available; no experiment has been executed"
+            ),
+        }
+        manifest_path = store.write("stage_manifest.json", manifest)
     if invalid:
         details = "; ".join(
             f"{check['name']}: {check['message']}" for check in invalid
@@ -363,7 +410,12 @@ def prepare_stage(
         raise StagePreparationError(
             f"stage {stage!r} is blocked: {details}. Audit manifest: {manifest_path}"
         )
-    return StagePreparation(stage=stage, store=store, manifest=manifest)
+    return StagePreparation(
+        stage=stage,
+        store=store,
+        manifest=manifest,
+        resuming=resume,
+    )
 
 
 def finish_preparation(preparation: StagePreparation) -> Path:

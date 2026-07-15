@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import re
+from collections.abc import Iterable
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -14,6 +16,9 @@ from tsfm_fais.contracts import TimeSeriesItem
 from .catalog import DatasetSpec
 
 TIME_NAMES = {"timestamp", "datetime", "date", "time", "index"}
+SAFE_BRACKET_SUFFIX = re.compile(
+    r"^(?P<base>[^\[\]\r\n]+?)(?:\[(?P<suffix>[A-Za-z0-9_.,-]+)\])?$"
+)
 
 
 def _value_columns(frame: pd.DataFrame, spec: DatasetSpec) -> list[str]:
@@ -113,6 +118,32 @@ def _coerce_target(target: Any, num_variates: int | None = None) -> np.ndarray:
     )
 
 
+def _normalize_variate_names(
+    raw_names: tuple[str, ...], spec: DatasetSpec, num_variates: int
+) -> tuple[str, ...]:
+    if len(raw_names) != num_variates:
+        raise ValueError(
+            f"Arrow variate_names has length {len(raw_names)}, expected D={num_variates}"
+        )
+    if spec.variate_name_normalization == "none":
+        names = raw_names
+    else:
+        normalized: list[str] = []
+        for name in raw_names:
+            match = SAFE_BRACKET_SUFFIX.fullmatch(name)
+            if match is None:
+                raise ValueError(
+                    "unsafe Arrow variate name for strip_bracket_suffix: " f"{name!r}"
+                )
+            normalized.append(match.group("base"))
+        names = tuple(normalized)
+    if any(not name.strip() or name != name.strip() for name in names):
+        raise ValueError("Arrow variate names must be non-empty and have no edge whitespace")
+    if len(set(names)) != len(names):
+        raise ValueError("Arrow variate names are not unique after normalization")
+    return names
+
+
 def load_arrow(spec: DatasetSpec) -> list[TimeSeriesItem]:
     files = sorted(spec.path.glob("*.arrow")) if spec.path.is_dir() else [spec.path]
     if not files:
@@ -123,15 +154,19 @@ def load_arrow(spec: DatasetSpec) -> list[TimeSeriesItem]:
             if "target" not in row:
                 raise ValueError(f"Arrow row in {path} has no target field")
             raw_names = row.get("variate_names")
-            declared_dimensions = (
-                len(raw_names) if raw_names is not None else spec.expected_num_variates
+            raw_name_tuple = (
+                tuple(map(str, raw_names)) if raw_names is not None else None
             )
+            declared_dimensions = spec.expected_num_variates
+            if declared_dimensions is None and raw_name_tuple is not None:
+                declared_dimensions = len(raw_name_tuple)
             values = _coerce_target(row["target"], declared_dimensions)
-            names = (
-                tuple(map(str, raw_names))
-                if raw_names is not None
+            source_names = (
+                raw_name_tuple
+                if raw_name_tuple is not None
                 else tuple(f"target_{idx}" for idx in range(values.shape[1]))
             )
+            names = _normalize_variate_names(source_names, spec, values.shape[1])
             _validate_target_columns(spec, names)
             start = pd.Timestamp(row.get("start"))
             freq = str(row.get("freq") or spec.frequency)
@@ -156,6 +191,8 @@ def load_arrow(spec: DatasetSpec) -> list[TimeSeriesItem]:
                         "period": spec.period,
                         "source_path": str(path),
                         "implicit_regular_time": timestamps is None,
+                        "raw_variate_names": raw_name_tuple,
+                        "variate_name_normalization": spec.variate_name_normalization,
                     },
                 )
             )

@@ -9,12 +9,15 @@ from tsfm_fais.contracts import (
     CandidateStatus,
     ForecastSpec,
     ImputerSpec,
+    MissingBlock,
     SeriesBatch,
     TimeSeriesItem,
 )
 from tsfm_fais.imputers import CandidateRunner, ImputerRegistry
 from tsfm_fais.imputers.base import failed_candidate_result
-from tsfm_fais.pipeline import BlockwiseFAIS
+from tsfm_fais.pipeline import BlockwiseFAIS, _pairwise_free_search
+from tsfm_fais.routing.graph import BlockGraph
+from tsfm_fais.routing.solver import exhaustive_search
 
 
 def test_candidate_runner_enforces_device_and_runtime_budgets() -> None:
@@ -80,6 +83,38 @@ def test_candidate_validation_failure_is_isolated(monkeypatch) -> None:
     result = runner.run("locf", batch)
     assert result.status is CandidateStatus.FAILED
     assert "must match the input batch" in result.failure_reason
+
+
+def test_pipeline_forwards_configured_candidate_runtime_params(monkeypatch) -> None:
+    values = np.arange(24, dtype=float).reshape(12, 2)
+    item = TimeSeriesItem(
+        item_id="params",
+        values=values,
+        variate_names=("a", "b"),
+        start=pd.Timestamp("2026-01-01"),
+        freq="h",
+    )
+    mask = np.ones_like(values, dtype=bool)
+    mask[4:7, 0] = False
+    configured = {"csdi": {"num_samples": 5}}
+    pipeline = BlockwiseFAIS(candidate_params=configured)
+    native = pipeline.candidate_runner.run_many
+    calls = []
+
+    def recording(*args, **kwargs):
+        calls.append(kwargs.get("params"))
+        kwargs["params"] = {}
+        return native(*args, **kwargs)
+
+    monkeypatch.setattr(pipeline.candidate_runner, "run_many", recording)
+    pipeline.impute(
+        item,
+        mask,
+        ForecastSpec("mock", "independent_univariate", 2, target_indices=(0,)),
+        BudgetSpec(max_candidates=2),
+    )
+
+    assert calls == [configured]
 
 
 def test_pipeline_uses_explicit_median_fallback_when_all_native_outputs_fail() -> None:
@@ -163,6 +198,60 @@ def test_pseudo_blocks_do_not_overlap_in_time_across_channels() -> None:
     pseudo = BlockwiseFAIS()._pseudo_batch(batch, seed=17, max_blocks=8)
     newly_hidden = batch.observed_mask & ~pseudo.observed_mask
     assert np.all(newly_hidden.sum(axis=2) <= 1)
+
+
+def test_pipeline_skips_pairwise_features_for_large_block_sets() -> None:
+    length, dimensions = 4, 32
+    values = np.arange(length * dimensions, dtype=float).reshape(length, dimensions)
+    item = TimeSeriesItem(
+        item_id="many-blocks",
+        values=values,
+        variate_names=tuple(f"v{index}" for index in range(dimensions)),
+        start=pd.Timestamp("2026-01-01"),
+        freq="h",
+        metadata={"training_correlation": np.eye(dimensions)},
+    )
+    mask = np.ones_like(values, dtype=bool)
+    mask[1, :] = False
+    result = BlockwiseFAIS(max_pairwise_blocks=10).impute(
+        item,
+        mask,
+        ForecastSpec("mock", "independent_univariate", 1, target_indices=(0,)),
+        BudgetSpec(max_candidates=2),
+    )
+    assert result.routing.metadata["pairwise_skipped_for_scale"] is True
+    assert result.routing.metadata["solver"] == "pairwise_free_subset"
+    assert result.routing.metadata["block_graph_edges"] <= 3 * dimensions
+    assert np.isfinite(result.values).all()
+
+
+def test_pairwise_free_search_matches_exact_assignment_with_active_limit() -> None:
+    blocks = tuple(MissingBlock(f"b{index}", 0, index, 0, 1) for index in range(4))
+    candidates = ("a", "b", "c")
+    unary = {
+        (block.block_id, candidate): float((block.channel + candidate_index) % 4)
+        for block in blocks
+        for candidate_index, candidate in enumerate(candidates)
+    }
+    costs = {"a": 1.0, "b": 3.0, "c": 2.0}
+    invalid = {("b0", "a"), ("b3", "c")}
+    budget = BudgetSpec(max_candidates=3, max_active_candidates=2)
+
+    scalable = _pairwise_free_search(
+        blocks, candidates, unary, costs, budget, 0.2, invalid
+    )
+    exact = exhaustive_search(
+        BlockGraph(blocks, ()),
+        candidates,
+        unary,
+        costs=costs,
+        budget=budget,
+        cost_weight=0.2,
+        invalid=invalid,
+    )
+
+    assert scalable.assignments == exact.assignments
+    assert np.isclose(scalable.total_energy, exact.total_energy)
 
 
 def test_fallback_does_not_consume_active_candidate_budget() -> None:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 
 from tsfm_fais.contracts import ForecastSpec
@@ -91,6 +93,38 @@ def test_timesfm_mock_native_quantiles_are_selected():
     np.testing.assert_allclose(result.quantiles[0, 0, 0], [0.0, 4.0, 8.0])
 
 
+def test_timesfm_falls_back_when_hub_mixin_forwards_proxies(monkeypatch):
+    calls = {}
+
+    class Model:
+        @classmethod
+        def from_pretrained(cls, *args, **kwargs):
+            del cls, args, kwargs
+            raise TypeError("__init__() got an unexpected keyword argument 'proxies'")
+
+        @classmethod
+        def _from_pretrained(cls, **kwargs):
+            del cls
+            calls.update(kwargs)
+            return "loaded"
+
+    timesfm_module = SimpleNamespace(TimesFM_2p5_200M_torch=Model)
+    configs_module = SimpleNamespace()
+
+    def fake_import(name):
+        return timesfm_module if name == "timesfm" else configs_module
+
+    monkeypatch.setattr(
+        "tsfm_fais.forecasting.adapters.timesfm.importlib.import_module",
+        fake_import,
+    )
+    adapter = TimesFM2p5Adapter("local-snapshot", torch_compile=False)
+    assert adapter._load_backend() == "loaded"
+    assert calls["model_id"] == "local-snapshot"
+    assert calls["local_files_only"] is True
+    assert calls["torch_compile"] is False
+
+
 def test_sundial_mock_samples_are_normalized():
     contexts = np.ones((2, 8, 1))
     spec = ForecastSpec(
@@ -109,3 +143,32 @@ def test_tirex_mock_native_quantiles_are_selected():
     spec = ForecastSpec("tirex", "independent_univariate", horizon=3)
     result = TiRexAdapter(backend=FakeTiRex()).predict(contexts, spec)
     np.testing.assert_allclose(result.quantiles[0, 0, 0], [0.0, 4.0, 8.0])
+
+
+def test_tirex_loads_a_local_snapshot_checkpoint(monkeypatch, tmp_path):
+    checkpoint = tmp_path / "model.ckpt"
+    checkpoint.write_bytes(b"checkpoint")
+    calls = {}
+
+    class Model:
+        @classmethod
+        def from_pretrained(cls, path, **kwargs):
+            del cls
+            calls.update(path=path, **kwargs)
+            return "loaded"
+
+    module = SimpleNamespace(
+        load_model=lambda *args, **kwargs: None,
+        base=SimpleNamespace(
+            PretrainedModel=SimpleNamespace(REGISTRY={"TiRex": Model})
+        ),
+    )
+    monkeypatch.setattr(
+        "tsfm_fais.forecasting.adapters.tirex.importlib.import_module",
+        lambda _name: module,
+    )
+    adapter = TiRexAdapter(str(tmp_path), device="cpu")
+    assert adapter._load_backend() == "loaded"
+    assert calls["path"] == str(checkpoint)
+    assert calls["backend"] == "torch"
+    assert calls["device"] == "cpu"

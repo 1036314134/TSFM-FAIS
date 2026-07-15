@@ -1,0 +1,32 @@
+schema_version: 1
+seed: 20260710
+registries:
+  data_manifest: data/pilot.yaml
+  imputer_registry: imputers/pool.yaml
+  forecaster_registry: forecasters/pool.yaml
+  router_config: router/block_fais.yaml
+experiment:
+  split: rolling_origin
+  context_length: 48
+  horizon: 8
+  target_indices: [0, 1]
+  missing_mechanisms: [synchronous_block]
+  missing_rates: [0.2]
+  seeds: [20260710]
+  max_items_per_dataset: 1
+  max_training_windows_per_dataset: 8
+  max_train_origins_per_item: 1
+  max_eval_origins_per_item: 1
+  max_teacher_blocks_per_episode: 2
+  max_teacher_candidates_per_episode: 4
+  max_pair_labels_per_episode: 2
+  forecast_num_samples: 3
+  deep_imputer_epochs: 1
+  deep_imputer_batch_size: 4
+  csdi_num_samples: 3
+  missforest_n_jobs: 1
+  save_all_candidate_outputs: true
+runtime:
+  output_root: ../artifacts
+  device: auto
+  fail_fast: false

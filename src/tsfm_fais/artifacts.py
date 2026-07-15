@@ -6,11 +6,12 @@ import json
 import platform
 import re
 import sys
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib import metadata
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
 from uuid import uuid4
 
 from tsfm_fais.config import AppConfig
@@ -121,7 +122,7 @@ class RunArtifactStore:
     root: Path
 
     @classmethod
-    def create(cls, output_root: str | Path, run_id: str) -> "RunArtifactStore":
+    def create(cls, output_root: str | Path, run_id: str) -> RunArtifactStore:
         safe_id = validate_run_id(run_id)
         base = Path(output_root).resolve()
         root = base / safe_id
@@ -132,6 +133,16 @@ class RunArtifactStore:
             raise FileExistsError(
                 f"run artifact directory already exists; choose a new --run-id: {root}"
             ) from error
+        return cls(run_id=safe_id, root=root)
+
+    @classmethod
+    def open_existing(cls, output_root: str | Path, run_id: str) -> RunArtifactStore:
+        """Open one existing run directory without creating or overwriting files."""
+
+        safe_id = validate_run_id(run_id)
+        root = Path(output_root).resolve() / safe_id
+        if not root.is_dir():
+            raise FileNotFoundError(f"run artifact directory does not exist: {root}")
         return cls(run_id=safe_id, root=root)
 
     def write(self, name: str, payload: Mapping[str, Any]) -> Path:

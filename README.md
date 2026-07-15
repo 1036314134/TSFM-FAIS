@@ -2,7 +2,7 @@
 
 TSFM-FAIS 实现 B-FAIS（Block-wise Forecast-Aware Imputer Selection）：给定一段带缺失的多变量时间序列、目标预测模型和计算预算，系统把缺失区域拆成变量级原子块，从可扩展候选池中为每个块分别选择填补算法，再将各候选的局部结果组装为完整上下文。一个样本中的不同缺失块可以使用不同算法。选择目标由下游 TSFM 的预测损失定义，填补误差只作为历史伪缺失证据之一。
 
-当前版本为 `0.1.0`。仓库已经包含严格配置与公共数据契约、CSV/Arrow 多变量加载、完整性审计、六类缺失注入、20 个候选适配器、块提取与关系图、LightGBM 路由模型、确定性搜索、TSFM 教师标签、五个预测适配器、CLI、单元测试和离线合成 smoke 测试。尚未下载真实数据或模型权重，尚未生成真实教师标签，尚未训练真实路由器，也没有任何性能结论。`run --stage ...` 默认创建不可覆盖的运行目录、保存配置/版本/种子/候选状态并检查前置产物；四个阶段的实际实现由显式 `--execute` 启用，本轮没有调用该选项。
+当前版本为 `0.1.0`。仓库已经包含严格配置与公共数据契约、CSV/Arrow 多变量加载、完整性审计、六类缺失注入、20 个候选适配器、块提取与关系图、LightGBM 路由模型、确定性搜索、TSFM 教师标签、五个预测适配器、CLI、单元测试和离线合成 smoke 测试。截至 2026-07-14，当前工作区已使用本地数据和 checkpoint 完成首轮 `main-v1` 主实验：32 个多变量数据版本全部通过审计，五个 TSFM 的教师标签、19 个留一数据族路由折、两种预测模式的填补和最终预测评估均已完成。首轮结果不支持 B-FAIS 整体优于 LOCF；结果与限制见“主实验结果”一节。数据、模型和 `artifacts/` 仍不纳入版本控制。
 
 ## 问题定义
 
@@ -71,7 +71,7 @@ flowchart LR
 
 教师标签通过反事实上下文生成。单块标签只替换 anchor 中一个块，块对标签同时替换两个相连块，并计算二阶交互项。默认预测损失是目标列宏平均 MASE；预测目标可以是一列或多列。教师模块只使用预测起点前的填补上下文和预测起点后的评估真值，评估真值不会进入填补器或路由特征。
 
-## 20 个默认填补候选
+## 20 个登记候选（主实验 19 个可执行）
 
 所有候选接收统一的 `[N,L,D]` `SeriesBatch`。逐变量候选会遍历 `D` 个变量后重新组装完整张量；联合候选直接使用多变量结构。`fit` 只在训练折运行，`impute` 使用冻结 artifact。可选依赖采用延迟导入，缺少依赖只会将对应候选标记为 `UNAVAILABLE`。
 
@@ -88,7 +88,7 @@ flowchart LR
 | `mice` | 链式回归 | 联合多变量 | 数据集级 | 支持 | scikit-learn IterativeImputer；随机种子固定 | 2 |
 | `missforest` | 随机森林 | 联合多变量 | 数据集级 | 支持 | RandomForestRegressor 逐变量迭代 | 3 |
 | `softimpute` | 低秩矩阵 | 联合多变量 | 数据集级 | 支持 | SciPy SVD 与奇异值收缩 | 2 |
-| `trmf` | 时序低秩 | 联合多变量 | 数据集级 | 支持 | `deep-imputers` 可选依赖 | 3 |
+| `trmf` | 时序低秩 | 联合多变量 | 数据集级 | 支持 | 已注册；PyPOTS 1.5 的实现为转导式接口，当前协议下标记为不可执行 | 3 |
 | `brits` | 双向循环网络 | 联合多变量 | 数据集级 | 不原生支持 | `deep-imputers` 可选依赖 | 3 |
 | `gpvae` | 概率潜变量 | 联合多变量 | 数据集级 | 支持 | `deep-imputers` 可选依赖 | 4 |
 | `saits` | 自注意力 | 联合多变量 | 数据集级 | 支持 | `deep-imputers`；真实 `[N,L,D]` 联合训练 | 3 |
@@ -152,7 +152,7 @@ registry.register(
 
 实验数据必须来自原始完整的多变量序列。准入审计要求 `D≥2`，数值中无 `NaN`、null、`Inf` 或 manifest 声明的哨兵，变量名唯一，无常量列；显式时间轴必须可解析、严格递增、无重复并与声明频率一致。只有 `start+freq` 的 Arrow 数据必须在 manifest 中显式设置 `allow_implicit_regular_time: true`。CSV loader 显式识别时间列、可选 item 列和全部数值变量；Arrow IPC loader 按行返回独立 `TimeSeriesItem`，不会跨 item 拼接，也不会把多变量数据投影为单目标。
 
-`configs/data/datasets.yaml` 当前登记 32 个本地多变量版本，共 8 个 CSV 和 24 个 Arrow IPC。manifest 只登记待审计的数据入口；文件保存在相邻的数据目录中，不复制进本仓库。`data_root` 可按本机目录布局修改。
+`configs/data/datasets.yaml` 当前登记 32 个本地多变量版本，共 8 个 CSV 和 24 个 Arrow IPC。文件保存在相邻仓库的数据目录中，不复制进本仓库；因此无需为了运行实验移动数据，只需保证 manifest 中的相对路径可解析。`data_root` 可按本机目录布局修改。`main-v1` 的审计结果为 32/32 通过，全部版本均进入主实验。
 
 | 格式 | 数量 | 数据集 ID |
 |---|---:|---|
@@ -161,7 +161,7 @@ registry.register(
 | Arrow | 8 | `current_velocity_20T`, `current_velocity_H`, `EWELD_Load_15T`, `Housing_Inventory_M`, `Job_Claims_W`, `JOLTS_M`, `NE_China_Wind_H`, `OpenElectricity_NEM_5T` |
 | Arrow | 8 | `Port_Activity_D`, `Port_Activity_W`, `Supply_Chain_Customer_D`, `Supply_Chain_Location_D`, `Uncertainty_1M_M`, `US_Labor_M`, `Vehicle_Sales_M`, `Vehicle_Supply_M` |
 
-每条记录带 `family_id`。`family_folds()` 以 family 为分组单位生成 leave-family-out 切分，避免 ETT、Azure、Coastal、Current Velocity、Port Activity、Supply Chain 和 Vehicle 等同源或不同频率版本分散到训练集与评估集；预测模型侧另有 `leave_model_out_folds()`。单变量版本和源文件本身含缺失的版本不进入该 manifest。是否最终采用某个版本由 `data audit` 的实际结果决定，登记本身不代表审计已经通过。
+每条记录带 `family_id`。32 个版本归并为 19 个数据族；`family_folds()` 以 family 为分组单位生成 leave-family-out 切分，避免 ETT、Azure、Coastal、Current Velocity、Port Activity、Supply Chain 和 Vehicle 等同源或不同频率版本分散到训练集与评估集；预测模型侧另有 `leave_model_out_folds()`。单变量版本和源文件本身含缺失的版本不进入该 manifest。后续更换或增加数据时仍须重新运行 `data audit`，不能沿用本次审计结论。
 
 六种可复现缺失机制为：随机点、独立块、同步块、相关变量错位块、数值依赖块和尾部混合块。实验配置将缺失率限制在 `(0,0.5]`，与首版评估网格一致。块机制按变量规模扩展可放置块数，高维序列不会在配额不足时用全局随机点补齐；如果无法保持声明的结构并达到目标缺失量，注入器会明确报错。随机种子由数据集、item、预测起点、缺失配置和重复编号稳定派生。
 
@@ -176,12 +176,16 @@ TSFM-FAIS/
 │  ├─ imputers/pool.yaml
 │  ├─ forecasters/pool.yaml
 │  ├─ router/block_fais.yaml
-│  └─ smoke.yaml
+│  ├─ smoke.yaml
+│  ├─ main.yaml
+│  └─ main_eval.yaml
 ├─ src/tsfm_fais/
 │  ├─ contracts.py
 │  ├─ config.py
 │  ├─ registry_configs.py
 │  ├─ artifacts.py / stages.py
+│  ├─ evaluation.py / main_results.py
+│  ├─ label_artifacts.py / label_resume.py
 │  ├─ stage_execution.py   # 仅由 run --execute 延迟导入
 │  ├─ data/                 # loader、审计、缺失 episode
 │  ├─ imputers/             # 20 个候选、注册表、runner
@@ -250,6 +254,8 @@ runtime:
   fail_fast: true
 ```
 
+上面的 YAML 是最小配置示例。`main-v1` 的训练配置为 `configs/main.yaml`：训练种子 20260710，每个数据版本最多 12 个教师 episode。最终评估配置为 `configs/main_eval.yaml`：种子 `{22,33,44}`，每个数据版本 24 个 episode，上下文 48、horizon 8、目标列 `[0,1]`，覆盖六种机制和四档缺失率；CSDI 使用 5 个填补样本，每个 TSFM 使用 20 个预测样本，并保存全部候选输出供配对评估。
+
 候选元数据、预测器能力和路由参数分别位于 `configs/imputers/pool.yaml`、`configs/forecasters/pool.yaml` 和 `configs/router/block_fais.yaml`。代码注册表是运行时实现来源，YAML 是实验配置与审计清单；配置校验会逐项比较 ID 与关键能力字段，新增 ID 时应同步两者并通过配置测试。路由配置用 `beta` 和 `cost_weight` 指定本次搜索实际采用的权重，并要求它们属于相应候选网格；选定值、网格和训练标签尺度会写入路由产物，推理时从产物恢复。LambdaMART 输出先在每个缺失块内规范为稳定风险尺度，随后再与 Huber 块对交互项组合。
 
 ## CLI 与产物
@@ -268,14 +274,34 @@ python -m tsfm_fais run --config configs/smoke.yaml --stage labels --audit-artif
 python -m tsfm_fais run --config configs/smoke.yaml --stage train-router --labels-artifact artifacts/teacher_labels.jsonl
 python -m tsfm_fais run --config configs/smoke.yaml --stage impute --audit-artifact artifacts/data_audit.json --imputer-artifacts artifacts/imputers --router-artifact artifacts/router_folds --forecaster-id chronos2
 
+python -m tsfm_fais evaluate --config configs/smoke.yaml --impute-artifact artifacts/main-impute-chronos2 --forecaster-id chronos2 --forecaster-artifact checkpoints/chronos2 --output-dir artifacts/main-evaluate-chronos2
+python -m tsfm_fais evaluate --config configs/smoke.yaml --impute-artifact artifacts/main-impute-chronos2 --forecaster-id chronos2 --forecaster-artifact checkpoints/chronos2 --output-dir artifacts/main-evaluate-chronos2 --resume
+python -m tsfm_fais summarize --input artifacts/main-evaluate-chronos2 --output-dir artifacts/main-summary-chronos2
+python -m tsfm_fais summarize-main --input artifacts/main-eval-chronos2-v1 artifacts/main-eval-timesfm2p5-v1 artifacts/main-eval-chronosbolt-v1 artifacts/main-eval-sundial-v1 artifacts/main-eval-tirex-v1 --output-dir artifacts/main-summary-v1 --bootstrap-replicates 2000 --bootstrap-seed 20260710
+
 python -m tsfm_fais smoke --config configs/smoke.yaml
 ```
 
-`data audit` 会实际读取 manifest 中启用的数据，并可将逐数据集审计结果和内容 SHA-256 写入指定 JSON。由于本仓库不包含数据，默认本地数据路径不可用时该命令会拒绝对应条目。四个 `run` stage 默认检查各自所需的前置产物，写入审计清单并以 `STAGE PREPARED` 正常结束；它们不会自行下载数据、训练模型或写入实验结果。上面的路径是产物约定示例，使用前必须由用户提供对应文件。
+`data audit` 会实际读取 manifest 中启用的数据，并可将逐数据集审计结果和内容 SHA-256 写入指定 JSON。仓库不复制数据；当前 manifest 指向相邻仓库，在其他机器上运行前需要调整路径。四个 `run` stage 默认检查各自所需的前置产物，写入审计清单并以 `STAGE PREPARED` 正常结束；只有追加 `--execute` 才会执行训练或推理。命令不会自行下载数据或模型。
 
 `smoke` 要求显式提供 `--config`，安装后的命令不会假定当前目录包含源码仓库的 `configs/`。
 
 只有在用户明确追加 `--execute` 时，阶段执行器才会开始工作：`fit-imputers` 在每条轨迹前部的拟合区间内按 horizon 步长构造滚动窗口并序列化候选；`labels` 从拟合区间之后生成滚动 episode、单块标签和稳定种子抽样的块对标签；`train-router` 训练两个 LambdaMART 排序器与 Huber 块对模型；`impute` 加载冻结 artifact 和路由器并保存逐 episode 填补结果与块分配。块对抽样优先覆盖不同边及候选的左右角色，尾部块会排除声明为不支持尾部填补的候选。可用预测起点按时间顺序划分，较早的 70% 只用于教师标签与路由训练，较晚的 30% 只用于 `impute` 评估；两阶段不会复用同一个预测起点。执行器要求本地审计、权重和上游产物，不包含自动下载逻辑。
+
+`main-v1` 的实际阶段关系可用下面的命令骨架复现。`labels` 需要分别对五个模型设置 `$MODEL` 与 `$CHECKPOINT` 后执行；四个独立单变量 TSFM 共用 `timesfm2p5` 预测模式生成的填补产物，但最终 `evaluate` 仍分别加载自己的 checkpoint。
+
+```powershell
+python -m tsfm_fais run --config configs/main.yaml --stage fit-imputers --run-id main-fit-v1 --audit-artifact artifacts/data_audit.json --execute
+$MODEL = 'timesfm2p5'
+$CHECKPOINT = 'checkpoints/timesfm2p5'
+python -m tsfm_fais run --config configs/main.yaml --stage labels --run-id "main-labels-$MODEL-v1" --audit-artifact artifacts/data_audit.json --imputer-artifacts artifacts/main-fit-v1/imputer_artifacts --forecaster-id $MODEL --forecaster-artifact $CHECKPOINT --execute
+python -m tsfm_fais labels merge --inputs artifacts/main-labels-chronos2-v2 artifacts/main-labels-timesfm2p5-v1 artifacts/main-labels-chronosbolt-v1 artifacts/main-labels-sundial-v1 artifacts/main-labels-tirex-v1 --output-dir artifacts/main-labels-merged-v1
+python -m tsfm_fais run --config configs/main.yaml --stage train-router --run-id main-router-v1 --labels-artifact artifacts/main-labels-merged-v1/teacher_labels.jsonl --execute
+python -m tsfm_fais run --config configs/main_eval.yaml --stage impute --run-id main-impute-joint-v1 --audit-artifact artifacts/data_audit.json --imputer-artifacts artifacts/main-fit-v1/imputer_artifacts --router-artifact artifacts/main-router-v1/router_folds --forecaster-id chronos2 --execute
+python -m tsfm_fais run --config configs/main_eval.yaml --stage impute --run-id main-impute-univariate-v1 --audit-artifact artifacts/data_audit.json --imputer-artifacts artifacts/main-fit-v1/imputer_artifacts --router-artifact artifacts/main-router-v1/router_folds --forecaster-id timesfm2p5 --execute
+python -m tsfm_fais evaluate --config configs/main_eval.yaml --impute-artifact artifacts/main-impute-joint-v1 --forecaster-id chronos2 --forecaster-artifact checkpoints/chronos2 --output-dir artifacts/main-eval-chronos2-v1
+python -m tsfm_fais evaluate --config configs/main_eval.yaml --impute-artifact artifacts/main-impute-univariate-v1 --forecaster-id $MODEL --forecaster-artifact $CHECKPOINT --output-dir "artifacts/main-eval-$MODEL-v1"
+```
 
 `labels` 的 `--forecaster-id` 接受单个 ID，也接受以逗号分隔的多个 ID。单模型调用可以直接把本地 checkpoint 文件或目录传给 `--forecaster-artifact`。多模型调用应传入一个目录，其中每个模型位于以模型 ID 命名的子路径；也可以传入 JSON 映射文件，键为模型 ID，值为对应 checkpoint 路径，相对路径按映射文件所在目录解析。例如：
 
@@ -287,6 +313,16 @@ python -m tsfm_fais smoke --config configs/smoke.yaml
 ```
 
 `leave_dataset_out` 和 `leave_model_out` 会在 `train-router` 产物中写入 `router_folds/folds.json`。`impute --router-artifact <router_folds>` 会读取该索引：前者按当前数据的 `family_id` 选择相应留出折，后者按 `--forecaster-id` 选择相应留出折。也可以直接传入某个折的目录；执行器会核验其 `held_out` 元数据，防止把该折用于其他数据族或预测器。`rolling_origin` 仍使用单个 `router` 目录。
+
+`impute` 的每个 NPZ 会保存 B-FAIS 填补上下文、原始观测掩码、clean context、clean future、候选张量、原生有效掩码和资源测量。`save_all_candidate_outputs: true` 用于最终评估：它在路由结果确定后补算其余可用候选，但不会改变 B-FAIS 的短名单或块分配。B-FAIS 的运行时间覆盖候选预筛、伪缺失、路由和组装；单候选时间只覆盖该填补器的一次推理。内存字段 `rss_delta_bytes` 是进程端点 RSS 正增量估计，不表示真实峰值。
+
+`evaluate` 加载指定的本地 TSFM checkpoint，对 clean context、B-FAIS、作为 missing anchor 的 `locf`、`linear_interp` 和所有原生有效且能力匹配的候选执行预测；oracle 定义为该 episode 中下游 MASE 最低的有效单算法候选。不支持尾部填补或原生输出无效的候选会保留诊断行，但不会调用 TSFM，也不会进入指标均值。汇总结果同时报告 `count`、`metric_count`、`invalid_count` 和 `invalid_rate`。MASE 使用 clean context：上下文长度大于数据周期时采用季节 lag，否则回退到 lag 1。
+
+逐 episode、逐方法结果写入 `episode_metrics.jsonl` 和 `episode_metrics.csv`。指标包括目标列宏平均 MASE、MAE、RMSE、缺失位置的填补 MAE/RMSE、`degradation_vs_clean_mase`、相对 clean 退化，以及相对 oracle regret。四个 `independent_univariate` 预测器可以复用同一份独立单变量模式的 impute 产物；`chronos2` 必须使用 `joint_multivariate` 产物。每行同时记录实际评测预测器 `forecaster_id` 和路由来源 `routing_forecaster_id`。
+
+`--resume` 根据 `forecaster_id + episode_id + method` 跳过已完成预测，并可截断异常退出留下的不完整 JSONL 尾行。恢复前还会校验输入填补产物、checkpoint 路径、上下文、horizon、目标列、采样数、随机种子和设备；签名不一致时必须使用新的输出目录。
+
+`summarize` 流式读取单个评估 JSONL，默认按数据集、数据族、预测器、缺失机制、缺失率和方法分组，基于有效行输出均值、样本标准差、最小值和最大值到 `summary.json` 与 `summary.csv`，同时保留完整的有效性计数。`summarize-main` 合并多个已完成的预测器评估，生成同 episode 配对比较、分组比较、百分位 bootstrap 区间和 Markdown 报告。评估和汇总不会自动下载模型；`--forecaster-artifact` 必须指向本地文件或目录。
 
 产物目录约定为 `artifacts/<run_id>/`。当前阶段入口会写入 `resolved_config.json`、`software_versions.json`、`seeds.json`、`candidate_status.json` 和 `stage_manifest.json`；依赖缺失与“已准备、未启动执行”状态都会被持久化。真实阶段完成后还应在同一目录写入候选 artifact、教师标签、路由模型、块分配与回退记录。公共 `tsfm_fais.routing.RouterBundle.save()` 会保存 `router_bundle.joblib` 以及特征 schema、候选清单和依赖版本清单；`RoutingResult` 明确保存候选成本、启用成本、风险能量、成本能量和逐块回退记录；候选 runner 返回耗时、RSS 增量估计、状态和失败原因。`artifacts/`、数据、模型权重、缓存和结果目录已排除在版本控制之外。
 
@@ -319,13 +355,36 @@ python -m tsfm_fais smoke --config configs/smoke.yaml
 
 smoke 成功时打印 `SMOKE PASS`。`slow`、`gpu` 和 `network` marker 用于隔离后续需要真实依赖或外部资源的测试。
 
+2026-07-14 的本地验收结果为：`compileall` 通过，非慢速/非 GPU/非网络测试 `227 passed`，离线 smoke 输出 `SMOKE PASS`。测试中的一条 MICE `ConvergenceWarning` 来自全缺失训练通道边界用例，不影响测试结论。
+
+## 主实验结果（`main-v1`）
+
+主实验使用 `configs/main.yaml` 生成教师标签与路由器，使用 `configs/main_eval.yaml` 进行最终评估。设置为上下文长度 48、预测长度 8、目标列 `[0,1]`、六种缺失机制、缺失率 `{0.1,0.2,0.3,0.5}` 和评估种子 `{22,33,44}`。每个数据版本抽取 24 个最终 episode，共 768 个底层缺失 episode。Chronos-2 使用联合多变量预测；TimesFM 2.5、Chronos-Bolt、Sundial 和 TiRex 使用独立单变量预测。每个预测器评估 16,896 个“episode—方法”组合，五个预测器合计 84,480 行。
+
+候选池保留 20 个注册 ID，其中 TRMF 因当前 PyPOTS 1.5 接口与冻结 artifact 协议不兼容而未执行，主实验实际评估 19 个候选。候选拟合阶段记录 384 个数据集级已拟合 artifact、224 个无状态候选状态和 32 个 TRMF 不可用状态。五个教师任务合计生成 40,905 条单块标签和 7,620 条块对标签；路由训练完成 19 个 leave-family-out 折。联合与独立单变量两套填补评估均完成 768/768 episode，共覆盖 186,125 个缺失单元和 39,906 个极大缺失块。严格产物审计确认所有输出有限、原观测值逐元素保持、最终块值与分配候选一致，且没有选中无效候选或触发块回退。
+
+下表报告同一预测器、同一 episode 的配对 MASE。差值定义为 `B-FAIS − 对照`，越小越好；区间为 2,000 次 episode 级百分位 bootstrap 的 95% 描述性区间。
+
+| 对照 | 有效配对 | 配对 B-FAIS MASE | 对照 MASE | MASE 差值 [95% 区间] | B-FAIS 严格胜率 |
+|---|---:|---:|---:|---:|---:|
+| clean context | 3,840/3,840 | 12.7497 | 10.4970 | +2.2528 [1.1998, 3.2880] | 29.82% |
+| LOCF | 3,685/3,840 | 12.3328 | 11.2259 | +1.1070 [0.0595, 2.0398] | 39.59% |
+| linear interpolation | 1,945/3,840 | 10.1407 | 10.4491 | −0.3084 [−1.6761, 0.8461] | 39.02% |
+| single-imputer oracle | 3,840/3,840 | 12.7497 | 8.7088 | +4.0409 [2.9427, 5.3629] | 5.00% |
+
+当前结果不支持“B-FAIS 优于简单基线”的结论。B-FAIS 实现了 100% episode 覆盖，在 12 个同样全覆盖的方法中具有最低的总体平均 MASE，但其 episode 内平均名次为 6.11/12，且相对 LOCF 的配对差值为正。linear interpolation 只在 50.65% 的 episode 原生有效，表中的轻微均值优势区间跨 0，并且 19 个数据族等权后差值转为 `+0.1199`。四个独立单变量 TSFM 上，B-FAIS 相对 clean、LOCF 和 linear 的差值区间均位于 0 以上；Chronos-2 的对应区间跨 0。Chronos-2 同时是唯一的联合多变量预测器，因此本实验无法分离预测模式与模型身份的影响。
+
+主要路由异常是对 CSDI 和 SoftImpute 的集中分配：两者合计占联合路由 66.48% 的块、独立单变量路由 64.20% 的块，而它们的总体 MASE 分别为 32.1948 和 29.1598。缺失率从 0.1 增至 0.5 时，B-FAIS MASE 从 9.9840 增至 16.8483；尾部混合与数值依赖缺失也是主要退化来源。MASE 分布高度偏斜，约 1% 的最大 episode 贡献 B-FAIS MASE 总和的 72.52%，其中 `Coastal_T_S_20T + Chronos-2` 受到极小 MASE 缩放分母影响。移除该数据版本后，B-FAIS 相对 clean、LOCF 和 linear 的平均差仍为 `+1.3267/+0.9632/+0.1758`，因此极端值会改变幅度，但不能改变总体诊断。
+
+完整结果位于 `artifacts/main-summary-v1/`：`report.md` 给出方法、预测器、数据族、机制和缺失率分组结果，`method_summary.csv` 与 `comparison_summary.csv` 保存机器可读表，`main_summary.json` 保存输入 SHA-256 和汇总元数据。`artifacts/` 默认被忽略，因此这些路径只在完成本地主实验的工作区中存在。Chronos-Bolt 的一次全新评估重跑与原始 JSONL、CSV 字节级一致；联合模式的 `--resume` 复核复用了 768/768 个已提交 episode，且输入与输出哈希未变化。
+
 ## 当前限制
 
-当前仓库没有真实数据、模型权重、已拟合候选 artifact、教师标签或路由模型。五个 TSFM 适配器已通过注入 mock backend 检查输出维度，尚未在真实 checkpoint 上完成端到端验证。可选深度填补器也以 mock 覆盖训练/推理分离与序列化接口，真实训练的参数、显存和数值稳定性仍需实验确认。
+首轮主实验只训练了一次路由器，没有估计路由训练随机性。当前 95% 区间按 episode 重采样，没有按 item、预测起点或数据族聚类；3,840 次预测评估来自 768 个底层 episode 在五个 TSFM 上重复评估，不能视为 3,840 个完全独立样本。汇总包含 735 个比较分组且没有多重比较校正，因此区间只用于描述，不作确认性显著性结论。linear interpolation 和 seasonal lag 的原生有效率分别只有 50.65% 和 4.56%，相关比较受到可用性筛选影响。跨数据族的 MAE、RMSE 和填补误差还会混合不同量纲，应优先结合族内结果解释。
 
-CLI 的分阶段命令默认执行严格的输入检查并写入运行清单，只有 `--execute` 会启动数据切分、候选训练、教师推理、路由训练或批量填补。本轮未运行这些真实阶段。现有推理 facade 会排除失败或局部无效候选，并在没有原生有效结果时记录训练中位数或历史上下文中位数回退。运行时间、内存和设备预算已经进入候选执行与搜索；第三方候选调用期间尚未实施抢占或硬中止。
+TRMF 当前不可执行。MICE 在完整训练窗口上拟合时缺少真实缺失模式，当前 artifact 实际提供接近单轮链式回归的行为。TimeMixer++ 在两次独立 GPU 填补运行中有 14/768 个 episode 出现小幅数值差异，最大绝对差约 `9.3e-4`；其他已做的恢复与重跑检查通过。标签合并后每个教师模型各有一个单候选 ranking group，LightGBM 可以读取，但该 group 不产生候选对排序信息。第三方候选调用期间尚未实施抢占或硬中止。
 
-本项目目前不报告任何准确率、MASE、regret、运行时间或显存优势。所有候选排序和性能结论都必须来自后续固定配置、可复现种子和同族隔离的真实实验。
+当前评估使用完整数据上的人工缺失注入，尚未验证自然缺失场景。结果明确显示当前路由器需要重新校准，后续改动应优先抑制 CSDI/SoftImpute 的过度分配，改进高缺失率与尾部块特征，并使用数据族级重采样和稳健尺度指标复核。任何改动后的性能结论都需要使用新的训练产物和独立评估目录，不能覆盖或选择性复用 `main-v1` 结果。
 
 ## 可核验来源
 
@@ -344,4 +403,4 @@ CLI 的分阶段命令默认执行严格的输入检查并写入运行清单，�
 - 公共预测数据归档：[Monash Forecasting Repository](https://forecastingdata.org/)
 - ETT 数据：[ETDataset 官方仓库](https://github.com/zhouhaoyi/ETDataset)
 
-本地准入集合的唯一权威清单是 [`configs/data/datasets.yaml`](configs/data/datasets.yaml)。数据审计结果生成前，不应把任何已登记条目描述为“已通过”或用于报告实验结论。
+本地准入集合的唯一权威清单是 [`configs/data/datasets.yaml`](configs/data/datasets.yaml)。`main-v1` 的 32 个条目均已通过本地审计；修改文件、路径、哨兵或 schema 后必须重新生成审计结果。

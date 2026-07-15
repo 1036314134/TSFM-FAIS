@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from time import perf_counter
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from tsfm_fais.contracts import BudgetSpec, CandidateResult, CandidateStatus, SeriesBatch
 
@@ -131,6 +132,7 @@ class CandidateRunner:
         *,
         seed: int = 0,
         params: Mapping[str, Mapping[str, Any]] | None = None,
+        artifact_failures: Mapping[str, str] | None = None,
         budget: BudgetSpec | None = None,
         runtime_already_spent: float = 0.0,
     ) -> dict[str, CandidateResult]:
@@ -140,6 +142,7 @@ class CandidateRunner:
         selected = tuple(imputer_ids[:limit])
         artifacts = artifacts or {}
         params = params or {}
+        artifact_failures = artifact_failures or {}
         results: dict[str, CandidateResult] = {}
         elapsed = float(runtime_already_spent)
         for imputer_id in selected:
@@ -165,6 +168,15 @@ class CandidateRunner:
                         status=CandidateStatus.UNAVAILABLE,
                     )
                     continue
+            artifact_failure = artifact_failures.get(imputer_id)
+            if artifact_failure is not None:
+                results[imputer_id] = failed_candidate_result(
+                    imputer_id,
+                    batch,
+                    f"artifact load failed: {artifact_failure}",
+                    metadata={"artifact_load_failure": artifact_failure},
+                )
+                continue
             result = self.run(
                 imputer_id,
                 batch,

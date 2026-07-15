@@ -204,6 +204,60 @@ def test_artifact_store_rejects_traversal_and_overwrite(tmp_path):
     assert store.root == (tmp_path / "safe-run").resolve()
     with pytest.raises(FileExistsError, match="choose a new --run-id"):
         RunArtifactStore.create(tmp_path, "safe-run")
+    assert RunArtifactStore.open_existing(tmp_path, "safe-run") == store
+
+
+def test_resume_preparation_requires_identical_resolved_config_and_inputs(tmp_path):
+    config_path = _write_config(tmp_path)
+    config = load_config(config_path)
+    audit = _accepted_audit(tmp_path / "audit.json")
+    inputs = StageInputs(audit_artifact=audit)
+    prepare_stage(
+        config,
+        config_path,
+        "fit-imputers",
+        inputs,
+        run_id="resume-preparation",
+    )
+
+    resumed = prepare_stage(
+        config,
+        config_path,
+        "fit-imputers",
+        inputs,
+        run_id="resume-preparation",
+        resume=True,
+    )
+    assert resumed.resuming is True
+
+    changed = config.model_copy(update={"seed": config.seed + 1})
+    with pytest.raises(ValueError, match="resolved config differs"):
+        prepare_stage(
+            changed,
+            config_path,
+            "fit-imputers",
+            inputs,
+            run_id="resume-preparation",
+            resume=True,
+        )
+
+
+def test_cli_resume_requires_execute_and_run_id(tmp_path, capsys):
+    config = _write_config(tmp_path)
+
+    code = main(
+        [
+            "run",
+            "--config",
+            str(config),
+            "--stage",
+            "fit-imputers",
+            "--resume",
+        ]
+    )
+
+    assert code == 2
+    assert "--resume requires --execute" in capsys.readouterr().err
 
 
 def test_explicit_execution_dispatch_updates_completed_manifest(

@@ -29,6 +29,22 @@ PYPOTS_CLASS_NAMES: dict[str, str] = {
 }
 
 
+# PyPOTS 1.5 TRMF is a transductive matrix-completion implementation.  Its
+# ``predict``/``impute`` path calls the same optimization routine as ``fit``
+# and updates F, X, and W from the evaluation input.  It therefore cannot
+# implement this project's frozen dataset-artifact lifecycle without changing
+# the method.  Keep the public candidate ID registered, but fail before loading
+# PyPOTS when somebody bypasses the registry availability check.
+TRMF_FROZEN_PROTOCOL_BLOCKER = "incompatible-protocol:pypots-1.5-trmf-transductive"
+TRMF_FROZEN_PROTOCOL_REASON = (
+    "PyPOTS 1.5 TRMF is transductive: impute() optimizes F, X, and W on the "
+    "evaluation input and also requires the fitted and evaluation matrices to "
+    "have the same concatenated time length. It cannot provide frozen-artifact "
+    "inference without evaluation-time refitting, so the candidate is disabled "
+    "to preserve leakage-safe evaluation."
+)
+
+
 MODEL_DEFAULTS: dict[str, dict[str, Any]] = {
     "trmf": {
         "lags": [1, 2, 3],
@@ -397,6 +413,12 @@ class TRMFImputer(PyPOTSImputer):
     model_class_name = PYPOTS_CLASS_NAMES[imputer_id]
     model_defaults = MODEL_DEFAULTS[imputer_id]
 
+    def _fit(
+        self, train_batch: SeriesBatch, metadata: Mapping[str, Any]
+    ) -> PyPOTSArtifact:
+        del train_batch, metadata
+        raise ImputerDependencyError(TRMF_FROZEN_PROTOCOL_REASON)
+
 
 class BRITSImputer(PyPOTSImputer):
     imputer_id = "brits"
@@ -458,6 +480,8 @@ __all__ = [
     "PyPOTSImputer",
     "SAITSImputer",
     "TOTEMImputer",
+    "TRMF_FROZEN_PROTOCOL_BLOCKER",
+    "TRMF_FROZEN_PROTOCOL_REASON",
     "TRMFImputer",
     "TimeMixerPPImputer",
 ]

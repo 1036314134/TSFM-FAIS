@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Mapping
 
 import numpy as np
 
@@ -386,27 +386,74 @@ def proxy_features(
     pseudo_mask: np.ndarray,
     source: np.ndarray | None = None,
 ) -> dict[str, float]:
+    feature_cap = 1e12
     hidden = ~np.asarray(pseudo_mask, dtype=bool)
     predicted = candidate.values
     error = predicted[hidden] - np.asarray(pseudo_truth)[hidden]
-    result = {
-        "proxy_mae": float(np.mean(np.abs(error))) if error.size else 0.0,
-        "proxy_rmse": float(np.sqrt(np.mean(error**2))) if error.size else 0.0,
+    with np.errstate(over="ignore", invalid="ignore"):
+        proxy_mae = float(np.mean(np.abs(error))) if error.size else 0.0
+        proxy_rmse = (
+            float(np.sqrt(np.mean(np.square(error)))) if error.size else 0.0
+        )
+    result: dict[str, float] = {
+        "proxy_mae": proxy_mae,
+        "proxy_rmse": proxy_rmse,
         "runtime_seconds": float(candidate.runtime_seconds),
         "peak_memory_mb": candidate.peak_memory_bytes / (1024**2),
         "native_coverage": float(np.mean(candidate.native_valid_mask[hidden])) if error.size else 1.0,
     }
     if source is not None:
-        completed_cov = np.cov(candidate.values.reshape(-1, candidate.values.shape[-1]), rowvar=False)
-        source_cov = np.cov(np.asarray(source).reshape(-1, candidate.values.shape[-1]), rowvar=False)
-        result["covariance_drift"] = float(np.linalg.norm(completed_cov - source_cov))
+        with np.errstate(over="ignore", invalid="ignore"):
+            completed_cov = np.cov(
+                candidate.values.reshape(-1, candidate.values.shape[-1]),
+                rowvar=False,
+            )
+            source_cov = np.cov(
+                np.asarray(source).reshape(-1, candidate.values.shape[-1]),
+                rowvar=False,
+            )
+            result["covariance_drift"] = float(
+                np.linalg.norm(completed_cov - source_cov)
+            )
     else:
         result["covariance_drift"] = 0.0
     if candidate.uncertainty is not None:
-        result["mean_uncertainty"] = float(np.mean(candidate.uncertainty[hidden])) if error.size else 0.0
+        selected_uncertainty = np.asarray(candidate.uncertainty, dtype=float)[hidden]
+        if error.size and selected_uncertainty.size:
+            # A stochastic candidate may return a finite point estimate while its
+            # sample variance overflows.  Preserve that evidence as a large risk
+            # instead of emitting NaN (or treating missing uncertainty as zero).
+            bounded_uncertainty = np.nan_to_num(
+                selected_uncertainty,
+                nan=feature_cap,
+                posinf=feature_cap,
+                neginf=feature_cap,
+            )
+            bounded_uncertainty = np.clip(
+                bounded_uncertainty,
+                0.0,
+                feature_cap,
+            )
+            result["mean_uncertainty"] = float(np.mean(bounded_uncertainty))
+        else:
+            result["mean_uncertainty"] = 0.0
     else:
         result["mean_uncertainty"] = 0.0
-    return result
+    return {
+        name: float(
+            np.clip(
+                np.nan_to_num(
+                    value,
+                    nan=0.0,
+                    posinf=feature_cap,
+                    neginf=-feature_cap,
+                ),
+                -feature_cap,
+                feature_cap,
+            )
+        )
+        for name, value in result.items()
+    }
 
 
 def merge_features(*parts: Mapping[str, float]) -> dict[str, float]:

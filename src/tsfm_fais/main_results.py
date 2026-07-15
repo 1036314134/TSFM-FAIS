@@ -1,0 +1,1170 @@
+"""Deterministic aggregation of multi-forecaster evaluation artifacts."""
+
+from __future__ import annotations
+
+import csv
+import hashlib
+import json
+import math
+from collections import defaultdict
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+FORECAST_METRICS: tuple[str, ...] = ("mase", "mae", "rmse")
+IMPUTATION_METRICS: tuple[str, ...] = ("imputation_mae", "imputation_rmse")
+PAIRED_METRICS: tuple[str, ...] = (*FORECAST_METRICS, *IMPUTATION_METRICS)
+GROUP_FIELDS: tuple[str, ...] = (
+    "forecaster_id",
+    "mechanism",
+    "missing_rate",
+    "family_id",
+)
+SUMMARY_SCOPES: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("overall", ()),
+    ("forecaster", ("forecaster_id",)),
+    ("mechanism", ("mechanism",)),
+    ("missing_rate", ("missing_rate",)),
+    ("family", ("family_id",)),
+)
+DEFAULT_BOOTSTRAP_REPLICATES = 2_000
+DEFAULT_BOOTSTRAP_SEED = 20260710
+SMALL_SAMPLE_THRESHOLD = 30
+
+
+EpisodeKey = tuple[str, str, str]
+
+
+@dataclass(frozen=True)
+class _Source:
+    metrics_path: Path
+    sha256: str
+    row_count: int
+    manifest_path: Path | None
+    manifest_status: str | None
+    manifest_forecaster_id: str | None
+    study_signature: Mapping[str, Any] | None
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "metrics_path": str(self.metrics_path),
+            "sha256": self.sha256,
+            "row_count": self.row_count,
+            "manifest_path": (
+                None if self.manifest_path is None else str(self.manifest_path)
+            ),
+            "manifest_status": self.manifest_status,
+            "manifest_forecaster_id": self.manifest_forecaster_id,
+            "study_signature": (
+                None if self.study_signature is None else dict(self.study_signature)
+            ),
+        }
+
+
+def _write_json(path: Path, payload: Mapping[str, Any]) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+    return path
+
+
+def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> Path:
+    if not rows:
+        raise ValueError(f"cannot write an empty result table: {path.name}")
+    fieldnames = tuple(rows[0])
+    if any(tuple(row) != fieldnames for row in rows):
+        raise ValueError("result rows do not share a stable CSV schema")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    temporary.replace(path)
+    return path
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _resolve_source(
+    value: str | Path,
+) -> tuple[
+    Path,
+    Path | None,
+    str | None,
+    str | None,
+    int | None,
+    dict[str, Any] | None,
+]:
+    source = Path(value).resolve()
+    root = source if source.is_dir() else source.parent
+    metrics = source / "episode_metrics.jsonl" if source.is_dir() else source
+    if not metrics.is_file():
+        raise FileNotFoundError(f"evaluation metrics do not exist: {metrics}")
+    manifest_path = root / "evaluation_manifest.json"
+    if not manifest_path.is_file():
+        return metrics, None, None, None, None, None
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"cannot read evaluation manifest: {manifest_path}") from error
+    status = str(manifest.get("status", ""))
+    if status != "completed":
+        raise ValueError(
+            f"evaluation manifest is not completed ({status or 'missing status'}): "
+            f"{manifest_path}"
+        )
+    forecaster_id = manifest.get("forecaster_id")
+    total_rows = manifest.get("total_rows")
+    if total_rows is not None:
+        try:
+            total_rows = int(total_rows)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"evaluation manifest has an invalid total_rows: {manifest_path}"
+            ) from error
+        if total_rows < 0:
+            raise ValueError(
+                f"evaluation manifest has a negative total_rows: {manifest_path}"
+            )
+    signature = manifest.get("evaluation_signature")
+    study_signature = None
+    if isinstance(signature, Mapping):
+        signature_fields = (
+            "context_length",
+            "horizon",
+            "target_indices",
+            "forecast_num_samples",
+            "seed",
+        )
+        study_signature = {field: signature.get(field) for field in signature_fields}
+    return (
+        metrics,
+        manifest_path,
+        status,
+        None if forecaster_id is None else str(forecaster_id),
+        total_rows,
+        study_signature,
+    )
+
+
+def _finite_number(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _metric_eligible(row: Mapping[str, Any]) -> bool:
+    eligible = bool(row.get("metric_eligible", row.get("native_valid", True)))
+    return eligible and all(_finite_number(row.get(metric)) is not None for metric in FORECAST_METRICS)
+
+
+def _metric_available(row: Mapping[str, Any], metric: str) -> bool:
+    return bool(row.get("metric_eligible", row.get("native_valid", True))) and (
+        _finite_number(row.get(metric)) is not None
+    )
+
+
+def _episode_key(row: Mapping[str, Any]) -> EpisodeKey:
+    return (
+        str(row.get("forecaster_id", "")),
+        str(row.get("dataset_id", "")),
+        str(row.get("episode_id", "")),
+    )
+
+
+def _read_sources(
+    inputs: Sequence[str | Path],
+) -> tuple[
+    dict[EpisodeKey, dict[str, dict[str, Any]]],
+    dict[EpisodeKey, dict[str, Any]],
+    list[_Source],
+    dict[str, str],
+]:
+    if not inputs:
+        raise ValueError("at least one evaluation input is required")
+    resolved = [_resolve_source(value) for value in inputs]
+    paths = [entry[0] for entry in resolved]
+    if len(set(paths)) != len(paths):
+        raise ValueError("evaluation inputs must resolve to unique metrics files")
+
+    episodes: dict[EpisodeKey, dict[str, dict[str, Any]]] = {}
+    metadata: dict[EpisodeKey, dict[str, Any]] = {}
+    method_roles: dict[str, str] = {}
+    sources: list[_Source] = []
+    required = {
+        "episode_id",
+        "dataset_id",
+        "family_id",
+        "forecaster_id",
+        "mechanism",
+        "missing_rate",
+        "method",
+        "method_role",
+    }
+    metadata_fields = (
+        "episode_id",
+        "dataset_id",
+        "family_id",
+        "forecaster_id",
+        "mechanism",
+        "missing_rate",
+    )
+    reference_signature: dict[str, Any] | None = None
+    for (
+        metrics_path,
+        manifest_path,
+        manifest_status,
+        manifest_forecaster_id,
+        manifest_total_rows,
+        study_signature,
+    ) in sorted(
+        resolved, key=lambda entry: str(entry[0]).casefold()
+    ):
+        row_count = 0
+        source_forecasters: set[str] = set()
+        with metrics_path.open("r", encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                try:
+                    raw = json.loads(line)
+                except json.JSONDecodeError as error:
+                    raise ValueError(
+                        f"invalid JSON at {metrics_path}:{line_number}"
+                    ) from error
+                missing = sorted(required - raw.keys())
+                if missing:
+                    raise ValueError(
+                        f"missing fields at {metrics_path}:{line_number}: "
+                        + ", ".join(missing)
+                    )
+                row = dict(raw)
+                key = _episode_key(row)
+                if not all(key):
+                    raise ValueError(
+                        f"empty episode identity at {metrics_path}:{line_number}"
+                    )
+                method = str(row["method"])
+                source_forecasters.add(key[0])
+                role = str(row["method_role"])
+                if not method or not role:
+                    raise ValueError(
+                        f"empty method identity at {metrics_path}:{line_number}"
+                    )
+                previous_role = method_roles.setdefault(method, role)
+                if previous_role != role:
+                    raise ValueError(
+                        f"method {method!r} has conflicting roles: "
+                        f"{previous_role!r} and {role!r}"
+                    )
+                episode_rows = episodes.setdefault(key, {})
+                if method in episode_rows:
+                    raise ValueError(
+                        "duplicate forecaster/episode/method row: "
+                        f"{key[0]}/{key[2]}/{method}"
+                    )
+                episode_rows[method] = row
+                current_metadata = {field: row.get(field) for field in metadata_fields}
+                if key in metadata and metadata[key] != current_metadata:
+                    raise ValueError(
+                        f"inconsistent metadata within episode {key[0]}/{key[2]}"
+                    )
+                metadata[key] = current_metadata
+                row_count += 1
+        if row_count == 0:
+            raise ValueError(f"evaluation metrics file is empty: {metrics_path}")
+        if manifest_total_rows is not None and manifest_total_rows != row_count:
+            raise ValueError(
+                f"evaluation row count does not match its manifest at {metrics_path}: "
+                f"{row_count} != {manifest_total_rows}"
+            )
+        if manifest_forecaster_id is not None and source_forecasters != {
+            manifest_forecaster_id
+        }:
+            raise ValueError(
+                f"evaluation forecaster rows do not match the manifest at {metrics_path}"
+            )
+        if study_signature is not None:
+            if reference_signature is None:
+                reference_signature = study_signature
+            elif study_signature != reference_signature:
+                raise ValueError(
+                    "evaluation study signatures differ in context, horizon, targets, "
+                    "sampling, or seed"
+                )
+        sources.append(
+            _Source(
+                metrics_path=metrics_path,
+                sha256=_sha256(metrics_path),
+                row_count=row_count,
+                manifest_path=manifest_path,
+                manifest_status=manifest_status,
+                manifest_forecaster_id=manifest_forecaster_id,
+                study_signature=study_signature,
+            )
+        )
+
+    for key, rows in episodes.items():
+        absent = sorted({"clean", "b_fais", "oracle"} - rows.keys())
+        if absent:
+            raise ValueError(
+                f"episode {key[0]}/{key[2]} is incomplete; missing: "
+                + ", ".join(absent)
+            )
+        for method in ("clean", "b_fais", "oracle"):
+            if not _metric_eligible(rows[method]):
+                raise ValueError(
+                    f"episode {key[0]}/{key[2]} has invalid required method {method!r}"
+                )
+    return episodes, metadata, sources, method_roles
+
+
+def _scope_groups(
+    episode_keys: Sequence[EpisodeKey],
+    metadata: Mapping[EpisodeKey, Mapping[str, Any]],
+) -> Iterable[tuple[str, tuple[str, ...], tuple[Any, ...], list[EpisodeKey]]]:
+    for scope, fields in SUMMARY_SCOPES:
+        partitions: dict[tuple[Any, ...], list[EpisodeKey]] = defaultdict(list)
+        for episode_key in episode_keys:
+            group_key = tuple(metadata[episode_key].get(field) for field in fields)
+            partitions[group_key].append(episode_key)
+        for group_key in sorted(
+            partitions, key=lambda values: tuple(str(value) for value in values)
+        ):
+            yield scope, fields, group_key, partitions[group_key]
+
+
+def _group_prefix(
+    scope: str, fields: Sequence[str], values: Sequence[Any]
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "scope": scope,
+        "group_value": "all" if not fields else " | ".join(map(str, values)),
+        **{field: None for field in GROUP_FIELDS},
+    }
+    for field, value in zip(fields, values, strict=True):
+        result[field] = value
+    return result
+
+
+def _method_order(method_roles: Mapping[str, str]) -> tuple[str, ...]:
+    candidate_methods = sorted(
+        method
+        for method, role in method_roles.items()
+        if role in {"baseline", "missing_anchor"}
+        and method not in {"locf", "linear_interp"}
+    )
+    ordered = ["b_fais", "clean", "locf", "linear_interp", *candidate_methods, "oracle"]
+    return tuple(method for method in ordered if method in method_roles)
+
+
+def _comparator_order(method_roles: Mapping[str, str]) -> tuple[str, ...]:
+    methods = _method_order(method_roles)
+    return tuple(method for method in methods if method != "b_fais")
+
+
+def _average_tie_ranks(values: Mapping[str, float]) -> dict[str, float]:
+    ordered = sorted(values.items(), key=lambda item: (item[1], item[0]))
+    result: dict[str, float] = {}
+    index = 0
+    while index < len(ordered):
+        end = index + 1
+        while end < len(ordered) and ordered[end][1] == ordered[index][1]:
+            end += 1
+        average_rank = ((index + 1) + end) / 2.0
+        for method, _ in ordered[index:end]:
+            result[method] = average_rank
+        index = end
+    return result
+
+
+def _episode_ranks(
+    episodes: Mapping[EpisodeKey, Mapping[str, Mapping[str, Any]]],
+) -> tuple[dict[EpisodeKey, dict[str, float]], dict[EpisodeKey, int]]:
+    ranks: dict[EpisodeKey, dict[str, float]] = {}
+    pool_sizes: dict[EpisodeKey, int] = {}
+    for episode_key, rows in episodes.items():
+        values: dict[str, float] = {}
+        for method, row in rows.items():
+            role = str(row["method_role"])
+            if method != "b_fais" and role not in {"baseline", "missing_anchor"}:
+                continue
+            if _metric_eligible(row):
+                value = _finite_number(row.get("mase"))
+                assert value is not None
+                values[method] = value
+        ranks[episode_key] = _average_tie_ranks(values)
+        pool_sizes[episode_key] = len(values)
+    return ranks, pool_sizes
+
+
+def _summary(values: Sequence[float]) -> tuple[int, float | None, float | None, float | None]:
+    if not values:
+        return 0, None, None, None
+    array = np.asarray(values, dtype=float)
+    return (
+        int(array.size),
+        float(np.mean(array)),
+        float(np.median(array)),
+        float(np.std(array, ddof=1)) if array.size > 1 else 0.0,
+    )
+
+
+def _method_summaries(
+    episodes: Mapping[EpisodeKey, Mapping[str, Mapping[str, Any]]],
+    metadata: Mapping[EpisodeKey, Mapping[str, Any]],
+    method_roles: Mapping[str, str],
+    ranks: Mapping[EpisodeKey, Mapping[str, float]],
+    pool_sizes: Mapping[EpisodeKey, int],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    episode_keys = sorted(episodes)
+    methods = _method_order(method_roles)
+    for scope, fields, values, group in _scope_groups(episode_keys, metadata):
+        for method in methods:
+            recorded = [episodes[key].get(method) for key in group]
+            valid = [row for row in recorded if row is not None and _metric_eligible(row)]
+            rank_values = [
+                ranks[key][method] for key in group if method in ranks[key]
+            ]
+            rank_pool_values = [
+                float(pool_sizes[key]) for key in group if method in ranks[key]
+            ]
+            result: dict[str, Any] = {
+                **_group_prefix(scope, fields, values),
+                "method": method,
+                "method_role": method_roles[method],
+                "episode_count": len(group),
+                "recorded_count": sum(row is not None for row in recorded),
+                "valid_count": len(valid),
+                "valid_rate": len(valid) / len(group),
+                "small_sample": len(valid) < SMALL_SAMPLE_THRESHOLD,
+                "rank_count": len(rank_values),
+                "average_rank_mase": (
+                    None if not rank_values else float(np.mean(rank_values))
+                ),
+                "rank_pool_size_mean": (
+                    None
+                    if not rank_pool_values
+                    else float(np.mean(rank_pool_values))
+                ),
+            }
+            for metric in PAIRED_METRICS:
+                metric_values = [
+                    float(row[metric])
+                    for row in recorded
+                    if row is not None and _metric_available(row, metric)
+                ]
+                count, mean, median, standard_deviation = _summary(metric_values)
+                result[f"{metric}_count"] = count
+                result[f"{metric}_small_sample"] = count < SMALL_SAMPLE_THRESHOLD
+                result[f"{metric}_mean"] = mean
+                result[f"{metric}_median"] = median
+                result[f"{metric}_std"] = standard_deviation
+            for metric in (
+                "regret_mase",
+                "degradation_vs_clean_mase",
+                "runtime_seconds",
+                "rss_delta_bytes",
+            ):
+                metric_values = [
+                    number
+                    for row in (valid if metric not in {"runtime_seconds", "rss_delta_bytes"} else recorded)
+                    if row is not None
+                    and (number := _finite_number(row.get(metric))) is not None
+                ]
+                count, mean, median, standard_deviation = _summary(metric_values)
+                result[f"{metric}_count"] = count
+                result[f"{metric}_mean"] = mean
+                result[f"{metric}_median"] = median
+                result[f"{metric}_std"] = standard_deviation
+                if metric == "runtime_seconds":
+                    result["runtime_seconds_sum"] = (
+                        None if not metric_values else float(np.sum(metric_values))
+                    )
+            rows.append(result)
+    return rows
+
+
+def _derived_seed(seed: int, *parts: Any) -> int:
+    payload = json.dumps([int(seed), *parts], ensure_ascii=False, sort_keys=True, default=str)
+    digest = hashlib.blake2b(payload.encode("utf-8"), digest_size=8).digest()
+    return int.from_bytes(digest, "little") % (2**32)
+
+
+def _bootstrap_mean_intervals(
+    values: np.ndarray,
+    *,
+    replicates: int,
+    seed: int,
+    chunk_size: int = 32,
+) -> np.ndarray:
+    """Return percentile intervals for column means under paired row resampling."""
+
+    matrix = np.asarray(values, dtype=float)
+    if matrix.ndim != 2 or matrix.shape[1] == 0:
+        raise ValueError("bootstrap values must have shape [episodes, statistics]")
+    if not np.isfinite(matrix).all():
+        raise ValueError("bootstrap values must be finite")
+    if replicates < 1:
+        raise ValueError("bootstrap_replicates must be positive")
+    episode_count = matrix.shape[0]
+    if episode_count < 2:
+        return np.full((matrix.shape[1], 2), np.nan, dtype=float)
+    rng = np.random.default_rng(seed)
+    probability = np.full(episode_count, 1.0 / episode_count, dtype=float)
+    means = np.empty((replicates, matrix.shape[1]), dtype=float)
+    for start in range(0, replicates, chunk_size):
+        stop = min(replicates, start + chunk_size)
+        counts = rng.multinomial(episode_count, probability, size=stop - start)
+        means[start:stop] = (counts @ matrix) / episode_count
+    quantiles = np.quantile(means, (0.025, 0.975), axis=0)
+    return np.column_stack((quantiles[0], quantiles[1]))
+
+
+def _comparison_summaries(
+    episodes: Mapping[EpisodeKey, Mapping[str, Mapping[str, Any]]],
+    metadata: Mapping[EpisodeKey, Mapping[str, Any]],
+    method_roles: Mapping[str, str],
+    ranks: Mapping[EpisodeKey, Mapping[str, float]],
+    *,
+    bootstrap_replicates: int,
+    bootstrap_seed: int,
+) -> list[dict[str, Any]]:
+    results: list[dict[str, Any]] = []
+    episode_keys = sorted(episodes)
+    comparators = _comparator_order(method_roles)
+    for scope, fields, values, group in _scope_groups(episode_keys, metadata):
+        paired: dict[tuple[str, str], dict[str, Any]] = {}
+        for comparator in comparators:
+            for metric in PAIRED_METRICS:
+                pair_keys = [
+                    key
+                    for key in group
+                    if comparator in episodes[key]
+                    and _metric_available(episodes[key]["b_fais"], metric)
+                    and _metric_available(episodes[key][comparator], metric)
+                ]
+                b_values = np.asarray(
+                    [float(episodes[key]["b_fais"][metric]) for key in pair_keys],
+                    dtype=float,
+                )
+                comparator_values = np.asarray(
+                    [float(episodes[key][comparator][metric]) for key in pair_keys],
+                    dtype=float,
+                )
+                paired[(comparator, metric)] = {
+                    "keys": pair_keys,
+                    "b_values": b_values,
+                    "comparator_values": comparator_values,
+                    "delta": b_values - comparator_values,
+                }
+
+        masks: dict[tuple[EpisodeKey, ...], list[tuple[str, str]]] = defaultdict(list)
+        for comparison_key, values_by_metric in paired.items():
+            masks[tuple(values_by_metric["keys"])].append(comparison_key)
+        intervals: dict[tuple[str, str], np.ndarray] = {}
+        for mask_keys, comparison_keys in masks.items():
+            if len(mask_keys) < 2:
+                for comparison_key in comparison_keys:
+                    intervals[comparison_key] = np.full(2, np.nan)
+                continue
+            ordered_comparisons = sorted(comparison_keys)
+            matrix = np.column_stack(
+                [paired[comparison_key]["delta"] for comparison_key in ordered_comparisons]
+            )
+            interval_matrix = _bootstrap_mean_intervals(
+                matrix,
+                replicates=bootstrap_replicates,
+                seed=_derived_seed(
+                    bootstrap_seed,
+                    scope,
+                    list(values),
+                    ordered_comparisons,
+                    list(mask_keys),
+                ),
+            )
+            for comparison_index, comparison_key in enumerate(ordered_comparisons):
+                intervals[comparison_key] = interval_matrix[comparison_index]
+
+        for comparator in comparators:
+            mase_pairs = paired[(comparator, "mase")]["keys"]
+            comparator_recorded = sum(comparator in episodes[key] for key in group)
+            comparator_valid = sum(
+                comparator in episodes[key]
+                and _metric_eligible(episodes[key][comparator])
+                for key in group
+            )
+            b_valid = sum(_metric_eligible(episodes[key]["b_fais"]) for key in group)
+            result: dict[str, Any] = {
+                **_group_prefix(scope, fields, values),
+                "comparator": comparator,
+                "comparator_role": method_roles[comparator],
+                "episode_count": len(group),
+                "comparator_recorded_count": comparator_recorded,
+                "comparator_valid_count": comparator_valid,
+                "comparator_valid_rate": comparator_valid / len(group),
+                "b_fais_valid_count": b_valid,
+                "b_fais_valid_rate": b_valid / len(group),
+                "pair_count": len(mase_pairs),
+                "paired_valid_rate": len(mase_pairs) / len(group),
+                "small_sample": len(mase_pairs) < SMALL_SAMPLE_THRESHOLD,
+                "bootstrap_replicates": (
+                    bootstrap_replicates if len(mase_pairs) >= 2 else 0
+                ),
+            }
+            for metric in PAIRED_METRICS:
+                metric_pair = paired[(comparator, metric)]
+                pair_keys = metric_pair["keys"]
+                b_values = metric_pair["b_values"]
+                comparator_values = metric_pair["comparator_values"]
+                delta = metric_pair["delta"]
+                if not pair_keys:
+                    b_mean = comparator_mean = mean_delta = win_rate = tie_rate = None
+                    ci_low = ci_high = None
+                else:
+                    tied = np.isclose(
+                        b_values, comparator_values, rtol=1e-12, atol=1e-12
+                    )
+                    b_mean = float(np.mean(b_values))
+                    comparator_mean = float(np.mean(comparator_values))
+                    mean_delta = float(np.mean(delta))
+                    win_rate = float(np.mean((b_values < comparator_values) & ~tied))
+                    tie_rate = float(np.mean(tied))
+                    interval = intervals[(comparator, metric)]
+                    ci_low = None if np.isnan(interval[0]) else float(interval[0])
+                    ci_high = None if np.isnan(interval[1]) else float(interval[1])
+                result[f"{metric}_pair_count"] = len(pair_keys)
+                result[f"{metric}_paired_valid_rate"] = len(pair_keys) / len(group)
+                result[f"{metric}_small_sample"] = (
+                    len(pair_keys) < SMALL_SAMPLE_THRESHOLD
+                )
+                result[f"{metric}_bootstrap_replicates"] = (
+                    bootstrap_replicates if len(pair_keys) >= 2 else 0
+                )
+                result[f"b_fais_{metric}_mean"] = b_mean
+                result[f"comparator_{metric}_mean"] = comparator_mean
+                result[f"{metric}_mean_delta"] = mean_delta
+                result[f"{metric}_mean_delta_ci95_low"] = ci_low
+                result[f"{metric}_mean_delta_ci95_high"] = ci_high
+                result[f"{metric}_win_rate"] = win_rate
+                result[f"{metric}_tie_rate"] = tie_rate
+
+            rank_pairs = [
+                key
+                for key in mase_pairs
+                if "b_fais" in ranks[key] and comparator in ranks[key]
+            ]
+            result["rank_pair_count"] = len(rank_pairs)
+            result["b_fais_average_rank_mase"] = (
+                None
+                if not rank_pairs
+                else float(np.mean([ranks[key]["b_fais"] for key in rank_pairs]))
+            )
+            result["comparator_average_rank_mase"] = (
+                None
+                if not rank_pairs
+                else float(np.mean([ranks[key][comparator] for key in rank_pairs]))
+            )
+            for metric in ("regret_mase", "runtime_seconds"):
+                b_numbers = [
+                    number
+                    for key in mase_pairs
+                    if (number := _finite_number(episodes[key]["b_fais"].get(metric)))
+                    is not None
+                ]
+                comparator_numbers = [
+                    number
+                    for key in mase_pairs
+                    if (
+                        number := _finite_number(episodes[key][comparator].get(metric))
+                    )
+                    is not None
+                ]
+                result[f"b_fais_{metric}_mean"] = (
+                    None if not b_numbers else float(np.mean(b_numbers))
+                )
+                result[f"comparator_{metric}_mean"] = (
+                    None if not comparator_numbers else float(np.mean(comparator_numbers))
+                )
+            results.append(result)
+    return results
+
+
+def _format_number(value: Any, digits: int = 4) -> str:
+    number = _finite_number(value)
+    return "NA" if number is None else f"{number:.{digits}f}"
+
+
+def _markdown_table(headers: Sequence[str], body: Sequence[Sequence[Any]]) -> list[str]:
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for row in body:
+        values = [str(value).replace("|", "\\|") for value in row]
+        lines.append("| " + " | ".join(values) + " |")
+    return lines
+
+
+def _write_markdown(
+    path: Path,
+    *,
+    sources: Sequence[_Source],
+    method_rows: Sequence[Mapping[str, Any]],
+    comparison_rows: Sequence[Mapping[str, Any]],
+    bootstrap_replicates: int,
+    bootstrap_seed: int,
+) -> Path:
+    overall_methods = [row for row in method_rows if row["scope"] == "overall"]
+    overall_comparisons = [
+        row for row in comparison_rows if row["scope"] == "overall"
+    ]
+    breakdown = [
+        row
+        for row in method_rows
+        if row["method"] == "b_fais" and row["scope"] != "overall"
+    ]
+    key_breakdown = [
+        row
+        for row in comparison_rows
+        if row["scope"] != "overall"
+        and row["comparator"] in {"clean", "locf", "linear_interp", "oracle"}
+    ]
+    small_count = sum(bool(row["small_sample"]) for row in comparison_rows)
+    lines = [
+        "# TSFM-FAIS multi-forecaster summary",
+        "",
+        "This report is generated from completed episode-level evaluation rows. "
+        "It is descriptive and does not claim statistical significance.",
+        "",
+        "## Statistical definitions",
+        "",
+        "- Every paired comparison uses the same forecaster/episode on both sides. "
+        "Losses are lower-is-better.",
+        "- `mean delta` is B-FAIS minus the comparator. Negative values favor B-FAIS.",
+        "- `win rate` is the strict fraction with lower B-FAIS loss; ties are reported "
+        "separately.",
+        "- The 95% interval is a percentile paired bootstrap interval for the episode-level "
+        f"mean delta ({bootstrap_replicates} resamples, seed {bootstrap_seed}). An interval "
+        "is unavailable when fewer than two pairs exist.",
+        "- MASE average rank uses midranks among B-FAIS and all natively valid evaluated "
+        "single-imputer candidates in each episode. Clean and oracle are excluded from that "
+        "ranking universe.",
+        "- Oracle is the valid single imputer selected by minimum MASE in each episode. Its "
+        "MAE and RMSE are copied from that MASE-selected method and are not metric-specific "
+        "oracles. It is also not an imputation-error oracle.",
+        "- Clean has zero imputation error by construction and is shown only as a complete-"
+        "context reference. It is not executable when the input contains missing values.",
+        "- Overall rows weight each forecaster/episode evaluation equally; they are not "
+        "reweighted to give every model or data family equal mass.",
+        "- Episode bootstrap intervals do not adjust for dependence among episodes that "
+        "share an item, forecast origin, data family, or imputed context.",
+        "- Runtime is end-to-end imputation for B-FAIS and one imputer invocation for a "
+        "candidate, so the scopes differ.",
+        f"- `{small_count}` comparison strata contain fewer than "
+        f"{SMALL_SAMPLE_THRESHOLD} paired episodes and are marked as small samples.",
+        "",
+        "## Inputs",
+        "",
+    ]
+    lines.extend(
+        _markdown_table(
+            ("metrics", "rows", "SHA-256", "manifest"),
+            [
+                (
+                    source.metrics_path,
+                    source.row_count,
+                    source.sha256,
+                    source.manifest_status or "not provided",
+                )
+                for source in sources
+            ],
+        )
+    )
+    lines.extend(["", "## Overall method performance", ""])
+    lines.extend(
+        _markdown_table(
+            (
+                "method",
+                "valid",
+                "MASE",
+                "MAE",
+                "RMSE",
+                "imputation MAE",
+                "imputation RMSE",
+                "MASE rank",
+                "MASE regret",
+                "runtime (s)",
+            ),
+            [
+                (
+                    row["method"],
+                    f"{row['valid_count']}/{row['episode_count']} "
+                    f"({_format_number(row['valid_rate'])})",
+                    _format_number(row["mase_mean"]),
+                    _format_number(row["mae_mean"]),
+                    _format_number(row["rmse_mean"]),
+                    f"{_format_number(row['imputation_mae_mean'])} "
+                    f"(n={row['imputation_mae_count']})",
+                    f"{_format_number(row['imputation_rmse_mean'])} "
+                    f"(n={row['imputation_rmse_count']})",
+                    _format_number(row["average_rank_mase"]),
+                    _format_number(row["regret_mase_mean"]),
+                    _format_number(row["runtime_seconds_mean"]),
+                )
+                for row in overall_methods
+            ],
+        )
+    )
+    lines.extend(["", "## Overall paired B-FAIS comparisons", ""])
+    lines.extend(
+        _markdown_table(
+            (
+                "comparator",
+                "pairs",
+                "MASE delta [95% CI]",
+                "MASE win",
+                "MAE delta [95% CI]",
+                "RMSE delta [95% CI]",
+                "small sample",
+            ),
+            [
+                (
+                    row["comparator"],
+                    f"{row['pair_count']}/{row['episode_count']}",
+                    f"{_format_number(row['mase_mean_delta'])} "
+                    f"[{_format_number(row['mase_mean_delta_ci95_low'])}, "
+                    f"{_format_number(row['mase_mean_delta_ci95_high'])}]",
+                    _format_number(row["mase_win_rate"]),
+                    f"{_format_number(row['mae_mean_delta'])} "
+                    f"[{_format_number(row['mae_mean_delta_ci95_low'])}, "
+                    f"{_format_number(row['mae_mean_delta_ci95_high'])}]",
+                    f"{_format_number(row['rmse_mean_delta'])} "
+                    f"[{_format_number(row['rmse_mean_delta_ci95_low'])}, "
+                    f"{_format_number(row['rmse_mean_delta_ci95_high'])}]",
+                    "yes" if row["small_sample"] else "no",
+                )
+                for row in overall_comparisons
+            ],
+        )
+    )
+    lines.extend(["", "## Overall paired imputation-error comparisons", ""])
+    lines.extend(
+        _markdown_table(
+            (
+                "comparator",
+                "imputation MAE pairs",
+                "imputation MAE delta [95% CI]",
+                "imputation MAE win",
+                "imputation RMSE pairs",
+                "imputation RMSE delta [95% CI]",
+                "imputation RMSE win",
+            ),
+            [
+                (
+                    row["comparator"],
+                    f"{row['imputation_mae_pair_count']}/{row['episode_count']}",
+                    f"{_format_number(row['imputation_mae_mean_delta'])} "
+                    f"[{_format_number(row['imputation_mae_mean_delta_ci95_low'])}, "
+                    f"{_format_number(row['imputation_mae_mean_delta_ci95_high'])}]",
+                    _format_number(row["imputation_mae_win_rate"]),
+                    f"{row['imputation_rmse_pair_count']}/{row['episode_count']}",
+                    f"{_format_number(row['imputation_rmse_mean_delta'])} "
+                    f"[{_format_number(row['imputation_rmse_mean_delta_ci95_low'])}, "
+                    f"{_format_number(row['imputation_rmse_mean_delta_ci95_high'])}]",
+                    _format_number(row["imputation_rmse_win_rate"]),
+                )
+                for row in overall_comparisons
+            ],
+        )
+    )
+    lines.extend(["", "## B-FAIS breakdown", ""])
+    lines.extend(
+        _markdown_table(
+            (
+                "scope",
+                "group",
+                "episodes",
+                "MASE",
+                "MAE",
+                "RMSE",
+                "imputation MAE",
+                "imputation RMSE",
+                "MASE rank",
+                "MASE regret",
+                "runtime (s)",
+            ),
+            [
+                (
+                    row["scope"],
+                    row["group_value"],
+                    row["valid_count"],
+                    _format_number(row["mase_mean"]),
+                    _format_number(row["mae_mean"]),
+                    _format_number(row["rmse_mean"]),
+                    f"{_format_number(row['imputation_mae_mean'])} "
+                    f"(n={row['imputation_mae_count']})",
+                    f"{_format_number(row['imputation_rmse_mean'])} "
+                    f"(n={row['imputation_rmse_count']})",
+                    _format_number(row["average_rank_mase"]),
+                    _format_number(row["regret_mase_mean"]),
+                    _format_number(row["runtime_seconds_mean"]),
+                )
+                for row in breakdown
+            ],
+        )
+    )
+    lines.extend(["", "## Key paired imputation comparisons by breakdown", ""])
+    lines.extend(
+        _markdown_table(
+            (
+                "scope",
+                "group",
+                "comparator",
+                "imputation MAE pairs",
+                "imputation MAE delta [95% CI]",
+                "imputation MAE win",
+                "imputation RMSE pairs",
+                "imputation RMSE delta [95% CI]",
+                "imputation RMSE win",
+            ),
+            [
+                (
+                    row["scope"],
+                    row["group_value"],
+                    row["comparator"],
+                    row["imputation_mae_pair_count"],
+                    f"{_format_number(row['imputation_mae_mean_delta'])} "
+                    f"[{_format_number(row['imputation_mae_mean_delta_ci95_low'])}, "
+                    f"{_format_number(row['imputation_mae_mean_delta_ci95_high'])}]",
+                    _format_number(row["imputation_mae_win_rate"]),
+                    row["imputation_rmse_pair_count"],
+                    f"{_format_number(row['imputation_rmse_mean_delta'])} "
+                    f"[{_format_number(row['imputation_rmse_mean_delta_ci95_low'])}, "
+                    f"{_format_number(row['imputation_rmse_mean_delta_ci95_high'])}]",
+                    _format_number(row["imputation_rmse_win_rate"]),
+                )
+                for row in key_breakdown
+            ],
+        )
+    )
+    lines.extend(["", "## Key paired forecast comparisons by breakdown", ""])
+    lines.extend(
+        _markdown_table(
+            (
+                "scope",
+                "group",
+                "comparator",
+                "pairs",
+                "MASE delta [95% CI]",
+                "MASE win",
+                "valid rate",
+                "small sample",
+            ),
+            [
+                (
+                    row["scope"],
+                    row["group_value"],
+                    row["comparator"],
+                    row["pair_count"],
+                    f"{_format_number(row['mase_mean_delta'])} "
+                    f"[{_format_number(row['mase_mean_delta_ci95_low'])}, "
+                    f"{_format_number(row['mase_mean_delta_ci95_high'])}]",
+                    _format_number(row["mase_win_rate"]),
+                    _format_number(row["comparator_valid_rate"]),
+                    "yes" if row["small_sample"] else "no",
+                )
+                for row in key_breakdown
+            ],
+        )
+    )
+    lines.extend(
+        [
+            "",
+            "All method-by-method and grouped values are available in "
+            "`method_summary.csv`, `comparison_summary.csv`, and `main_summary.json`.",
+            "",
+        ]
+    )
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text("\n".join(lines), encoding="utf-8")
+    temporary.replace(path)
+    return path
+
+
+def summarize_multi_forecaster(
+    *,
+    evaluation_inputs: Sequence[str | Path],
+    output_dir: str | Path,
+    bootstrap_replicates: int = DEFAULT_BOOTSTRAP_REPLICATES,
+    bootstrap_seed: int = DEFAULT_BOOTSTRAP_SEED,
+) -> dict[str, Any]:
+    """Aggregate evaluation directories into paired, grouped main-result tables."""
+
+    if bootstrap_replicates < 1:
+        raise ValueError("bootstrap_replicates must be positive")
+    if bootstrap_seed < 0:
+        raise ValueError("bootstrap_seed must be non-negative")
+    episodes, metadata, sources, method_roles = _read_sources(evaluation_inputs)
+    ranks, pool_sizes = _episode_ranks(episodes)
+    method_rows = _method_summaries(
+        episodes, metadata, method_roles, ranks, pool_sizes
+    )
+    comparison_rows = _comparison_summaries(
+        episodes,
+        metadata,
+        method_roles,
+        ranks,
+        bootstrap_replicates=bootstrap_replicates,
+        bootstrap_seed=bootstrap_seed,
+    )
+    output = Path(output_dir).resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    json_path = output / "main_summary.json"
+    method_csv = output / "method_summary.csv"
+    comparison_csv = output / "comparison_summary.csv"
+    markdown_path = output / "report.md"
+    small_method_strata = sum(bool(row["small_sample"]) for row in method_rows)
+    small_comparison_strata = sum(
+        bool(row["small_sample"]) for row in comparison_rows
+    )
+    payload = {
+        "schema_version": 1,
+        "sources": [source.payload() for source in sources],
+        "episode_count": len(episodes),
+        "forecaster_count": len({key[0] for key in episodes}),
+        "evaluated_candidate_ids": sorted(
+            method
+            for method, role in method_roles.items()
+            if role in {"baseline", "missing_anchor"}
+        ),
+        "scopes": [scope for scope, _ in SUMMARY_SCOPES],
+        "bootstrap": {
+            "unit": "forecaster/dataset/episode",
+            "method": "paired nonparametric percentile bootstrap of the mean delta",
+            "confidence_level": 0.95,
+            "replicates": bootstrap_replicates,
+            "seed": bootstrap_seed,
+            "minimum_pairs": 2,
+        },
+        "definitions": {
+            "loss_direction": "lower is better",
+            "mean_delta": "B-FAIS metric minus comparator metric on paired episodes",
+            "win_rate": (
+                "strict fraction of paired episodes where B-FAIS has lower loss; "
+                "ties are reported separately"
+            ),
+            "valid_rate": (
+                "metric-eligible recorded rows divided by all episodes in the stratum; "
+                "an absent method counts as unavailable"
+            ),
+            "average_rank_mase": (
+                "episode midrank among B-FAIS and natively valid single-imputer "
+                "candidates; clean and oracle are excluded"
+            ),
+            "oracle": (
+                "the valid single imputer with minimum MASE in each episode; its MAE "
+                "and RMSE are not metric-specific oracle selections, and it is not an "
+                "imputation-error oracle"
+            ),
+            "imputation_mae": "MAE on synthetically hidden context entries only",
+            "imputation_rmse": "RMSE on synthetically hidden context entries only",
+            "clean": (
+                "complete-context reference with zero imputation error by construction; "
+                "not executable for an input that contains missing values"
+            ),
+            "regret_mase": "method MASE minus the per-episode MASE oracle",
+            "runtime_seconds": (
+                "end-to-end imputation for B-FAIS and one invocation for a candidate"
+            ),
+            "small_sample": f"fewer than {SMALL_SAMPLE_THRESHOLD} valid episodes or pairs",
+            "overall_weighting": (
+                "each forecaster/episode evaluation has equal weight; models and data "
+                "families are not macro-reweighted"
+            ),
+            "bootstrap_dependence_caveat": (
+                "episode bootstrap intervals do not adjust for dependence among rows that "
+                "share an item, forecast origin, family, or imputed context"
+            ),
+            "inference": (
+                "confidence intervals are descriptive uncertainty summaries; no p-values, "
+                "multiple-comparison adjustment, or significance claims are produced"
+            ),
+        },
+        "warnings": {
+            "small_method_strata": small_method_strata,
+            "small_method_strata_by_metric": {
+                metric: sum(
+                    bool(row[f"{metric}_small_sample"]) for row in method_rows
+                )
+                for metric in PAIRED_METRICS
+            },
+            "small_comparison_strata": small_comparison_strata,
+            "small_comparison_strata_by_metric": {
+                metric: sum(
+                    bool(row[f"{metric}_small_sample"])
+                    for row in comparison_rows
+                )
+                for metric in PAIRED_METRICS
+            },
+            "missing_manifests": sum(
+                source.manifest_path is None for source in sources
+            ),
+            "missing_study_signatures": sum(
+                source.study_signature is None for source in sources
+            ),
+        },
+        "method_summary": method_rows,
+        "comparison_summary": comparison_rows,
+    }
+    _write_json(json_path, payload)
+    _write_csv(method_csv, method_rows)
+    _write_csv(comparison_csv, comparison_rows)
+    _write_markdown(
+        markdown_path,
+        sources=sources,
+        method_rows=method_rows,
+        comparison_rows=comparison_rows,
+        bootstrap_replicates=bootstrap_replicates,
+        bootstrap_seed=bootstrap_seed,
+    )
+    return {
+        "status": "completed",
+        "episode_count": len(episodes),
+        "forecaster_count": payload["forecaster_count"],
+        "method_group_count": len(method_rows),
+        "comparison_group_count": len(comparison_rows),
+        "main_summary_json": str(json_path),
+        "method_summary_csv": str(method_csv),
+        "comparison_summary_csv": str(comparison_csv),
+        "report_markdown": str(markdown_path),
+    }
+
+
+__all__ = [
+    "DEFAULT_BOOTSTRAP_REPLICATES",
+    "DEFAULT_BOOTSTRAP_SEED",
+    "FORECAST_METRICS",
+    "IMPUTATION_METRICS",
+    "PAIRED_METRICS",
+    "SUMMARY_SCOPES",
+    "summarize_multi_forecaster",
+]

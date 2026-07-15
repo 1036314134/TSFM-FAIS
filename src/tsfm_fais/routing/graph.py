@@ -74,16 +74,24 @@ def build_block_graph(
     cross_channel_max_gap: int = 0,
     connect_channel_neighbors: bool = True,
     top_k_correlated: int = 3,
+    max_cross_channel_neighbors: int = 3,
 ) -> BlockGraph:
     """Connect same-channel neighbors, overlaps, and nearby correlated channels."""
 
+    if (
+        cross_channel_max_gap < 0
+        or top_k_correlated < 0
+        or max_cross_channel_neighbors < 0
+    ):
+        raise ValueError("graph neighbor limits must be non-negative")
+
     ordered = tuple(sorted(blocks, key=lambda b: (b.batch_index, b.channel, b.start, b.end)))
     edges: dict[tuple[str, str], BlockEdge] = {}
+    groups: dict[tuple[int, int], list[MissingBlock]] = {}
+    for block in ordered:
+        groups.setdefault((block.batch_index, block.channel), []).append(block)
 
     if connect_channel_neighbors:
-        groups: dict[tuple[int, int], list[MissingBlock]] = {}
-        for block in ordered:
-            groups.setdefault((block.batch_index, block.channel), []).append(block)
         for group in groups.values():
             for left, right in zip(group, group[1:]):
                 gap = _interval_gap(left, right)
@@ -91,40 +99,91 @@ def build_block_graph(
                 key = _edge_key(left.block_id, right.block_id)
                 edges[key] = BlockEdge(key[0], key[1], weight=weight, kind="same_channel")
 
-    for index, left in enumerate(ordered):
-        for right in ordered[index + 1 :]:
-            if left.batch_index != right.batch_index or left.channel == right.channel:
+    matrix: np.ndarray | None = None
+    if correlation is not None:
+        matrix = np.asarray(correlation, dtype=float)
+        max_channel = max((block.channel for block in ordered), default=-1)
+        if matrix.ndim != 2 or matrix.shape[0] <= max_channel or matrix.shape[1] <= max_channel:
+            raise ValueError("correlation matrix does not cover all block channels")
+
+    # Index intervals by time step.  Each block retains only its strongest
+    # overlapping cross-channel neighbors, avoiding the dense clique produced
+    # by synchronous or high-dimensional point missingness.
+    time_index: dict[tuple[int, int], list[int]] = {}
+    for index, block in enumerate(ordered):
+        # Include one boundary step on each side. MissingBlock intervals are
+        # half-open, while ``_interval_gap`` assigns zero gap to [a,b) and
+        # [b,c); without the boundary step the indexed implementation drops
+        # those cross-channel edges that the original pairwise scan retained.
+        start = max(0, block.start - cross_channel_max_gap - 1)
+        end = block.end + cross_channel_max_gap + 1
+        for step in range(start, end):
+            time_index.setdefault((block.batch_index, step), []).append(index)
+    for left_index, left in enumerate(ordered):
+        candidate_indices: set[int] = set()
+        for step in range(left.start, left.end):
+            candidate_indices.update(time_index.get((left.batch_index, step), ()))
+        scored: list[tuple[float, float, str, MissingBlock]] = []
+        for right_index in candidate_indices:
+            if right_index == left_index:
+                continue
+            right = ordered[right_index]
+            if left.channel == right.channel:
                 continue
             gap = _interval_gap(left, right)
             overlap = _overlap(left, right)
-            kind = "cross_channel"
-            if overlap or gap <= cross_channel_max_gap:
-                weight = (
-                    overlap / max(left.length, right.length)
-                    if overlap
-                    else 1.0 / (1.0 + gap)
-                )
-            else:
-                if correlation is None:
-                    continue
-                matrix = np.asarray(correlation, dtype=float)
-                if matrix.shape[0] <= max(left.channel, right.channel):
-                    raise ValueError("correlation matrix does not cover all block channels")
-                row = np.abs(matrix[left.channel]).copy()
-                row[left.channel] = -np.inf
-                ranked_related = [
-                    int(index)
-                    for index in np.argsort(row)[::-1]
-                    if np.isfinite(row[index]) and row[index] > 0
-                ]
-                related = set(ranked_related[:top_k_correlated])
-                if right.channel not in related or gap > max(left.length, right.length):
-                    continue
-                weight = float(abs(matrix[left.channel, right.channel])) / (1.0 + gap)
-                kind = "correlated_channel"
+            if not overlap and gap > cross_channel_max_gap:
+                continue
+            weight = (
+                overlap / max(left.length, right.length)
+                if overlap
+                else 1.0 / (1.0 + gap)
+            )
+            correlation_strength = (
+                0.0 if matrix is None else float(abs(matrix[left.channel, right.channel]))
+            )
+            scored.append((weight, correlation_strength, right.block_id, right))
+        for weight, _, _, right in sorted(scored, reverse=True)[
+            :max_cross_channel_neighbors
+        ]:
             key = _edge_key(left.block_id, right.block_id)
             existing = edges.get(key)
             if existing is None or weight > existing.weight:
-                edges[key] = BlockEdge(key[0], key[1], weight=weight, kind=kind)
+                edges[key] = BlockEdge(
+                    key[0], key[1], weight=weight, kind="cross_channel"
+                )
+
+    if matrix is not None and top_k_correlated:
+        for left in ordered:
+            row = np.abs(matrix[left.channel]).copy()
+            row[left.channel] = -np.inf
+            related_channels = [
+                int(channel)
+                for channel in np.argsort(row)[::-1]
+                if np.isfinite(row[channel]) and row[channel] > 0
+            ][:top_k_correlated]
+            for channel in related_channels:
+                candidates = groups.get((left.batch_index, channel), ())
+                scored_candidates = []
+                for right in candidates:
+                    gap = _interval_gap(left, right)
+                    if gap == 0 or gap > max(left.length, right.length):
+                        continue
+                    weight = float(abs(matrix[left.channel, right.channel])) / (
+                        1.0 + gap
+                    )
+                    scored_candidates.append((weight, right.block_id, right))
+                if not scored_candidates:
+                    continue
+                weight, _, right = max(scored_candidates)
+                key = _edge_key(left.block_id, right.block_id)
+                existing = edges.get(key)
+                if existing is None or weight > existing.weight:
+                    edges[key] = BlockEdge(
+                        key[0],
+                        key[1],
+                        weight=weight,
+                        kind="correlated_channel",
+                    )
 
     return BlockGraph(blocks=ordered, edges=tuple(sorted(edges.values())))

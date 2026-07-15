@@ -10,12 +10,14 @@ from typing import Any, Iterable, Iterator
 from tsfm_fais.contracts import ImputerSpec
 
 from .base import ImputerProtocol
+from .pypots import TRMF_FROZEN_PROTOCOL_BLOCKER, TRMF_FROZEN_PROTOCOL_REASON
 
 
 @dataclass(frozen=True)
 class DependencyAvailability:
     available: bool
     missing: tuple[str, ...] = ()
+    reason: str | None = None
 
 
 def _spec(
@@ -310,6 +312,17 @@ class ImputerRegistry:
                 found = False
             if not found:
                 missing.append(dependency)
+        if imputer_id == "trmf":
+            # Keep a blocker token in ``missing`` because existing stage
+            # manifests persist that field when skipping unavailable methods.
+            # The prefix distinguishes this protocol incompatibility from a
+            # package that can be installed.
+            missing.append(TRMF_FROZEN_PROTOCOL_BLOCKER)
+            return DependencyAvailability(
+                False,
+                tuple(missing),
+                TRMF_FROZEN_PROTOCOL_REASON,
+            )
         return DependencyAvailability(not missing, tuple(missing))
 
     def create(self, imputer_id: str, **overrides: Any) -> ImputerProtocol:

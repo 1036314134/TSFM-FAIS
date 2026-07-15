@@ -21,9 +21,7 @@ class RegistryRef(StrictModel):
 
 
 class ExperimentConfig(StrictModel):
-    split: Literal["leave_dataset_out", "leave_model_out", "rolling_origin"] = (
-        "leave_dataset_out"
-    )
+    split: Literal["leave_dataset_out", "leave_model_out", "rolling_origin"] = "leave_dataset_out"
     context_length: int = Field(default=512, ge=2)
     horizon: int = Field(default=96, ge=1)
     target_indices: tuple[int, ...] | Literal["all"] = "all"
@@ -44,9 +42,25 @@ class ExperimentConfig(StrictModel):
     )
     missing_rates: tuple[float, ...] = (0.1, 0.2, 0.3, 0.5)
     seeds: tuple[int, ...] = (11, 22, 33, 44, 55)
+    candidate_ids: tuple[str, ...] | Literal["all"] = "all"
+    deep_imputer_epochs: int = Field(default=10, ge=1)
+    deep_imputer_batch_size: int = Field(default=32, ge=1)
+    csdi_num_samples: int = Field(default=20, ge=1)
+    missforest_n_jobs: int = Field(default=1, ge=1)
+    max_items_per_dataset: int | None = Field(default=None, ge=1)
+    max_training_windows_per_dataset: int | None = Field(default=None, ge=1)
+    max_train_origins_per_item: int | None = Field(default=None, ge=1)
+    max_eval_origins_per_item: int | None = Field(default=None, ge=1)
+    max_train_episodes_per_dataset: int | None = Field(default=None, ge=1)
+    max_eval_episodes_per_dataset: int | None = Field(default=None, ge=1)
+    max_teacher_blocks_per_episode: int | None = Field(default=8, ge=1)
+    max_teacher_candidates_per_episode: int | None = Field(default=8, ge=2)
+    max_pair_labels_per_episode: int = Field(default=8, ge=1)
+    forecast_num_samples: int = Field(default=20, ge=1)
+    save_all_candidate_outputs: bool = False
 
     @model_validator(mode="after")
-    def validate_rates_and_targets(self) -> "ExperimentConfig":
+    def validate_rates_and_targets(self) -> ExperimentConfig:
         if not self.missing_mechanisms:
             raise ValueError("missing_mechanisms cannot be empty")
         if len(set(self.missing_mechanisms)) != len(self.missing_mechanisms):
@@ -61,6 +75,22 @@ class ExperimentConfig(StrictModel):
             raise ValueError("seeds cannot be empty")
         if len(set(self.seeds)) != len(self.seeds):
             raise ValueError("seeds must be unique")
+        if self.candidate_ids != "all":
+            if not self.candidate_ids:
+                raise ValueError("candidate_ids cannot be empty")
+            if any(not candidate_id.strip() for candidate_id in self.candidate_ids):
+                raise ValueError("candidate_ids entries cannot be empty")
+            if len(set(self.candidate_ids)) != len(self.candidate_ids):
+                raise ValueError("candidate_ids must be unique")
+            missing_baselines = {
+                "locf",
+                "linear_interp",
+            }.difference(self.candidate_ids)
+            if missing_baselines:
+                raise ValueError(
+                    "candidate_ids must include routing baselines: "
+                    + ", ".join(sorted(missing_baselines))
+                )
         if self.target_indices != "all":
             if not self.target_indices:
                 raise ValueError("target_indices cannot be empty")
@@ -116,4 +146,17 @@ def load_config(path: str | Path) -> AppConfig:
     runtime = config.runtime.model_copy(
         update={"output_root": _resolve_path(config.runtime.output_root, base)}
     )
-    return config.model_copy(update={"registries": refs, "runtime": runtime})
+    resolved = config.model_copy(update={"registries": refs, "runtime": runtime})
+    requested = resolved.experiment.candidate_ids
+    if requested != "all" and refs.imputer_registry.is_file():
+        registry_payload = load_yaml(refs.imputer_registry)
+        entries = registry_payload.get("imputers", [])
+        available = {
+            str(entry["id"])
+            for entry in entries
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str)
+        }
+        unknown = tuple(candidate_id for candidate_id in requested if candidate_id not in available)
+        if unknown:
+            raise ValueError("candidate_ids contains unknown candidates: " + ", ".join(unknown))
+    return resolved

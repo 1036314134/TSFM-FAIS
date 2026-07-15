@@ -111,10 +111,115 @@ def test_arrow_loader_preserves_item_boundaries_and_marks_implicit_time(tmp_path
     assert all(item.values.shape == (4, 2) for item in items)
     assert all(item.timestamps is None for item in items)
     assert all(item.metadata["implicit_regular_time"] for item in items)
+    assert all(item.metadata["raw_variate_names"] == ("x", "y") for item in items)
+    assert all(item.metadata["variate_name_normalization"] == "none" for item in items)
     assert audit_dataset(spec, items).accepted
 
     rejected = audit_dataset(spec.model_copy(update={"allow_implicit_regular_time": False}), items)
     assert "implicit_time_not_allowed" in {issue.code for issue in rejected.issues}
+
+
+def _write_arrow_rows(path, rows):
+    table = pa.Table.from_pylist(rows)
+    with pa.OSFile(str(path), "wb") as sink, pa.ipc.new_stream(
+        sink, table.schema
+    ) as writer:
+        writer.write_table(table)
+
+
+def _normalizing_arrow_spec(path) -> DatasetSpec:
+    return DatasetSpec(
+        dataset_id="normalized_arrow",
+        family_id="toy",
+        format="arrow",
+        path=path,
+        frequency="H",
+        period=24,
+        expected_num_variates=2,
+        allow_implicit_regular_time=True,
+        variate_name_normalization="strip_bracket_suffix",
+    )
+
+
+def test_arrow_loader_strips_safe_suffix_and_preserves_raw_names(tmp_path):
+    path = tmp_path / "normalized.arrow"
+    _write_arrow_rows(
+        path,
+        [
+            {
+                "item_id": "plain",
+                "start": datetime(2026, 1, 1),
+                "freq": "H",
+                "target": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                "variate_names": ["min_cpu", "max_cpu"],
+            },
+            {
+                "item_id": "annotated",
+                "start": datetime(2026, 1, 1),
+                "freq": "H",
+                "target": [[7.0, 8.0, 9.0], [10.0, 11.0, 12.0]],
+                "variate_names": ["min_cpu[sp,rw]", "max_cpu[rw,drop]"],
+            },
+        ],
+    )
+    spec = _normalizing_arrow_spec(path)
+
+    items = load_arrow(spec)
+
+    assert all(item.variate_names == ("min_cpu", "max_cpu") for item in items)
+    assert items[0].metadata["raw_variate_names"] == ("min_cpu", "max_cpu")
+    assert items[1].metadata["raw_variate_names"] == (
+        "min_cpu[sp,rw]",
+        "max_cpu[rw,drop]",
+    )
+    assert audit_dataset(spec, items).accepted
+
+
+@pytest.mark.parametrize(
+    "names,error",
+    [
+        (("x[unsafe/value]", "y"), "unsafe Arrow variate name"),
+        (("x", "x[tag]"), "not unique after normalization"),
+        (("x", "y", "z"), "has length 3, expected D=2"),
+    ],
+)
+def test_arrow_name_normalization_rejects_unsafe_or_ambiguous_names(
+    tmp_path, names, error
+):
+    path = tmp_path / "invalid_names.arrow"
+    _write_arrow_rows(
+        path,
+        [
+            {
+                "item_id": "invalid",
+                "start": datetime(2026, 1, 1),
+                "freq": "H",
+                "target": [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]],
+                "variate_names": list(names),
+            }
+        ],
+    )
+
+    with pytest.raises(ValueError, match=error):
+        load_arrow(_normalizing_arrow_spec(path))
+
+
+def test_variate_name_normalization_is_strict_and_arrow_only(tmp_path):
+    base = {
+        "dataset_id": "toy",
+        "family_id": "toy",
+        "format": "arrow",
+        "path": tmp_path / "toy.arrow",
+        "frequency": "H",
+        "period": 24,
+    }
+    with pytest.raises(ValidationError, match="variate_name_normalization"):
+        DatasetSpec(**base, variate_name_normalization="strip_any_suffix")
+    with pytest.raises(ValidationError, match="supported only for Arrow"):
+        DatasetSpec(
+            **{**base, "format": "csv"},
+            variate_name_normalization="strip_bracket_suffix",
+        )
 
 
 @pytest.mark.parametrize(
@@ -383,6 +488,11 @@ def test_local_manifest_contains_exactly_32_multivariate_versions():
     manifest = load_manifest("configs/data/datasets.yaml")
     assert len(manifest.datasets) == 32
     assert "weather" not in {spec.dataset_id for spec in manifest.datasets}
+    assert {
+        spec.dataset_id
+        for spec in manifest.datasets
+        if spec.variate_name_normalization != "none"
+    } == {"azure2019_D_5T", "azure2019_I_5T", "azure2019_U_5T"}
     assert all(
         "ori" not in {part.lower() for part in spec.path.parts}
         for spec in manifest.datasets

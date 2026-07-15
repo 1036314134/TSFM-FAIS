@@ -1,0 +1,13 @@
+schema_version: 1
+data_root: ../../../TSFM-SPImpute/data/Origin
+datasets:
+  - dataset_id: ETTh1
+    family_id: ett
+    format: csv
+    path: csv/ETTh1.csv
+    frequency: H
+    period: 24
+    domain: energy
+    timestamp_column: date
+    expected_num_variates: 7
+    provenance: release_complete

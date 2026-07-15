@@ -13,8 +13,8 @@ experiment:
   missing_mechanisms: [independent_block, tail_mixed]
   missing_rates: [0.2]
   seeds: [20260710]
+  missforest_n_jobs: 1
 runtime:
   output_root: ../artifacts
   device: cpu
   fail_fast: true
-

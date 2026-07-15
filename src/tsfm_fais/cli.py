@@ -1,12 +1,12 @@
-"""Command-line interface for configuration, auditing, and local verification."""
+"""Command-line interface for experiments, evaluation, and local verification."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
 import pandas as pd
@@ -14,6 +14,12 @@ import pandas as pd
 from tsfm_fais.config import load_config
 from tsfm_fais.contracts import BudgetSpec, ForecastSpec, TimeSeriesItem
 from tsfm_fais.data import audit_dataset, load_dataset, load_manifest
+from tsfm_fais.evaluation import (
+    DEFAULT_GROUP_BY,
+    evaluate_imputations,
+    parse_ids,
+    summarize_evaluation,
+)
 from tsfm_fais.forecasting import (
     ForecastAdapterSpec,
     ForecastRegistry,
@@ -22,9 +28,20 @@ from tsfm_fais.forecasting import (
     default_forecast_registry,
 )
 from tsfm_fais.imputers import DEFAULT_REGISTRY
+from tsfm_fais.label_artifacts import merge_label_artifacts
+from tsfm_fais.main_results import (
+    DEFAULT_BOOTSTRAP_REPLICATES,
+    DEFAULT_BOOTSTRAP_SEED,
+    summarize_multi_forecaster,
+)
 from tsfm_fais.pipeline import BlockwiseFAIS
 from tsfm_fais.registry_configs import validate_project_configuration
-from tsfm_fais.stages import StageInputs, finish_preparation, prepare_stage
+from tsfm_fais.stages import (
+    StageInputs,
+    finish_preparation,
+    parse_forecaster_ids,
+    prepare_stage,
+)
 
 
 def _json_default(value):
@@ -198,6 +215,20 @@ def _smoke(args: argparse.Namespace) -> int:
 
 
 def _run_stage(args: argparse.Namespace) -> int:
+    if args.resume and not args.execute:
+        raise ValueError("--resume requires --execute")
+    if args.resume and args.stage not in {"fit-imputers", "labels", "impute"}:
+        raise ValueError(
+            "--resume is currently supported only for fit-imputers, labels, and impute"
+        )
+    if (
+        args.resume
+        and args.stage == "labels"
+        and len(parse_forecaster_ids(args.forecaster_id)) != 1
+    ):
+        raise ValueError("labels resume requires exactly one forecaster ID")
+    if args.resume and not args.run_id:
+        raise ValueError("--resume requires an explicit --run-id")
     config = load_config(args.config)
     validate_project_configuration(config)
     preparation_inputs = StageInputs(
@@ -214,6 +245,7 @@ def _run_stage(args: argparse.Namespace) -> int:
         args.stage,
         preparation_inputs,
         run_id=args.run_id,
+        resume=args.resume,
     )
     if args.execute:
         from tsfm_fais.stage_execution import execute_prepared_stage
@@ -223,6 +255,49 @@ def _run_stage(args: argparse.Namespace) -> int:
         return 0
     manifest = finish_preparation(preparation)
     print(f"STAGE PREPARED: {manifest}")
+    return 0
+
+
+def _evaluate(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    validate_project_configuration(config)
+    result = evaluate_imputations(
+        config=config,
+        impute_artifact=args.impute_artifact,
+        forecaster_id=args.forecaster_id,
+        forecaster_artifact=args.forecaster_artifact,
+        output_dir=args.output_dir,
+        baseline_ids=parse_ids(args.baseline_ids),
+        resume=args.resume,
+    )
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _summarize(args: argparse.Namespace) -> int:
+    result = summarize_evaluation(
+        metrics_path=args.input,
+        output_dir=args.output_dir,
+        group_by=parse_ids(args.group_by),
+    )
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _summarize_main(args: argparse.Namespace) -> int:
+    result = summarize_multi_forecaster(
+        evaluation_inputs=args.input,
+        output_dir=args.output_dir,
+        bootstrap_replicates=args.bootstrap_replicates,
+        bootstrap_seed=args.bootstrap_seed,
+    )
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _labels_merge(args: argparse.Namespace) -> int:
+    result = merge_label_artifacts(args.inputs, args.output_dir)
+    print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
 
 
@@ -257,6 +332,22 @@ def build_parser() -> argparse.ArgumentParser:
     forecaster_list = forecaster_commands.add_parser("list")
     forecaster_list.set_defaults(handler=_forecasters_list)
 
+    labels = commands.add_parser("labels")
+    label_commands = labels.add_subparsers(dest="labels_command", required=True)
+    merge = label_commands.add_parser("merge")
+    merge.add_argument(
+        "--inputs",
+        nargs="+",
+        required=True,
+        help="two or more completed labels-stage artifact directories",
+    )
+    merge.add_argument(
+        "--output-dir",
+        required=True,
+        help="new directory for validated merged label files",
+    )
+    merge.set_defaults(handler=_labels_merge)
+
     run = commands.add_parser("run")
     run.add_argument("--config", required=True)
     run.add_argument(
@@ -285,7 +376,78 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="explicitly execute the prepared stage; may train models or run inference",
     )
+    run.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "resume fit-imputers, single-forecaster labels, or impute after strict "
+            "config, upstream, progress, and output-artifact validation"
+        ),
+    )
     run.set_defaults(handler=_run_stage)
+
+    evaluate = commands.add_parser("evaluate")
+    evaluate.add_argument("--config", required=True)
+    evaluate.add_argument(
+        "--impute-artifact",
+        required=True,
+        help="completed impute-stage directory containing imputations and assignments",
+    )
+    evaluate.add_argument("--forecaster-id", required=True)
+    evaluate.add_argument(
+        "--forecaster-artifact",
+        required=True,
+        help="local checkpoint file or directory; evaluation never downloads weights",
+    )
+    evaluate.add_argument("--output-dir", required=True)
+    evaluate.add_argument(
+        "--baseline-ids",
+        default="locf,linear_interp",
+        help="stateless baselines to reconstruct when older impute artifacts lack them",
+    )
+    evaluate.add_argument(
+        "--resume",
+        action="store_true",
+        help="append only missing episode/method rows and repair a truncated final JSONL line",
+    )
+    evaluate.set_defaults(handler=_evaluate)
+
+    summarize = commands.add_parser("summarize")
+    summarize.add_argument(
+        "--input",
+        required=True,
+        help="episode_metrics.jsonl or its containing evaluation directory",
+    )
+    summarize.add_argument("--output-dir", required=True)
+    summarize.add_argument(
+        "--group-by",
+        default=",".join(DEFAULT_GROUP_BY),
+        help="comma-separated row fields used for grouped means and standard deviations",
+    )
+    summarize.set_defaults(handler=_summarize)
+
+    summarize_main = commands.add_parser(
+        "summarize-main",
+        help="combine completed forecaster evaluations into paired main-result tables",
+    )
+    summarize_main.add_argument(
+        "--input",
+        required=True,
+        nargs="+",
+        help="evaluation directories or episode_metrics.jsonl files",
+    )
+    summarize_main.add_argument("--output-dir", required=True)
+    summarize_main.add_argument(
+        "--bootstrap-replicates",
+        type=int,
+        default=DEFAULT_BOOTSTRAP_REPLICATES,
+    )
+    summarize_main.add_argument(
+        "--bootstrap-seed",
+        type=int,
+        default=DEFAULT_BOOTSTRAP_SEED,
+    )
+    summarize_main.set_defaults(handler=_summarize_main)
 
     smoke = commands.add_parser("smoke")
     smoke.add_argument(

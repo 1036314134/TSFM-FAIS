@@ -27,6 +27,7 @@ class DatasetSpec(BaseModel):
     target_columns: tuple[str, ...] | Literal["all"] = "all"
     sentinel_values: tuple[float, ...] = (-9999.0,)
     allow_implicit_regular_time: bool = False
+    variate_name_normalization: Literal["none", "strip_bracket_suffix"] = "none"
     expected_num_variates: int | None = Field(default=None, ge=2)
     provenance: Literal["source_complete", "release_complete", "snapshot_complete"] = (
         "snapshot_complete"
@@ -34,11 +35,13 @@ class DatasetSpec(BaseModel):
     enabled: bool = True
 
     @model_validator(mode="after")
-    def validate_schema(self) -> "DatasetSpec":
+    def validate_schema(self) -> DatasetSpec:
         if not self.dataset_id.strip() or not self.family_id.strip():
             raise ValueError("dataset_id and family_id cannot be empty")
         if not self.frequency.strip():
             raise ValueError("frequency cannot be empty")
+        if self.variate_name_normalization != "none" and self.format != "arrow":
+            raise ValueError("variate_name_normalization is supported only for Arrow data")
         if self.value_columns is not None:
             if len(self.value_columns) < 2:
                 raise ValueError("value_columns must contain at least two variates")
@@ -70,7 +73,7 @@ class DatasetManifest(BaseModel):
     datasets: tuple[DatasetSpec, ...]
 
     @model_validator(mode="after")
-    def unique_ids(self) -> "DatasetManifest":
+    def unique_ids(self) -> DatasetManifest:
         if not self.datasets:
             raise ValueError("datasets cannot be empty")
         ids = [spec.dataset_id for spec in self.datasets]

@@ -3,14 +3,19 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from tsfm_fais.contracts import CandidateStatus, SeriesBatch
+from tsfm_fais.imputers.base import ImputerDependencyError
 from tsfm_fais.imputers.pypots import (
     CSDIImputer,
     SAITSImputer,
+    TRMF_FROZEN_PROTOCOL_BLOCKER,
+    TRMF_FROZEN_PROTOCOL_REASON,
     TimeMixerPPImputer,
     TRMFImputer,
 )
+from tsfm_fais.imputers.registry import DEFAULT_REGISTRY
 
 
 def make_batch() -> SeriesBatch:
@@ -58,31 +63,6 @@ class FakeCSDI(FakeModel):
         offsets = np.linspace(-1.0, 1.0, n_sampling_times)
         samples = np.stack([base + offset for offset in offsets], axis=1)
         return {"imputation": samples}
-
-
-class FakeTRMF:
-    last_max_iter = None
-
-    def __init__(
-        self,
-        lags,
-        K,
-        lambda_f,
-        lambda_x,
-        lambda_w,
-        alpha,
-        eta,
-        max_iter=1000,
-        **kwargs,
-    ):
-        del lags, K, lambda_f, lambda_x, lambda_w, alpha, eta, kwargs
-        type(self).last_max_iter = max_iter
-
-    def fit(self, train_set):
-        assert train_set["X"].ndim == 3
-
-    def impute(self, test_set):
-        return np.nan_to_num(test_set["X"], nan=0.0)
 
 
 class FakeTimeMixerPP(FakeModel):
@@ -165,19 +145,31 @@ def test_pypots_artifact_save_and_load_does_not_refit(monkeypatch, tmp_path) -> 
     assert result.status is CandidateStatus.SUCCESS
 
 
-def test_trmf_and_timemixerpp_explicit_required_parameters(monkeypatch) -> None:
+def test_trmf_is_disabled_before_loading_pypots(monkeypatch) -> None:
     import tsfm_fais.imputers.pypots as module
 
     batch = make_batch()
     monkeypatch.setattr(
-        module,
-        "_load_model_class",
-        lambda name: FakeTRMF if name == "TRMF" else FakeTimeMixerPP,
+        module, "_load_model_class", lambda _: pytest.fail("must not load PyPOTS")
     )
     trmf = TRMFImputer(epochs=7)
-    trmf_artifact = trmf.fit(batch, {})
-    assert FakeTRMF.last_max_iter == 7
-    assert trmf.impute(batch, trmf_artifact).status is CandidateStatus.SUCCESS
+    with pytest.raises(ImputerDependencyError, match="transductive"):
+        trmf.fit(batch, {})
+
+
+def test_registry_reports_trmf_frozen_protocol_blocker() -> None:
+    availability = DEFAULT_REGISTRY.availability("trmf")
+    assert not availability.available
+    assert TRMF_FROZEN_PROTOCOL_BLOCKER in availability.missing
+    assert availability.reason == TRMF_FROZEN_PROTOCOL_REASON
+    assert "evaluation-time refitting" in availability.reason
+
+
+def test_timemixerpp_explicit_required_parameters(monkeypatch) -> None:
+    import tsfm_fais.imputers.pypots as module
+
+    batch = make_batch()
+    monkeypatch.setattr(module, "_load_model_class", lambda _: FakeTimeMixerPP)
 
     mixer = TimeMixerPPImputer(epochs=1)
     mixer_artifact = mixer.fit(batch, {})

@@ -206,7 +206,8 @@ class TeacherBuilder:
         scales: dict[int, float] = {}
         for target in targets:
             history = values[:, :, target]
-            lag = max(1, min(int(self.seasonality), max(1, history.shape[-1] - 1)))
+            requested_lag = max(1, int(self.seasonality))
+            lag = requested_lag if history.shape[-1] > requested_lag else 1
             differences = np.abs(history[..., lag:] - history[..., :-lag])
             scales[target] = max(
                 float(np.mean(differences)) if differences.size else 0.0,
@@ -221,22 +222,34 @@ class TeacherBuilder:
         spec: ForecastSpec,
         scales: Mapping[int, float] | None = None,
     ) -> float:
-        forecast = self.forecast(context, spec)
+        return float(np.mean(self._losses(context, future, spec, scales)))
+
+    def _losses(
+        self,
+        context: np.ndarray,
+        future: np.ndarray,
+        spec: ForecastSpec,
+        scales: Mapping[int, float] | None = None,
+    ) -> np.ndarray:
+        """Return one macro-MASE value per context row.
+
+        Keeping the row dimension makes counterfactual contexts batchable while
+        preserving the exact scalar objective used by ``_loss``.
+        """
+
+        values = np.asarray(context, dtype=float)
+        truth_values = np.asarray(future, dtype=float)
+        if truth_values.shape[0] == 1 and values.shape[0] != 1:
+            truth_values = np.repeat(truth_values, values.shape[0], axis=0)
+        if truth_values.shape[0] != values.shape[0]:
+            raise ValueError("future batch size must match forecast contexts")
+        forecast = self.forecast(values, spec)
         targets = forecast.target_indices
-        truth = np.asarray(future)[:, :, targets]
-        fixed_scales = dict(scales or self._scales(context, targets))
-        losses = [
-            float(
-                np.mean(
-                    np.abs(
-                        truth[:, :, index] - forecast.point[:, :, index]
-                    )
-                )
-                / fixed_scales[target]
-            )
-            for index, target in enumerate(targets)
-        ]
-        return float(np.mean(losses))
+        truth = truth_values[:, :, targets]
+        fixed_scales = dict(scales or self._scales(values, targets))
+        errors = np.mean(np.abs(truth - forecast.point), axis=1)
+        scale_array = np.asarray([fixed_scales[target] for target in targets])
+        return np.mean(errors / scale_array[None, :], axis=1)
 
     def unary_labels(
         self,
@@ -280,6 +293,65 @@ class TeacherBuilder:
                 )
         return labels
 
+    def unary_labels_batched(
+        self,
+        episode_id: str,
+        clean_context: np.ndarray,
+        clean_future: np.ndarray,
+        anchor: np.ndarray,
+        blocks: Sequence[MissingBlock],
+        candidates: Mapping[str, CandidateResult],
+        spec: ForecastSpec,
+        candidate_filter: Callable[
+            [MissingBlock, str, CandidateResult], bool
+        ]
+        | None = None,
+    ) -> tuple[list[TeacherLabel], float, float]:
+        """Evaluate clean, anchor, and all unary counterfactuals in one call."""
+
+        clean = np.asarray(clean_context, dtype=float)
+        anchor_values = np.asarray(anchor, dtype=float)
+        if clean.shape != anchor_values.shape:
+            raise ValueError("clean context and anchor must have the same shape")
+        targets = spec.target_indices or tuple(range(clean.shape[2]))
+        scales = self._scales(clean, targets)
+        contexts = [clean, anchor_values]
+        keys: list[tuple[MissingBlock, str]] = []
+        for block in blocks:
+            for candidate_id, candidate in candidates.items():
+                if candidate_filter is not None and not candidate_filter(
+                    block, candidate_id, candidate
+                ):
+                    continue
+                if not candidate.native_valid_mask[
+                    block.batch_index, block.start : block.end, block.channel
+                ].all():
+                    continue
+                contexts.append(replace_block(anchor_values, candidate.values, block))
+                keys.append((block, candidate_id))
+        batch_size = clean.shape[0]
+        repeated_future = np.concatenate([clean_future] * len(contexts), axis=0)
+        losses = self._losses(
+            np.concatenate(contexts, axis=0),
+            repeated_future,
+            spec,
+            scales,
+        ).reshape(len(contexts), batch_size).mean(axis=1)
+        clean_loss = float(losses[0])
+        anchor_loss = float(losses[1])
+        labels = [
+            TeacherLabel(
+                episode_id=episode_id,
+                block_id=block.block_id,
+                candidate_id=candidate_id,
+                forecast_loss=float(loss),
+                clean_loss=clean_loss,
+                degradation=float(loss - clean_loss),
+            )
+            for (block, candidate_id), loss in zip(keys, losses[2:])
+        ]
+        return labels, clean_loss, anchor_loss
+
     def pair_interaction(
         self,
         clean_future: np.ndarray,
@@ -306,3 +378,47 @@ class TeacherBuilder:
             - self._loss(right_values, clean_future, spec, scales)
             + base_loss
         )
+
+    def pair_interactions_batched(
+        self,
+        clean_future: np.ndarray,
+        anchor: np.ndarray,
+        requests: Sequence[
+            tuple[MissingBlock, MissingBlock, CandidateResult, CandidateResult]
+        ],
+        spec: ForecastSpec,
+        *,
+        anchor_loss: float,
+        scale_context: np.ndarray | None = None,
+    ) -> tuple[float, ...]:
+        """Evaluate all left/right/both pair counterfactuals in one call."""
+
+        if not requests:
+            return ()
+        anchor_values = np.asarray(anchor, dtype=float)
+        targets = spec.target_indices or tuple(range(anchor_values.shape[2]))
+        scales = self._scales(
+            anchor_values if scale_context is None else scale_context,
+            targets,
+        )
+        contexts: list[np.ndarray] = []
+        for left, right, left_candidate, right_candidate in requests:
+            left_values = replace_block(anchor_values, left_candidate.values, left)
+            right_values = replace_block(anchor_values, right_candidate.values, right)
+            both = replace_block(left_values, right_candidate.values, right)
+            contexts.extend((left_values, right_values, both))
+        batch_size = anchor_values.shape[0]
+        repeated_future = np.concatenate([clean_future] * len(contexts), axis=0)
+        losses = self._losses(
+            np.concatenate(contexts, axis=0),
+            repeated_future,
+            spec,
+            scales,
+        ).reshape(len(contexts), batch_size).mean(axis=1)
+        interactions = []
+        for index in range(len(requests)):
+            left_loss, right_loss, both_loss = losses[3 * index : 3 * index + 3]
+            interactions.append(
+                float(both_loss - left_loss - right_loss + anchor_loss)
+            )
+        return tuple(interactions)
