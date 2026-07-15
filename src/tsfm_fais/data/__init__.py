@@ -2,9 +2,15 @@
 
 from .audit import AuditIssue, DatasetAudit, audit_dataset
 from .catalog import DatasetManifest, DatasetSpec, load_manifest
-from .episodes import Episode, build_episode, rolling_origins
+from .episodes import Episode, build_episode, fit_prefix_end, rolling_origins
 from .loaders import load_dataset
-from .masking import MaskingSpec, inject_missing, stable_seed
+from .masking import (
+    MaskedSeries,
+    MaskingSpec,
+    extract_missing_blocks,
+    mask_time_series,
+    stable_seed,
+)
 from .splits import FamilyFold, family_folds
 
 __all__ = [
@@ -15,12 +21,15 @@ __all__ = [
     "Episode",
     "FamilyFold",
     "MaskingSpec",
+    "MaskedSeries",
     "audit_dataset",
     "build_episode",
+    "extract_missing_blocks",
     "family_folds",
-    "inject_missing",
+    "fit_prefix_end",
     "load_dataset",
     "load_manifest",
+    "mask_time_series",
     "rolling_origins",
     "stable_seed",
 ]

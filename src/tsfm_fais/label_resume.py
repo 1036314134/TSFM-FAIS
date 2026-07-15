@@ -463,7 +463,6 @@ def _validate_dataset_plans(plans: Mapping[str, Any]) -> None:
             )
         if (
             not isinstance(episode_ids, list)
-            or not episode_ids
             or any(not isinstance(item, str) or not item for item in episode_ids)
             or len(set(episode_ids)) != len(episode_ids)
         ):
@@ -620,7 +619,6 @@ class LabelProgressStore:
     ) -> str:
         if (
             not dataset_id
-            or not episode_ids
             or any(not isinstance(item, str) or not item for item in episode_ids)
             or len(set(episode_ids)) != len(episode_ids)
         ):

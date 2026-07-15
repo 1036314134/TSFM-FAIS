@@ -8,6 +8,7 @@ import numpy as np
 from tsfm_fais.contracts import ForecastResult
 from tsfm_fais.evaluation import (
     SUMMARY_METRICS,
+    _resolve_forecaster_artifact,
     forecast_metrics,
     parse_ids,
     summarize_evaluation,
@@ -48,8 +49,36 @@ def test_forecast_metrics_fall_back_to_lag_one_when_period_exceeds_context() -> 
     np.testing.assert_allclose(metrics["mase"], [1.0])
 
 
+def test_forecast_metrics_use_frozen_training_prefix_scale_when_supplied() -> None:
+    context = np.asarray([[0.0], [100.0], [0.0], [100.0]])
+    future = np.asarray([[2.0]])
+    result = ForecastResult(np.asarray([[[0.0]]]), target_indices=(0,))
+
+    metrics = forecast_metrics(
+        context,
+        future,
+        result,
+        seasonality=1,
+        mase_scale=np.asarray([0.5]),
+    )
+
+    np.testing.assert_allclose(metrics["mase"], [4.0])
+
+
 def test_parse_ids_is_strict_and_preserves_order() -> None:
     assert parse_ids("locf, linear_interp") == ("locf", "linear_interp")
+
+
+def test_forecaster_artifact_mapping_resolves_one_requested_model(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "weights" / "chronos"
+    checkpoint.mkdir(parents=True)
+    mapping = tmp_path / "forecasters.json"
+    mapping.write_text(
+        json.dumps({"artifacts": {"chronos2": "weights/chronos"}}),
+        encoding="utf-8",
+    )
+
+    assert _resolve_forecaster_artifact(mapping, "chronos2") == checkpoint.resolve()
 
 
 def test_summary_excludes_invalid_candidate_fallback_metrics(tmp_path: Path) -> None:

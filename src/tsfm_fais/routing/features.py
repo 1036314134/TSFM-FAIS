@@ -63,6 +63,9 @@ class RoutingFeatureExtractor:
         "block_is_tail",
         "block_channel_ratio",
         "concurrent_missing",
+        "target_missing_rate",
+        "global_missing_rate",
+        "local_missing_rate",
         "observed_mean",
         "observed_std",
         "boundary_gap",
@@ -175,6 +178,9 @@ class RoutingFeatureExtractor:
                 base["is_tail"],
                 base["channel_ratio"],
                 base["concurrent_missing"],
+                base["target_missing_rate"],
+                base["global_missing_rate"],
+                base["local_missing_rate"],
                 base["observed_mean"],
                 base["observed_std"],
                 base["boundary_gap"],
@@ -348,7 +354,14 @@ def block_features(
     left = values[block.start - 1] if block.start > 0 and observed[block.start - 1] else np.nan
     right = values[block.end] if block.end < length and observed[block.end] else np.nan
     overlap = float(np.mean(~batch.observed_mask[block.batch_index, block.start : block.end]))
-    return {
+    local_rate = float(
+        batch.metadata.get(
+            "local_missing_rate", float(np.mean(~batch.observed_mask[block.batch_index]))
+        )
+    )
+    global_rate = float(batch.metadata.get("global_missing_rate", local_rate))
+    target_rate = float(batch.metadata.get("target_missing_rate", global_rate))
+    features = {
         "length": float(block.length),
         "length_ratio": block.length / length,
         "start_ratio": block.start / length,
@@ -356,11 +369,18 @@ def block_features(
         "is_tail": float(block.end == length),
         "channel_ratio": block.channel / max(1, dimensions - 1),
         "concurrent_missing": overlap,
+        "target_missing_rate": target_rate,
+        "global_missing_rate": global_rate,
+        "local_missing_rate": local_rate,
         "observed_mean": float(np.mean(finite)) if finite.size else 0.0,
         "observed_std": float(np.std(finite)) if finite.size else 0.0,
         "boundary_gap": float(abs(right - left)) if np.isfinite(left) and np.isfinite(right) else 0.0,
         "period_ratio": block.length / max(1, period or length),
     }
+    mechanism = batch.metadata.get("missing_mechanism")
+    if isinstance(mechanism, str) and mechanism:
+        features[f"missing_mechanism::{mechanism}"] = 1.0
+    return features
 
 
 def candidate_features(spec: ImputerSpec, forecast: ForecastSpec) -> dict[str, float]:
@@ -374,9 +394,11 @@ def candidate_features(spec: ImputerSpec, forecast: ForecastSpec) -> dict[str, f
         "forecast_joint": float(forecast.mode == "joint_multivariate"),
         "forecast_horizon": float(forecast.horizon),
         "forecast_context": float(forecast.context_length or 0),
+        "forecast_target_count": float(len(forecast.target_indices or ())),
     }
     features[f"candidate_id::{spec.imputer_id}"] = 1.0
     features[f"candidate_family::{spec.family}"] = 1.0
+    features[f"forecast_model::{forecast.model_id}"] = 1.0
     return features
 
 

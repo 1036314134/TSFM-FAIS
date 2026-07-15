@@ -352,7 +352,7 @@ def test_impute_stage_accepts_router_fold_root(tmp_path):
         json.dumps(
             {
                 "schema_version": 1,
-                "split": "leave_dataset_out",
+                "split": "leave_family_out",
                 "folds": {
                     "family-a": str(first_fold),
                     "family-b": str(second_fold),

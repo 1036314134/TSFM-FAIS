@@ -342,7 +342,7 @@ def test_impute_resume_does_not_accept_uncommitted_half_output(
         (root / "routing_assignments.jsonl").read_text(encoding="utf-8").splitlines()
     ) == 2
     with np.load(root / "imputations" / removed["file"], allow_pickle=False) as archive:
-        assert int(np.asarray(archive["schema_version"]).reshape(-1)[0]) == 2
+        assert int(np.asarray(archive["schema_version"]).reshape(-1)[0]) == 3
     json.loads((root / removed["assignment_file"]).read_text(encoding="utf-8"))
 
 

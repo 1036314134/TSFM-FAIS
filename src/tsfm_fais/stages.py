@@ -153,7 +153,7 @@ def _router_semantics(check: dict[str, Any]) -> None:
         check["valid"] = False
         check["message"] = f"invalid router fold manifest: {type(error).__name__}: {error}"
         return
-    if split not in {"leave_dataset_out", "leave_model_out"} or not isinstance(
+    if split not in {"leave_family_out", "leave_model_out"} or not isinstance(
         folds, dict
     ) or not folds:
         check["valid"] = False

@@ -38,8 +38,10 @@ from tsfm_fais.data import (
     MaskingSpec,
     audit_dataset,
     build_episode,
+    fit_prefix_end,
     load_dataset,
     load_manifest,
+    mask_time_series,
     rolling_origins,
     stable_seed,
 )
@@ -81,7 +83,7 @@ from tsfm_fais.stages import (
     utc_now,
 )
 
-_IMPUTATION_SCHEMA_VERSION = 2
+_IMPUTATION_SCHEMA_VERSION = 3
 _IMPUTATION_PROGRESS_SCHEMA_VERSION = 1
 
 
@@ -173,14 +175,35 @@ def _datasets(config: AppConfig, audit_path: Path):
         yield spec, selected_items
 
 
-def _fit_region_end(length: int, context_length: int, horizon: int) -> int:
-    if context_length < 2 or horizon < 1:
-        raise ValueError("invalid context length or horizon")
-    latest = length - context_length - 2 * horizon
-    if latest < context_length:
-        return context_length
-    proposed = int(np.floor(0.2 * max(0, length - horizon)))
-    return min(latest, max(context_length, proposed))
+def _sequence_mask_seed(
+    dataset_id: str,
+    item_id: str,
+    masking: MaskingSpec,
+    configured_seed: int,
+) -> int:
+    """Derive a mask seed that is independent of every forecast origin."""
+
+    return stable_seed(
+        dataset_id,
+        item_id,
+        masking.mechanism,
+        f"{masking.missing_rate:.17g}",
+        int(configured_seed),
+        "sequence_mask_v2",
+    )
+
+
+def _training_prefix_end(
+    length: int,
+    context_length: int,
+    horizon: int,
+    fraction: float,
+) -> int:
+    if length < context_length:
+        raise ValueError("series is shorter than the imputer context")
+    if length >= context_length + horizon:
+        return fit_prefix_end(length, context_length, horizon, fraction)
+    return min(length, max(context_length, int(np.floor(fraction * length))))
 
 
 def _training_batch(
@@ -188,42 +211,77 @@ def _training_batch(
     context_length: int,
     horizon: int,
     max_windows: int | None = None,
+    *,
+    dataset_id: str = "dataset",
+    masking_specs: Iterable[MaskingSpec] | None = None,
+    configured_seeds: Iterable[int] = (20260710,),
+    fit_fraction: float = 0.2,
+    training_stride: int = 24,
 ) -> SeriesBatch:
-    selected = [item for item in items if len(item.values) >= 2 * context_length + 2 * horizon]
+    selected = [item for item in items if len(item.values) >= context_length]
     if not selected:
-        raise ValueError("no item has enough history for fitting plus train/eval forecast origins")
+        raise ValueError("no item has enough history for an imputer training window")
     dimensions = {item.values.shape[1] for item in selected}
     if len(dimensions) != 1:
         raise ValueError("training items must share the same variate dimension")
+    specs = tuple(masking_specs or (MaskingSpec("independent_block", 0.2),))
+    seeds = tuple(map(int, configured_seeds))
+    if not specs or not seeds:
+        raise ValueError("imputer training requires masking specs and seeds")
+    if training_stride < 1:
+        raise ValueError("training_stride must be positive")
     windows: list[np.ndarray] = []
+    masks: list[np.ndarray] = []
     window_ids: list[str] = []
-    stride = max(1, int(horizon))
     for item in selected:
-        fit_end = _fit_region_end(len(item.values), context_length, horizon)
-        starts = list(range(0, fit_end - context_length + 1, stride))
+        fit_end = _training_prefix_end(
+            len(item.values), context_length, horizon, fit_fraction
+        )
+        starts = list(range(0, fit_end - context_length + 1, training_stride))
         final_start = fit_end - context_length
         if not starts or starts[-1] != final_start:
             starts.append(final_start)
-        for start in starts:
-            windows.append(item.values[start : start + context_length])
-            window_ids.append(f"{item.item_id}@{start}")
+        calibration = item.values[:fit_end]
+        for spec in specs:
+            for configured_seed in seeds:
+                realization = mask_time_series(
+                    item.values,
+                    spec,
+                    _sequence_mask_seed(
+                        dataset_id, item.item_id, spec, configured_seed
+                    ),
+                    calibration_values=calibration,
+                )
+                for start in starts:
+                    stop = start + context_length
+                    windows.append(realization.values[start:stop])
+                    masks.append(realization.observed_mask[start:stop])
+                    window_ids.append(
+                        f"{item.item_id}@{start}|{spec.mechanism}|"
+                        f"{spec.missing_rate:g}|{configured_seed}"
+                    )
     selected_windows = evenly_spaced_subset(
-        tuple(zip(windows, window_ids, strict=True)), max_windows
+        tuple(zip(windows, masks, window_ids, strict=True)), max_windows
     )
-    windows = [window for window, _ in selected_windows]
-    window_ids = [window_id for _, window_id in selected_windows]
+    windows = [window for window, _, _ in selected_windows]
+    masks = [mask for _, mask, _ in selected_windows]
+    window_ids = [window_id for _, _, window_id in selected_windows]
     values = np.stack(windows)
     return SeriesBatch(
         values,
-        np.ones_like(values, dtype=bool),
+        np.stack(masks),
         item_ids=tuple(window_ids),
+        metadata={"mask_protocol": "sequence_mask_v2"},
     )
 
 
 def _training_statistics(batch: SeriesBatch) -> tuple[np.ndarray, np.ndarray]:
     matrix = batch.values.reshape(-1, batch.shape[2])
-    medians = np.median(matrix, axis=0)
-    centered = matrix - np.mean(matrix, axis=0, keepdims=True)
+    medians = np.nanmedian(matrix, axis=0)
+    if not np.isfinite(medians).all():
+        raise ValueError("at least one variate has no observed training value")
+    filled = np.where(np.isfinite(matrix), matrix, medians[None, :])
+    centered = filled - np.mean(filled, axis=0, keepdims=True)
     norms = np.linalg.norm(centered, axis=0)
     normalized = np.divide(
         centered,
@@ -235,6 +293,21 @@ def _training_statistics(batch: SeriesBatch) -> tuple[np.ndarray, np.ndarray]:
     valid = np.flatnonzero(norms > 0)
     correlation[valid, valid] = 1.0
     return medians, np.clip(correlation, -1.0, 1.0)
+
+
+def _training_mase_scale(
+    values: np.ndarray,
+    period: int,
+) -> tuple[np.ndarray, int]:
+    """Freeze one per-variate MASE scale from a historical training prefix."""
+
+    history = np.asarray(values, dtype=float)
+    if history.ndim != 2 or history.shape[0] < 2 or not np.isfinite(history).all():
+        raise ValueError("MASE scaling requires a complete [T,D] training prefix")
+    requested = max(1, int(period))
+    lag = requested if history.shape[0] > requested else 1
+    scale = np.mean(np.abs(history[lag:] - history[:-lag]), axis=0)
+    return np.maximum(scale, 1e-8), lag
 
 
 def _selected_candidate_ids(config: AppConfig) -> tuple[str, ...]:
@@ -710,6 +783,10 @@ def execute_fit_imputers(
         "missforest_n_jobs": config.experiment.missforest_n_jobs,
         "max_items_per_dataset": config.experiment.max_items_per_dataset,
         "max_training_windows_per_dataset": (config.experiment.max_training_windows_per_dataset),
+        "mask_protocol": "sequence_mask_v2",
+        "fit_prefix_fraction": config.experiment.fit_prefix_fraction,
+        "training_window_stride": config.experiment.training_window_stride,
+        "missing_block_lengths": list(config.experiment.missing_block_lengths),
         "resume": resume_identity,
     }
     if preparation.resuming and manifest_path.is_file():
@@ -747,6 +824,19 @@ def execute_fit_imputers(
             config.experiment.context_length,
             config.experiment.horizon,
             config.experiment.max_training_windows_per_dataset,
+            dataset_id=dataset.dataset_id,
+            masking_specs=(
+                MaskingSpec(
+                    mechanism,
+                    rate,
+                    config.experiment.missing_block_lengths,
+                )
+                for mechanism in config.experiment.missing_mechanisms
+                for rate in config.experiment.missing_rates
+            ),
+            configured_seeds=config.experiment.seeds,
+            fit_fraction=config.experiment.fit_prefix_fraction,
+            training_stride=config.experiment.training_window_stride,
         )
         dataset_dir = output / dataset.dataset_id
         dataset_dir.mkdir(parents=True, exist_ok=preparation.resuming)
@@ -758,6 +848,7 @@ def execute_fit_imputers(
                 "training_windows": batch.shape[0],
                 "dimension": batch.shape[2],
                 "context_length": batch.shape[1],
+                "mask_protocol": "sequence_mask_v2",
                 "training_summary": training_summary,
                 "statistics": "training_statistics.npz",
                 "candidates": {},
@@ -1329,7 +1420,10 @@ def _artifact_loading_manifest(
 def _partition_origins(
     origins: tuple[int, ...],
     partition: Literal["all", "train", "eval"],
+    split: str = "rolling_origin",
 ) -> tuple[int, ...]:
+    if split == "leave_family_out":
+        return origins
     if partition == "all":
         return origins
     if len(origins) < 2:
@@ -1343,12 +1437,21 @@ def _capped_origins(
     origins: tuple[int, ...],
     partition: Literal["all", "train", "eval"],
 ) -> tuple[int, ...]:
+    if config.experiment.split == "leave_family_out":
+        limit = (
+            config.experiment.max_train_origins_per_item
+            if partition == "train"
+            else config.experiment.max_eval_origins_per_item
+            if partition == "eval"
+            else None
+        )
+        return evenly_spaced_subset(origins, limit)
     training = evenly_spaced_subset(
-        _partition_origins(origins, "train"),
+        _partition_origins(origins, "train", config.experiment.split),
         config.experiment.max_train_origins_per_item,
     )
     evaluation = evenly_spaced_subset(
-        _partition_origins(origins, "eval"),
+        _partition_origins(origins, "eval", config.experiment.split),
         config.experiment.max_eval_origins_per_item,
     )
     if partition == "train":
@@ -1366,7 +1469,6 @@ class _EpisodeDescriptor:
     forecast_origin: int
     masking: MaskingSpec
     configured_seed: int
-    repetition: int
     source_index: int
 
 
@@ -1378,23 +1480,35 @@ def _episode_descriptor_grid(
     length = config.experiment.context_length
     descriptors: list[_EpisodeDescriptor] = []
     for item in items:
+        if len(item.values) < length + config.experiment.horizon:
+            continue
+        first_origin = fit_prefix_end(
+            len(item.values),
+            length,
+            config.experiment.horizon,
+            config.experiment.fit_prefix_fraction,
+        )
         origins = rolling_origins(
             len(item.values),
-            _fit_region_end(len(item.values), length, config.experiment.horizon) + length,
+            length,
             config.experiment.horizon,
-            config.experiment.horizon,
+            config.experiment.forecast_stride or config.experiment.horizon,
+            start=first_origin,
         )
         for origin in _capped_origins(config, origins, partition):
             for mechanism in config.experiment.missing_mechanisms:
                 for rate in config.experiment.missing_rates:
-                    for repetition, configured_seed in enumerate(config.experiment.seeds):
+                    for configured_seed in config.experiment.seeds:
                         descriptors.append(
                             _EpisodeDescriptor(
                                 item=item,
                                 forecast_origin=origin,
-                                masking=MaskingSpec(mechanism, rate),
+                                masking=MaskingSpec(
+                                    mechanism,
+                                    rate,
+                                    config.experiment.missing_block_lengths,
+                                ),
                                 configured_seed=int(configured_seed),
-                                repetition=int(configured_seed) + repetition,
                                 source_index=len(descriptors),
                             )
                         )
@@ -1589,15 +1703,41 @@ def _episode_iter(
         selection_summary.clear()
         selection_summary.update(summary)
     length = config.experiment.context_length
+    realization_cache: dict[tuple[str, str, float, int], Any] = {}
     for descriptor in descriptors:
+        cache_key = (
+            descriptor.item.item_id,
+            descriptor.masking.mechanism,
+            descriptor.masking.missing_rate,
+            descriptor.configured_seed,
+        )
+        realization = realization_cache.get(cache_key)
+        if realization is None:
+            fit_end = fit_prefix_end(
+                len(descriptor.item.values),
+                length,
+                config.experiment.horizon,
+                config.experiment.fit_prefix_fraction,
+            )
+            realization = mask_time_series(
+                descriptor.item.values,
+                descriptor.masking,
+                _sequence_mask_seed(
+                    dataset.dataset_id,
+                    descriptor.item.item_id,
+                    descriptor.masking,
+                    descriptor.configured_seed,
+                ),
+                calibration_values=descriptor.item.values[:fit_end],
+            )
+            realization_cache[cache_key] = realization
         episode = build_episode(
             descriptor.item,
             dataset.dataset_id,
+            realization,
             descriptor.forecast_origin,
             length,
             config.experiment.horizon,
-            descriptor.masking,
-            repetition=descriptor.repetition,
         )
         episode_id = (
             f"{dataset.dataset_id}__{descriptor.item.item_id}__"
@@ -1661,21 +1801,15 @@ def _forecaster_artifacts(inputs: StageInputs) -> tuple[tuple[str, Path], ...]:
         raise ValueError("forecaster ID and artifact are required")
     model_ids = parse_forecaster_ids(inputs.forecaster_id)
     source = inputs.forecaster_artifact.resolve()
-    if len(model_ids) == 1:
-        if not source.exists():
-            raise ValueError(f"forecaster artifact does not exist: {source}")
-        return ((model_ids[0], source),)
+    if not source.exists():
+        raise ValueError(f"forecaster artifact does not exist: {source}")
 
     resolved: dict[str, Path] = {}
-    if source.is_dir():
-        resolved = {model_id: source / model_id for model_id in model_ids}
-    else:
+    if source.is_file() and source.suffix.lower() == ".json":
         try:
             payload = json.loads(source.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as error:
-            raise ValueError(
-                "multiple forecasters require a checkpoint directory or JSON mapping"
-            ) from error
+            raise ValueError("forecaster artifact JSON is invalid") from error
         mapping = payload.get("artifacts") if isinstance(payload, dict) else None
         if mapping is None:
             mapping = payload
@@ -1689,6 +1823,14 @@ def _forecaster_artifacts(inputs: StageInputs) -> tuple[tuple[str, Path], ...]:
             resolved[model_id] = (
                 target if target.is_absolute() else (source.parent / target).resolve()
             )
+    elif len(model_ids) == 1:
+        resolved[model_ids[0]] = source
+    elif source.is_dir():
+        resolved = {model_id: source / model_id for model_id in model_ids}
+    else:
+        raise ValueError(
+            "multiple forecasters require a checkpoint directory or JSON mapping"
+        )
     missing = [model_id for model_id, path in resolved.items() if not path.exists()]
     if missing:
         raise ValueError("forecaster artifacts do not exist for: " + ", ".join(sorted(missing)))
@@ -1891,6 +2033,10 @@ def _label_sampling_cell(episode_id: str, episode: Any) -> dict[str, Any]:
         "missing_rate": missing_rate,
         "configured_seed": configured_seed,
         "episode_seed": int(episode.seed),
+        "mask_seed": int(episode.mask_seed),
+        "mask_realization_id": str(episode.mask_realization_id),
+        "global_missing_rate": float(episode.global_missing_rate),
+        "local_missing_rate": float(episode.local_missing_rate),
     }
 
 
@@ -2539,10 +2685,6 @@ def _execute_labels_resumable_single(
                 selection_summary=dataset_sampling,
             )
         )
-        if not episodes:
-            raise ValueError(
-                f"dataset {dataset.dataset_id!r} provides no selected training episodes"
-            )
         episode_ids = tuple(episode_id for episode_id, _ in episodes)
         if dataset.dataset_id in dataset_episode_ids:
             raise ValueError(f"duplicate dataset ID in label plan: {dataset.dataset_id!r}")
@@ -2969,7 +3111,7 @@ def execute_train_router(
         _fit_router_bundle(rows, pair_rows, output, {"split": split, **lineage})
         return {"router_artifact": str(output), "split": split}
 
-    field = "family_id" if split == "leave_dataset_out" else "forecaster_id"
+    field = "family_id" if split == "leave_family_out" else "forecaster_id"
     held_out_values = tuple(sorted({str(row[field]) for row in rows}))
     if len(held_out_values) < 2:
         raise ValueError(f"{split} requires labels from at least two distinct {field} values")
@@ -3036,7 +3178,7 @@ def _router_fold_index(path: Path) -> tuple[str, dict[str, Path]] | None:
     payload = json.loads(manifest.read_text(encoding="utf-8"))
     split = payload.get("split") if isinstance(payload, dict) else None
     folds = payload.get("folds") if isinstance(payload, dict) else None
-    if split not in {"leave_dataset_out", "leave_model_out"}:
+    if split not in {"leave_family_out", "leave_model_out"}:
         raise ValueError(f"invalid router fold split: {split!r}")
     if not isinstance(folds, dict) or not folds:
         raise ValueError("router fold manifest must contain a non-empty folds mapping")
@@ -3178,6 +3320,8 @@ def _validate_resumable_imputation(
     artifact_root: Path,
     episode: Any,
     period: int,
+    mase_scale: np.ndarray,
+    mase_scale_lag: int,
     allowed_candidate_ids: frozenset[str],
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
     expected_identity = {
@@ -3230,6 +3374,36 @@ def _validate_resumable_imputation(
             return False, f"assignment identity mismatch: {assignment_field}", None
     if assignment.get("schema_version") != _IMPUTATION_SCHEMA_VERSION:
         return False, "assignment schema mismatch", None
+    assignment_mask_identity = {
+        "mask_protocol": "sequence_mask_v2",
+        "mask_seed": int(episode.mask_seed),
+        "mask_realization_id": str(episode.mask_realization_id),
+    }
+    for field, expected in assignment_mask_identity.items():
+        if assignment.get(field) != expected:
+            return False, f"assignment mask identity mismatch: {field}", None
+    for field, expected in (
+        ("target_missing_rate", episode.target_missing_rate),
+        ("global_missing_rate", episode.global_missing_rate),
+        ("local_missing_rate", episode.local_missing_rate),
+    ):
+        try:
+            actual = float(assignment.get(field))
+        except (TypeError, ValueError):
+            return False, f"assignment mask rate is invalid: {field}", None
+        if not np.isclose(actual, float(expected), rtol=0.0, atol=1e-15):
+            return False, f"assignment mask rate mismatch: {field}", None
+    try:
+        assignment_scale = np.asarray(assignment.get("mase_scale"), dtype=float)
+        assignment_lag = int(assignment.get("mase_scale_lag"))
+    except (TypeError, ValueError):
+        return False, "assignment MASE scale is invalid", None
+    if not np.array_equal(
+        assignment_scale.reshape(-1), np.asarray(mase_scale, dtype=float).reshape(-1)
+    ):
+        return False, "assignment MASE scale differs", None
+    if assignment_lag != int(mase_scale_lag):
+        return False, "assignment MASE lag differs", None
     raw_candidate_ids = assignment.get("candidate_ids")
     if not isinstance(raw_candidate_ids, list) or any(
         not isinstance(candidate_id, str) for candidate_id in raw_candidate_ids
@@ -3255,6 +3429,14 @@ def _validate_resumable_imputation(
         "observed_mask",
         "clean_context",
         "clean_future",
+        "mask_protocol",
+        "mask_seed",
+        "mask_realization_id",
+        "target_missing_rate",
+        "global_missing_rate",
+        "local_missing_rate",
+        "mase_scale",
+        "mase_scale_lag",
         "period",
         "candidate_ids",
         "candidate_values",
@@ -3282,10 +3464,27 @@ def _validate_resumable_imputation(
                 "forecaster_id": model_id,
                 "forecast_mode": forecast_mode,
                 "period": int(period),
+                "mask_protocol": "sequence_mask_v2",
+                "mask_seed": int(episode.mask_seed),
+                "mask_realization_id": str(episode.mask_realization_id),
             }
             for field, expected in scalar_expectations.items():
                 if _npz_scalar(archive, field) != expected:
                     return False, f"imputation NPZ identity mismatch: {field}", None
+            for field, expected in (
+                ("target_missing_rate", episode.target_missing_rate),
+                ("global_missing_rate", episode.global_missing_rate),
+                ("local_missing_rate", episode.local_missing_rate),
+            ):
+                actual = float(_npz_scalar(archive, field))
+                if not np.isclose(actual, float(expected), rtol=0.0, atol=1e-15):
+                    return False, f"imputation NPZ mask rate mismatch: {field}", None
+            stored_scale = np.asarray(archive["mase_scale"], dtype=float).reshape(-1)
+            expected_scale = np.asarray(mase_scale, dtype=float).reshape(-1)
+            if not np.array_equal(stored_scale, expected_scale):
+                return False, "imputation NPZ MASE scale differs", None
+            if int(_npz_scalar(archive, "mase_scale_lag")) != int(mase_scale_lag):
+                return False, "imputation NPZ MASE lag differs", None
             values = np.asarray(archive["values"], dtype=float)
             observed_mask = np.asarray(archive["observed_mask"], dtype=bool)
             clean_context = np.asarray(archive["clean_context"], dtype=float)
@@ -3506,6 +3705,8 @@ class _ImputeEpisodeWork:
     entry_key: str
     invalid_reason: str | None
     pipeline_rss_before: int
+    mase_scale: np.ndarray
+    mase_scale_lag: int
     plan: RoutePlan | None = None
     prepare_seconds: float = 0.0
     raw_actual: dict[str, CandidateResult] = dataclass_field(default_factory=dict)
@@ -4009,6 +4210,22 @@ def _commit_imputation_output(
         observed_mask=result.observed_mask,
         clean_context=work.episode.clean_context,
         clean_future=work.episode.clean_future,
+        mask_protocol=np.asarray(["sequence_mask_v2"], dtype=str),
+        mask_seed=np.asarray([work.episode.mask_seed], dtype=np.uint64),
+        mask_realization_id=np.asarray(
+            [work.episode.mask_realization_id], dtype=str
+        ),
+        target_missing_rate=np.asarray(
+            [work.episode.target_missing_rate], dtype=np.float64
+        ),
+        global_missing_rate=np.asarray(
+            [work.episode.global_missing_rate], dtype=np.float64
+        ),
+        local_missing_rate=np.asarray(
+            [work.episode.local_missing_rate], dtype=np.float64
+        ),
+        mase_scale=np.asarray(work.mase_scale, dtype=np.float64),
+        mase_scale_lag=np.asarray([work.mase_scale_lag], dtype=np.int64),
         period=np.asarray([dataset.period], dtype=np.int64),
         candidate_ids=np.asarray(candidate_ids, dtype=str),
         candidate_values=candidate_values,
@@ -4064,6 +4281,14 @@ def _commit_imputation_output(
         "missing_rate": missing_rate,
         "seed": configured_seed,
         "episode_seed": work.episode.seed,
+        "mask_protocol": "sequence_mask_v2",
+        "mask_seed": work.episode.mask_seed,
+        "mask_realization_id": work.episode.mask_realization_id,
+        "target_missing_rate": work.episode.target_missing_rate,
+        "global_missing_rate": work.episode.global_missing_rate,
+        "local_missing_rate": work.episode.local_missing_rate,
+        "mase_scale": list(map(float, work.mase_scale)),
+        "mase_scale_lag": work.mase_scale_lag,
         "file": str(work.relative),
         "assignment_file": str(work.relative_assignment),
         "candidate_ids": list(candidate_ids),
@@ -4153,7 +4378,7 @@ def execute_impute(
         else:
             raw_family = direct_router.metadata.get("held_out")
             if not isinstance(raw_family, str) or not raw_family:
-                raise ValueError("leave-dataset-out router has no held-out family metadata")
+                raise ValueError("leave-family-out router has no held-out family metadata")
             direct_family = raw_family
             _validate_router_bundle(
                 direct_router,
@@ -4177,8 +4402,8 @@ def execute_impute(
             return direct_router
         assert fold_index is not None
         _, fold_paths = fold_index
-        held_out_field = "family_id" if split == "leave_dataset_out" else "forecaster_id"
-        held_out = str(dataset.family_id) if split == "leave_dataset_out" else model_id
+        held_out_field = "family_id" if split == "leave_family_out" else "forecaster_id"
+        held_out = str(dataset.family_id) if split == "leave_family_out" else model_id
         if held_out not in fold_paths:
             raise ValueError(f"no router fold is available for {held_out_field}={held_out!r}")
         if held_out not in router_cache:
@@ -4217,20 +4442,40 @@ def execute_impute(
         progress.get("artifact_loading", {})
     )
     for dataset, items in _datasets(config, inputs.audit_artifact):
+        dataset_sampling: dict[str, Any] = {}
+        dataset_episodes = tuple(
+            _episode_iter(
+                config,
+                dataset,
+                items,
+                partition="eval",
+                selection_summary=dataset_sampling,
+            )
+        )
+        _record_episode_sampling(
+            episode_sampling,
+            dataset.dataset_id,
+            dataset_sampling,
+        )
+        if not dataset_episodes:
+            continue
         router = router_for(dataset)
         if router is None:
             continue
         item_lookup = {item.item_id: item for item in items}
-        dataset_sampling: dict[str, Any] = {}
         pending: list[_ImputeEpisodeWork] = []
-        for episode_id, episode in _episode_iter(
-            config,
-            dataset,
-            items,
-            partition="eval",
-            selection_summary=dataset_sampling,
-        ):
-            item = _context_item(item_lookup[episode.item_id], episode)
+        for episode_id, episode in dataset_episodes:
+            source_item = item_lookup[episode.item_id]
+            scale_end = fit_prefix_end(
+                len(source_item.values),
+                config.experiment.context_length,
+                config.experiment.horizon,
+                config.experiment.fit_prefix_fraction,
+            )
+            mase_scale, mase_scale_lag = _training_mase_scale(
+                source_item.values[:scale_end], dataset.period
+            )
+            item = _context_item(source_item, episode)
             spec = _forecast_spec(config, model_id, episode.context.shape[2])
             relative = Path(dataset.dataset_id) / f"{count:08d}.npz"
             relative_assignment = (
@@ -4260,6 +4505,8 @@ def execute_impute(
                     artifact_root=preparation.store.root,
                     episode=episode,
                     period=dataset.period,
+                    mase_scale=mase_scale,
+                    mase_scale_lag=mase_scale_lag,
                     allowed_candidate_ids=frozenset(imputer_registry.ids),
                 )
                 if valid:
@@ -4288,14 +4535,11 @@ def execute_impute(
                     entry_key=entry_key,
                     invalid_reason=invalid_reason,
                     pipeline_rss_before=_resident_memory_bytes(),
+                    mase_scale=mase_scale,
+                    mase_scale_lag=mase_scale_lag,
                 )
             )
             count += 1
-        _record_episode_sampling(
-            episode_sampling,
-            dataset.dataset_id,
-            dataset_sampling,
-        )
         if not pending:
             continue
 

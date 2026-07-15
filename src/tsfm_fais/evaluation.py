@@ -31,6 +31,14 @@ EVALUATION_FIELDS: tuple[str, ...] = (
     "mechanism",
     "missing_rate",
     "seed",
+    "mask_protocol",
+    "mask_seed",
+    "mask_realization_id",
+    "target_missing_rate",
+    "global_missing_rate",
+    "local_missing_rate",
+    "contains_missing",
+    "mase_scale_lag",
     "method",
     "method_role",
     "oracle_source",
@@ -139,6 +147,13 @@ def _episode_metadata(record: Mapping[str, Any]) -> dict[str, Any]:
         "mechanism": mechanism,
         "missing_rate": missing_rate,
         "seed": seed,
+        "mask_protocol": record.get("mask_protocol"),
+        "mask_seed": record.get("mask_seed"),
+        "mask_realization_id": record.get("mask_realization_id"),
+        "target_missing_rate": record.get("target_missing_rate", missing_rate),
+        "global_missing_rate": record.get("global_missing_rate"),
+        "local_missing_rate": record.get("local_missing_rate"),
+        "mase_scale_lag": record.get("mase_scale_lag"),
     }
 
 
@@ -148,6 +163,7 @@ def forecast_metrics(
     forecast: ForecastResult,
     *,
     seasonality: int,
+    mase_scale: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     """Return one MASE/MAE/RMSE value for each forecast batch member."""
 
@@ -167,11 +183,22 @@ def forecast_metrics(
     mae_values = np.mean(absolute, axis=(1, 2))
     rmse_values = np.sqrt(np.mean(error**2, axis=(1, 2)))
 
-    requested_lag = max(1, int(seasonality))
-    lag = requested_lag if context.shape[0] > requested_lag else 1
-    history = context[:, targets]
-    differences = np.abs(history[lag:] - history[:-lag])
-    scales = np.maximum(np.mean(differences, axis=0), 1e-8)
+    if mase_scale is None:
+        requested_lag = max(1, int(seasonality))
+        lag = requested_lag if context.shape[0] > requested_lag else 1
+        history = context[:, targets]
+        differences = np.abs(history[lag:] - history[:-lag])
+        scales = np.maximum(np.mean(differences, axis=0), 1e-8)
+    else:
+        supplied = np.asarray(mase_scale, dtype=float).reshape(-1)
+        if supplied.shape == (context.shape[1],):
+            scales = supplied[np.asarray(targets)]
+        elif supplied.shape == (len(targets),):
+            scales = supplied
+        else:
+            raise ValueError("mase_scale must align with all variates or forecast targets")
+        if not np.isfinite(scales).all() or np.any(scales <= 0):
+            raise ValueError("mase_scale must contain finite positive values")
     mase_values = np.mean(np.mean(absolute, axis=1) / scales[None, :], axis=1)
     return {"mase": mase_values, "mae": mae_values, "rmse": rmse_values}
 
@@ -353,6 +380,31 @@ def _build_forecast_runner(
     return ForecastRunner(registry, adapters={model_id: adapter})
 
 
+def _resolve_forecaster_artifact(path: str | Path, model_id: str) -> Path:
+    source = Path(path).resolve()
+    if not source.exists():
+        raise FileNotFoundError(f"forecaster artifact does not exist: {source}")
+    if not (source.is_file() and source.suffix.lower() == ".json"):
+        return source
+    try:
+        payload = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("forecaster artifact JSON is invalid") from error
+    mapping = payload.get("artifacts") if isinstance(payload, dict) else None
+    if mapping is None:
+        mapping = payload
+    if not isinstance(mapping, Mapping):
+        raise ValueError("forecaster artifact JSON must map model IDs to paths")
+    raw_path = mapping.get(model_id)
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise ValueError(f"forecaster artifact mapping has no path for {model_id!r}")
+    target = Path(raw_path)
+    resolved = target if target.is_absolute() else (source.parent / target).resolve()
+    if not resolved.exists():
+        raise FileNotFoundError(f"forecaster artifact does not exist: {resolved}")
+    return resolved
+
+
 def _recover_completed(path: Path, *, resume: bool) -> set[tuple[str, str, str]]:
     if not path.exists():
         return set()
@@ -435,7 +487,21 @@ def _evaluate_episode(
     predictor: ForecastPredictor,
     baseline_ids: Sequence[str],
 ) -> list[dict[str, Any]]:
-    required = ("values", "observed_mask", "clean_context", "clean_future")
+    required = (
+        "schema_version",
+        "values",
+        "observed_mask",
+        "clean_context",
+        "clean_future",
+        "mask_protocol",
+        "mask_seed",
+        "mask_realization_id",
+        "target_missing_rate",
+        "global_missing_rate",
+        "local_missing_rate",
+        "mase_scale",
+        "mase_scale_lag",
+    )
     missing_fields = [field for field in required if field not in archive]
     if missing_fields:
         raise ValueError(
@@ -446,6 +512,11 @@ def _evaluate_episode(
     observed_mask = np.asarray(archive["observed_mask"], dtype=bool)
     clean_context = np.asarray(archive["clean_context"], dtype=float)
     clean_future = np.asarray(archive["clean_future"], dtype=float)
+    schema_version = int(np.asarray(archive["schema_version"]).reshape(-1)[0])
+    mask_protocol = str(np.asarray(archive["mask_protocol"]).reshape(-1)[0])
+    if schema_version != 3 or mask_protocol != "sequence_mask_v2":
+        raise ValueError("imputation artifact does not use sequence_mask_v2 schema 3")
+    mase_scale = np.asarray(archive["mase_scale"], dtype=float).reshape(-1)
     if not (
         b_fais.shape == observed_mask.shape == clean_context.shape
         and clean_future.ndim == 2
@@ -504,9 +575,32 @@ def _evaluate_episode(
         clean_future,
         forecast,
         seasonality=max(1, period),
+        mase_scale=mase_scale,
     )
 
     metadata = _episode_metadata(record)
+    metadata.update(
+        {
+            "mask_protocol": mask_protocol,
+            "mask_seed": int(np.asarray(archive["mask_seed"]).reshape(-1)[0]),
+            "mask_realization_id": str(
+                np.asarray(archive["mask_realization_id"]).reshape(-1)[0]
+            ),
+            "target_missing_rate": float(
+                np.asarray(archive["target_missing_rate"]).reshape(-1)[0]
+            ),
+            "global_missing_rate": float(
+                np.asarray(archive["global_missing_rate"]).reshape(-1)[0]
+            ),
+            "local_missing_rate": float(
+                np.asarray(archive["local_missing_rate"]).reshape(-1)[0]
+            ),
+            "contains_missing": bool((~observed_mask).any()),
+            "mase_scale_lag": int(
+                np.asarray(archive["mase_scale_lag"]).reshape(-1)[0]
+            ),
+        }
+    )
     metrics_by_method = {
         method_id: {
             metric_name: float(metric_values[index])
@@ -672,7 +766,7 @@ def evaluate_imputations(
     resolved_forecaster_artifact = (
         None
         if forecaster_artifact is None
-        else Path(forecaster_artifact).resolve()
+        else _resolve_forecaster_artifact(forecaster_artifact, forecaster_id)
     )
     if predictor is None and resolved_forecaster_artifact is not None:
         if not resolved_forecaster_artifact.exists():
@@ -705,6 +799,7 @@ def evaluate_imputations(
         "target_indices": target_signature,
         "forecast_num_samples": config.experiment.forecast_num_samples,
         "seed": config.seed,
+        "mask_protocol": "sequence_mask_v2",
         "resolved_device": resolved_device,
     }
     _validate_resume_signature(
@@ -732,9 +827,10 @@ def evaluate_imputations(
         "resume": bool(resume),
         "existing_rows": len(completed),
         "metric_definition": {
-            "mase": "target-macro MASE using the clean context and dataset period",
+            "mase": "target-macro MASE using a frozen historical-prefix scale",
             "mase_scale": (
-                "seasonal lag when context length exceeds the period; otherwise lag one"
+                "stored per variate from the fit prefix; seasonal lag when available, "
+                "otherwise lag one"
             ),
             "missing_anchor": "LOCF completion of the same corrupted context",
             "oracle": "lowest-MASE natively valid saved single-imputer candidate",

@@ -21,9 +21,13 @@ class RegistryRef(StrictModel):
 
 
 class ExperimentConfig(StrictModel):
-    split: Literal["leave_dataset_out", "leave_model_out", "rolling_origin"] = "leave_dataset_out"
-    context_length: int = Field(default=512, ge=2)
+    split: Literal["leave_family_out", "leave_model_out", "rolling_origin"] = "leave_family_out"
+    context_length: int = Field(default=96, ge=2)
     horizon: int = Field(default=96, ge=1)
+    forecast_stride: int | None = Field(default=None, ge=1)
+    fit_prefix_fraction: float = Field(default=0.2, gt=0, lt=1)
+    training_window_stride: int = Field(default=24, ge=1)
+    missing_block_lengths: tuple[int, ...] = (6, 12, 24, 48)
     target_indices: tuple[int, ...] | Literal["all"] = "all"
     missing_mechanisms: tuple[
         Literal[
@@ -32,15 +36,15 @@ class ExperimentConfig(StrictModel):
             "synchronous_block",
             "staggered_correlated",
             "value_dependent",
-            "tail_mixed",
+            "mixed_outage",
         ],
         ...,
     ] = (
         "independent_block",
-        "tail_mixed",
+        "mixed_outage",
         "synchronous_block",
     )
-    missing_rates: tuple[float, ...] = (0.1, 0.2, 0.3, 0.5)
+    missing_rates: tuple[float, ...] = (0.1, 0.2, 0.3, 0.4, 0.5)
     seeds: tuple[int, ...] = (11, 22, 33, 44, 55)
     candidate_ids: tuple[str, ...] | Literal["all"] = "all"
     deep_imputer_epochs: int = Field(default=10, ge=1)
@@ -65,6 +69,12 @@ class ExperimentConfig(StrictModel):
             raise ValueError("missing_mechanisms cannot be empty")
         if len(set(self.missing_mechanisms)) != len(self.missing_mechanisms):
             raise ValueError("missing_mechanisms must be unique")
+        if not self.missing_block_lengths or any(
+            length < 1 for length in self.missing_block_lengths
+        ):
+            raise ValueError("missing_block_lengths must contain positive integers")
+        if len(set(self.missing_block_lengths)) != len(self.missing_block_lengths):
+            raise ValueError("missing_block_lengths must be unique")
         if not self.missing_rates:
             raise ValueError("missing_rates cannot be empty")
         if any(not 0 < rate <= 0.5 for rate in self.missing_rates):

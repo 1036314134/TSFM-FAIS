@@ -7,11 +7,15 @@ registries:
   router_config: router/block_fais.yaml
 experiment:
   split: rolling_origin
-  context_length: 48
-  horizon: 8
+  context_length: 96
+  horizon: 96
+  forecast_stride: 96
+  fit_prefix_fraction: 0.2
+  training_window_stride: 24
+  missing_block_lengths: [6, 12, 24, 48]
   target_indices: [0, 1]
   missing_mechanisms: [synchronous_block]
-  missing_rates: [0.2]
+  missing_rates: [0.2, 0.4]
   seeds: [20260710]
   max_items_per_dataset: 1
   max_training_windows_per_dataset: 8

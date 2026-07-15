@@ -13,7 +13,14 @@ import pandas as pd
 
 from tsfm_fais.config import load_config
 from tsfm_fais.contracts import BudgetSpec, ForecastSpec, TimeSeriesItem
-from tsfm_fais.data import audit_dataset, load_dataset, load_manifest
+from tsfm_fais.data import (
+    MaskingSpec,
+    audit_dataset,
+    load_dataset,
+    load_manifest,
+    mask_time_series,
+    stable_seed,
+)
 from tsfm_fais.evaluation import (
     DEFAULT_GROUP_BY,
     evaluate_imputations,
@@ -150,9 +157,18 @@ def _smoke(args: argparse.Namespace) -> int:
         timestamps=pd.date_range("2026-01-01", periods=48, freq="h"),
         metadata={"period": 12},
     )
-    mask = np.ones_like(values, dtype=bool)
-    mask[12:18, 0] = False
-    mask[-5:, 1] = False
+    masking = MaskingSpec(
+        config.experiment.missing_mechanisms[-1],
+        config.experiment.missing_rates[-1],
+        config.experiment.missing_block_lengths,
+    )
+    realization = mask_time_series(
+        values,
+        masking,
+        stable_seed("smoke", masking, config.seed, "sequence_mask_v2"),
+        calibration_values=values[:24],
+    )
+    mask = realization.observed_mask
     spec = ForecastSpec(
         model_id="mock_univariate",
         mode="independent_univariate",

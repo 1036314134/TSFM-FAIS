@@ -14,7 +14,7 @@ def _evaluation(root: Path, forecaster_id: str, family_id: str) -> Path:
     rows: list[dict[str, object]] = []
     specifications = (
         ("episode-0", "independent_block", 0.1, True),
-        ("episode-1", "tail_mixed", 0.2, False),
+        ("episode-1", "mixed_outage", 0.2, False),
     )
     methods = (
         ("clean", "reference", 1.0, 0.0, 0.0),
@@ -36,6 +36,10 @@ def _evaluation(root: Path, forecaster_id: str, family_id: str) -> Path:
                     "forecaster_id": forecaster_id,
                     "mechanism": mechanism,
                     "missing_rate": missing_rate,
+                    "item_id": f"item-{episode_id}",
+                    "mask_protocol": "sequence_mask_v2",
+                    "mask_realization_id": f"mask-{episode_id}",
+                    "contains_missing": episode_id == "episode-0",
                     "method": method,
                     "method_role": role,
                     "metric_eligible": eligible,
@@ -158,6 +162,19 @@ def test_multi_forecaster_summary_is_paired_grouped_and_reproducible(
 
     assert Path(result["method_summary_csv"]).is_file()
     assert Path(result["comparison_summary_csv"]).is_file()
+    assert Path(result["family_macro_comparison_summary_csv"]).is_file()
+    primary = payload["family_macro_comparison_summary"]
+    primary_locf = next(
+        row
+        for row in primary
+        if row["scope"] == "overall"
+        and row["view"] == "all_windows"
+        and row["comparator"] == "locf"
+    )
+    assert primary_locf["family_count"] == 2
+    assert primary_locf["mase_family_macro_delta"] == -1.0
+    assert primary_locf["mase_family_macro_delta_ci95_low"] == -1.0
+    assert primary_locf["mase_family_macro_delta_ci95_high"] == -1.0
     report = Path(result["report_markdown"]).read_text(encoding="utf-8")
     assert "does not claim statistical significance" in report
     assert "Oracle is the valid single imputer selected by minimum MASE" in report

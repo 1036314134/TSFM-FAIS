@@ -6,9 +6,13 @@ registries:
   forecaster_registry: forecasters/pool.yaml
   router_config: router/block_fais.yaml
 experiment:
-  split: leave_dataset_out
-  context_length: 48
-  horizon: 8
+  split: leave_family_out
+  context_length: 96
+  horizon: 96
+  forecast_stride: 96
+  fit_prefix_fraction: 0.2
+  training_window_stride: 24
+  missing_block_lengths: [6, 12, 24, 48]
   target_indices: [0, 1]
   missing_mechanisms:
     - random_point
@@ -16,8 +20,8 @@ experiment:
     - synchronous_block
     - staggered_correlated
     - value_dependent
-    - tail_mixed
-  missing_rates: [0.1, 0.2, 0.3, 0.5]
+    - mixed_outage
+  missing_rates: [0.1, 0.2, 0.3, 0.4, 0.5]
   seeds: [22, 33, 44]
   candidate_ids: all
   deep_imputer_epochs: 10
@@ -25,10 +29,10 @@ experiment:
   csdi_num_samples: 5
   missforest_n_jobs: 8
   max_items_per_dataset: 4
-  max_training_windows_per_dataset: 32
-  max_train_origins_per_item: 1
-  max_eval_origins_per_item: 1
-  max_eval_episodes_per_dataset: 24
+  max_training_windows_per_dataset: 64
+  max_train_origins_per_item: 4
+  max_eval_origins_per_item: 4
+  max_eval_episodes_per_dataset: 30
   max_teacher_blocks_per_episode: 4
   max_teacher_candidates_per_episode: 6
   max_pair_labels_per_episode: 4

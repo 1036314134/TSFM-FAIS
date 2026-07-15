@@ -12,7 +12,7 @@ import pytest
 import tsfm_fais.stage_execution as stage_execution
 from tsfm_fais.config import load_config
 from tsfm_fais.contracts import BudgetSpec, SeriesBatch, TimeSeriesItem
-from tsfm_fais.data import load_manifest
+from tsfm_fais.data import MaskingSpec, load_manifest
 from tsfm_fais.imputers import (
     DEFAULT_REGISTRY,
     ArtifactLoadResult,
@@ -26,7 +26,6 @@ from tsfm_fais.stage_execution import (
     _episode_iter,
     _execution_metadata,
     _fit_candidate_params,
-    _fit_region_end,
     _forecast_spec,
     _forecaster_artifacts,
     _LabelArtifactManager,
@@ -38,6 +37,7 @@ from tsfm_fais.stage_execution import (
     _supplement_candidate_outputs,
     _torch_device,
     _training_batch,
+    _training_prefix_end,
 )
 from tsfm_fais.stages import StageInputs
 
@@ -64,8 +64,10 @@ def _config(tmp_path: Path, *experiment_lines: str):
                 "  forecaster_registry: forecasters.yaml",
                 "  router_config: router.yaml",
                 "experiment:",
+                "  split: rolling_origin",
                 "  context_length: 4",
                 "  horizon: 2",
+                "  training_window_stride: 2",
                 "  missing_mechanisms: [independent_block]",
                 "  missing_rates: [0.25]",
                 "  seeds: [7]",
@@ -136,6 +138,58 @@ def test_episode_partitions_are_chronological_disjoint_and_complete(tmp_path):
     assert max(training) < min(evaluation)
 
 
+def test_leave_family_out_reuses_one_sequence_mask_across_origins(tmp_path):
+    config = _updated_config(
+        _config(tmp_path),
+        split="leave_family_out",
+        context_length=8,
+        horizon=4,
+        forecast_stride=4,
+        max_eval_origins_per_item=None,
+        missing_mechanisms=("random_point",),
+        missing_rates=(0.4,),
+        seeds=(17,),
+    )
+    dataset = SimpleNamespace(dataset_id="synthetic")
+    episodes = [
+        episode
+        for _, episode in _episode_iter(
+            config, dataset, [_item(length=80)], partition="eval"
+        )
+    ]
+
+    assert len(episodes) > 2
+    first, second = episodes[:2]
+    assert second.forecast_origin - first.forecast_origin == 4
+    assert first.mask_seed == second.mask_seed
+    assert first.mask_realization_id == second.mask_realization_id
+    np.testing.assert_array_equal(
+        first.context.observed_mask[0, 4:],
+        second.context.observed_mask[0, :4],
+    )
+    assert _origins(config, "train") == _origins(config, "eval")
+
+
+def test_96_by_96_episode_plan_skips_only_series_without_one_full_forecast(tmp_path):
+    config = _updated_config(
+        _config(tmp_path),
+        split="leave_family_out",
+        context_length=96,
+        horizon=96,
+        forecast_stride=96,
+        missing_mechanisms=("random_point",),
+        missing_rates=(0.4,),
+        seeds=(17,),
+    )
+    dataset = SimpleNamespace(dataset_id="synthetic")
+
+    assert not list(_episode_iter(config, dataset, [_item(114)], partition="eval"))
+    episodes = list(_episode_iter(config, dataset, [_item(196)], partition="eval"))
+    assert len(episodes) == 1
+    assert episodes[0][1].context.shape == (1, 96, 3)
+    assert episodes[0][1].clean_future.shape == (96, 3)
+
+
 def test_training_batch_uses_only_rolling_windows_before_episode_origins(tmp_path):
     config = _config(tmp_path)
     item = _item(80)
@@ -143,19 +197,24 @@ def test_training_batch_uses_only_rolling_windows_before_episode_origins(tmp_pat
         [item],
         config.experiment.context_length,
         config.experiment.horizon,
+        masking_specs=(MaskingSpec("random_point", 0.5),),
+        training_stride=config.experiment.training_window_stride,
     )
-    fit_end = _fit_region_end(
+    fit_end = _training_prefix_end(
         len(item.values),
         config.experiment.context_length,
         config.experiment.horizon,
+        config.experiment.fit_prefix_fraction,
     )
     first_origin = _origins(config, "all", item)[0]
 
     assert batch.shape[0] > 1
     assert all(
-        int(item_id.rsplit("@", 1)[1]) + batch.shape[1] <= fit_end for item_id in batch.item_ids
+        int(item_id.split("@", 1)[1].split("|", 1)[0]) + batch.shape[1] <= fit_end
+        for item_id in batch.item_ids
     )
-    assert fit_end + config.experiment.context_length == first_origin
+    assert fit_end == first_origin
+    assert (~batch.observed_mask).any()
 
 
 def test_training_window_cap_covers_full_fit_range(tmp_path):
@@ -166,12 +225,14 @@ def test_training_window_cap_covers_full_fit_range(tmp_path):
         [item],
         config.experiment.context_length,
         config.experiment.horizon,
+        training_stride=config.experiment.training_window_stride,
     )
     capped = _training_batch(
         [item],
         config.experiment.context_length,
         config.experiment.horizon,
         max_windows=3,
+        training_stride=config.experiment.training_window_stride,
     )
 
     assert capped.shape[0] == 3
@@ -264,7 +325,7 @@ def test_dataset_episode_cap_is_deterministic_balanced_and_applied_before_build(
 def test_episode_cap_preserves_episode_ids_seeds_and_future_isolation(tmp_path):
     base = _updated_config(
         _config(tmp_path),
-        missing_mechanisms=("independent_block", "tail_mixed"),
+        missing_mechanisms=("independent_block", "mixed_outage"),
         missing_rates=(0.1, 0.2),
         seeds=(11, 22),
         max_eval_origins_per_item=2,
@@ -339,10 +400,13 @@ def test_main_configs_apply_dataset_episode_caps_without_changing_pilot_or_smoke
     smoke = load_config(Path("configs/smoke.yaml"))
     manifest = load_manifest(main.registries.data_manifest)
 
-    assert main.experiment.max_train_episodes_per_dataset == 12
+    assert main.experiment.max_train_episodes_per_dataset == 30
     assert main.experiment.max_eval_episodes_per_dataset is None
     assert main_eval.experiment.max_train_episodes_per_dataset is None
-    assert main_eval.experiment.max_eval_episodes_per_dataset == 24
+    assert main_eval.experiment.max_eval_episodes_per_dataset == 30
+    assert main.experiment.context_length == main.experiment.horizon == 96
+    assert main_eval.experiment.context_length == main_eval.experiment.horizon == 96
+    assert main.experiment.missing_rates == (0.1, 0.2, 0.3, 0.4, 0.5)
     assert pilot.experiment.max_train_episodes_per_dataset is None
     assert pilot.experiment.max_eval_episodes_per_dataset is None
     assert smoke.experiment.max_train_episodes_per_dataset is None
@@ -710,6 +774,14 @@ def test_forecaster_artifacts_resolve_json_paths_relative_to_mapping(tmp_path):
         ("chronos2", chronos.resolve()),
         ("timesfm2p5", timesfm.resolve()),
     )
+
+    single = _forecaster_artifacts(
+        StageInputs(
+            forecaster_id="chronos2",
+            forecaster_artifact=mapping,
+        )
+    )
+    assert single == (("chronos2", chronos.resolve()),)
 
 
 def test_forecaster_artifacts_report_missing_model_path(tmp_path):

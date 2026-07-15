@@ -13,9 +13,9 @@ from tsfm_fais.config import ExperimentConfig, load_config
 from tsfm_fais.contracts import BudgetSpec, ForecastSpec, SeriesBatch, TimeSeriesItem
 from tsfm_fais.data.audit import audit_dataset
 from tsfm_fais.data.catalog import DatasetManifest, DatasetSpec, load_manifest
-from tsfm_fais.data.episodes import build_episode, rolling_origins
+from tsfm_fais.data.episodes import build_episode, fit_prefix_end, rolling_origins
 from tsfm_fais.data.loaders import load_arrow, load_csv
-from tsfm_fais.data.masking import MaskingSpec, inject_missing
+from tsfm_fais.data.masking import MaskingSpec, mask_time_series, stable_seed
 from tsfm_fais.data.splits import family_folds
 
 
@@ -307,45 +307,38 @@ def test_audit_accepts_regular_weekly_axis_with_a_different_week_anchor(tmp_path
         "synchronous_block",
         "staggered_correlated",
         "value_dependent",
-        "tail_mixed",
+        "mixed_outage",
     ],
 )
 def test_all_missingness_mechanisms_are_deterministic(mechanism):
     values = _item().values
-    spec = MaskingSpec(mechanism=mechanism, missing_rate=0.2, block_fraction=0.1)
-    first = inject_missing(values, spec, 17)
-    second = inject_missing(values, spec, 17)
-    assert np.array_equal(first[1], second[1])
-    assert first[2] == second[2]
-    assert (~first[1]).sum() > 0
-    assert len(first[2]) > 0
+    spec = MaskingSpec(mechanism=mechanism, missing_rate=0.2)
+    first = mask_time_series(values, spec, 17, calibration_values=values[:32])
+    second = mask_time_series(values, spec, 17, calibration_values=values[:32])
+    assert np.array_equal(first.observed_mask, second.observed_mask)
+    assert first.blocks == second.blocks
+    assert first.realization_id == second.realization_id
+    difference = abs(int((~first.observed_mask).sum()) - round(values.size * 0.2))
+    assert difference <= (values.shape[1] // 2 if mechanism == "synchronous_block" else 0)
 
 
 def test_synchronous_blocks_keep_channel_masks_aligned():
     values = _item().values
-    _, mask, _ = inject_missing(
+    result = mask_time_series(
         values,
-        MaskingSpec("synchronous_block", missing_rate=0.2, block_fraction=0.1),
+        MaskingSpec("synchronous_block", missing_rate=0.2),
         17,
     )
+    mask = result.observed_mask
     assert np.array_equal(mask[:, 0], mask[:, 1])
     assert np.array_equal(mask[:, 1], mask[:, 2])
 
 
-def test_synchronous_target_is_rounded_without_overshooting_to_next_group():
-    values = np.arange(15, dtype=float).reshape(5, 3)
-    _, mask, _ = inject_missing(
-        values,
-        MaskingSpec(
-            "synchronous_block",
-            missing_rate=13 / 15,
-            block_fraction=0.4,
-            max_blocks=4,
-        ),
-        3,
-    )
-    assert int((~mask).sum()) == 12
-    assert np.array_equal(mask[:, 0], mask[:, 1])
+def test_sequence_mask_supports_the_new_point_four_rate():
+    values = _item(length=96).values
+    result = mask_time_series(values, MaskingSpec("mixed_outage", 0.4), 3)
+    assert int((~result.observed_mask).sum()) == round(values.size * 0.4)
+    assert result.metadata["target_missing_rate"] == 0.4
 
 
 def test_experiment_config_rejects_missing_rates_above_evaluation_scope():
@@ -356,30 +349,21 @@ def test_experiment_config_rejects_missing_rates_above_evaluation_scope():
 def test_staggered_correlated_targets_the_strongest_variable_pair():
     time = np.arange(60, dtype=float)
     values = np.stack((time, 2.0 * time + 1.0, (-1.0) ** time), axis=1)
-    _, mask, _ = inject_missing(
+    result = mask_time_series(
         values,
-        MaskingSpec(
-            "staggered_correlated",
-            missing_rate=0.1,
-            block_fraction=0.1,
-            max_blocks=4,
-        ),
+        MaskingSpec("staggered_correlated", missing_rate=0.1),
         17,
+        calibration_values=values[:40],
     )
+    mask = result.observed_mask
     missing_by_channel = (~mask).sum(axis=0)
     assert missing_by_channel[0] > 0 and missing_by_channel[1] > 0
     assert missing_by_channel[2] == 0
 
 
-def test_tail_mixed_always_contains_a_tail_gap():
-    values = _item().values
-    _, mask, _ = inject_missing(values, MaskingSpec("tail_mixed", 0.2), 19)
-    assert (~mask[-1]).any()
-
-
 @pytest.mark.parametrize(
     "mechanism",
-    ("independent_block", "staggered_correlated", "value_dependent", "tail_mixed"),
+    ("independent_block", "staggered_correlated", "value_dependent", "mixed_outage"),
 )
 @pytest.mark.parametrize("missing_rate", (0.1, 0.5))
 def test_high_dimensional_block_mechanisms_do_not_degenerate_to_points(
@@ -388,47 +372,59 @@ def test_high_dimensional_block_mechanisms_do_not_degenerate_to_points(
     time = np.arange(128, dtype=float)[:, None]
     channels = np.arange(32, dtype=float)[None, :]
     values = np.sin(time / 7.0 + channels / 11.0) + channels * 0.001
-    _, mask, blocks = inject_missing(
+    result = mask_time_series(
         values,
-        MaskingSpec(mechanism, missing_rate=missing_rate, block_fraction=0.1),
+        MaskingSpec(mechanism, missing_rate=missing_rate),
         23,
+        calibration_values=values[:64],
     )
+    mask = result.observed_mask
+    blocks = result.blocks
     expected = int(round(values.size * missing_rate))
-    assert abs(int((~mask).sum()) - expected) <= values.shape[1]
-    assert sum(block.length == 1 for block in blocks) <= max(1, len(blocks) // 4)
+    assert int((~mask).sum()) == expected
+    if mechanism != "mixed_outage":
+        assert sum(block.length == 1 for block in blocks) <= max(1, len(blocks) // 4)
 
 
-def test_episode_never_reads_after_forecast_future():
-    item = _item(length=80)
+def test_episode_slices_a_precomputed_sequence_mask_without_regeneration():
+    item = _item(length=240)
+    spec = MaskingSpec("independent_block", 0.2)
+    mask_seed = stable_seed("toy", item.item_id, spec, 17)
+    realization = mask_time_series(
+        item.values,
+        spec,
+        mask_seed,
+        calibration_values=item.values[:96],
+    )
     episode = build_episode(
         item,
         "toy",
-        forecast_origin=60,
-        context_length=32,
-        horizon=8,
-        masking=MaskingSpec("tail_mixed", 0.2),
-    )
-    changed = item.values.copy()
-    changed[68:] += 100000
-    changed_item = TimeSeriesItem(
-        item_id=item.item_id,
-        values=changed,
-        variate_names=item.variate_names,
-        start=item.start,
-        freq=item.freq,
-        timestamps=item.timestamps,
-        metadata=item.metadata,
+        realization,
+        forecast_origin=144,
+        context_length=96,
+        horizon=96,
     )
     repeated = build_episode(
-        changed_item,
+        item,
         "toy",
-        forecast_origin=60,
-        context_length=32,
-        horizon=8,
-        masking=MaskingSpec("tail_mixed", 0.2),
+        realization,
+        forecast_origin=120,
+        context_length=96,
+        horizon=96,
     )
-    assert np.allclose(episode.clean_context, repeated.clean_context)
-    assert np.array_equal(episode.context.observed_mask, repeated.context.observed_mask)
+    np.testing.assert_array_equal(
+        repeated.context.observed_mask[0, 24:96],
+        episode.context.observed_mask[0, :72],
+    )
+    assert episode.mask_realization_id == repeated.mask_realization_id
+    assert episode.clean_context.shape == (96, 3)
+    assert episode.clean_future.shape == (96, 3)
+
+
+def test_fit_prefix_and_rolling_origin_support_minimal_96_by_96_series():
+    end = fit_prefix_end(196, 96, 96)
+    assert end == 96
+    assert rolling_origins(196, 96, 96, 96, start=end) == (96,)
 
 
 def test_rolling_origins_rejects_non_positive_stride():

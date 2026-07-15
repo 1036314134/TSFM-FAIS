@@ -251,6 +251,8 @@ def _work(index: int, seed: int) -> _ImputeEpisodeWork:
         entry_key=f"{index:08d}",
         invalid_reason=None,
         pipeline_rss_before=0,
+        mase_scale=np.ones(3, dtype=float),
+        mase_scale_lag=1,
     )
 
 

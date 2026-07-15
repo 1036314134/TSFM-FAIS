@@ -148,6 +148,7 @@ def _resolve_source(
             "target_indices",
             "forecast_num_samples",
             "seed",
+            "mask_protocol",
         )
         study_signature = {field: signature.get(field) for field in signature_fields}
     return (
@@ -225,6 +226,10 @@ def _read_sources(
         "forecaster_id",
         "mechanism",
         "missing_rate",
+        "item_id",
+        "mask_protocol",
+        "mask_realization_id",
+        "contains_missing",
     )
     reference_signature: dict[str, Any] | None = None
     for (
@@ -256,6 +261,11 @@ def _read_sources(
                         + ", ".join(missing)
                     )
                 row = dict(raw)
+                if row.get("mask_protocol") != "sequence_mask_v2":
+                    raise ValueError(
+                        f"row does not use sequence_mask_v2 at "
+                        f"{metrics_path}:{line_number}"
+                    )
                 key = _episode_key(row)
                 if not all(key):
                     raise ValueError(
@@ -539,6 +549,211 @@ def _bootstrap_mean_intervals(
     return np.column_stack((quantiles[0], quantiles[1]))
 
 
+def _hierarchical_family_interval(
+    values: Mapping[EpisodeKey, float],
+    metadata: Mapping[EpisodeKey, Mapping[str, Any]],
+    *,
+    replicates: int,
+    seed: int,
+) -> tuple[float | None, float | None]:
+    """Bootstrap family, dataset, and item/mask-realization clusters in order."""
+
+    hierarchy: dict[str, dict[str, dict[str, list[float]]]] = defaultdict(
+        lambda: defaultdict(lambda: defaultdict(list))
+    )
+    for key, value in values.items():
+        entry = metadata[key]
+        family = str(entry.get("family_id", ""))
+        dataset = str(entry.get("dataset_id", ""))
+        cluster = "|".join(
+            (
+                str(entry.get("item_id", "")),
+                str(entry.get("mask_realization_id", "")),
+            )
+        )
+        hierarchy[family][dataset][cluster].append(float(value))
+    families = tuple(sorted(hierarchy))
+    if len(families) < 2:
+        return None, None
+    rng = np.random.default_rng(seed)
+    statistics = np.empty(replicates, dtype=float)
+    for replicate in range(replicates):
+        sampled_family_names = rng.choice(families, size=len(families), replace=True)
+        sampled_family_values: list[float] = []
+        for family in sampled_family_names:
+            datasets = hierarchy[str(family)]
+            dataset_names = tuple(sorted(datasets))
+            sampled_dataset_names = rng.choice(
+                dataset_names, size=len(dataset_names), replace=True
+            )
+            sampled_dataset_values: list[float] = []
+            for dataset in sampled_dataset_names:
+                clusters = datasets[str(dataset)]
+                cluster_names = tuple(sorted(clusters))
+                sampled_clusters = rng.choice(
+                    cluster_names, size=len(cluster_names), replace=True
+                )
+                sampled_dataset_values.append(
+                    float(
+                        np.mean(
+                            [
+                                np.mean(clusters[str(cluster)])
+                                for cluster in sampled_clusters
+                            ]
+                        )
+                    )
+                )
+            sampled_family_values.append(float(np.mean(sampled_dataset_values)))
+        statistics[replicate] = float(np.mean(sampled_family_values))
+    low, high = np.quantile(statistics, (0.025, 0.975))
+    return float(low), float(high)
+
+
+def _family_macro_primary(
+    episodes: Mapping[EpisodeKey, Mapping[str, Mapping[str, Any]]],
+    metadata: Mapping[EpisodeKey, Mapping[str, Any]],
+    method_roles: Mapping[str, str],
+    *,
+    bootstrap_replicates: int,
+    bootstrap_seed: int,
+) -> list[dict[str, Any]]:
+    """Build the primary family-equal MASE comparison table."""
+
+    primary_scopes = SUMMARY_SCOPES[:4]
+    comparators = _comparator_order(method_roles)
+    results: list[dict[str, Any]] = []
+    all_keys = sorted(episodes)
+    for view, view_keys in (
+        ("all_windows", all_keys),
+        (
+            "windows_with_missing",
+            [key for key in all_keys if bool(metadata[key].get("contains_missing"))],
+        ),
+    ):
+        for scope, fields in primary_scopes:
+            partitions: dict[tuple[Any, ...], list[EpisodeKey]] = defaultdict(list)
+            for key in view_keys:
+                partitions[tuple(metadata[key].get(field) for field in fields)].append(key)
+            for group_values in sorted(
+                partitions, key=lambda values: tuple(map(str, values))
+            ):
+                group = partitions[group_values]
+                for comparator in comparators:
+                    pair_keys = [
+                        key
+                        for key in group
+                        if comparator in episodes[key]
+                        and _metric_available(episodes[key]["b_fais"], "mase")
+                        and _metric_available(episodes[key][comparator], "mase")
+                    ]
+                    if not pair_keys:
+                        continue
+                    b_values = {
+                        key: float(episodes[key]["b_fais"]["mase"])
+                        for key in pair_keys
+                    }
+                    comparator_values = {
+                        key: float(episodes[key][comparator]["mase"])
+                        for key in pair_keys
+                    }
+                    deltas = {
+                        key: b_values[key] - comparator_values[key]
+                        for key in pair_keys
+                    }
+                    families: dict[str, list[EpisodeKey]] = defaultdict(list)
+                    for key in pair_keys:
+                        families[str(metadata[key]["family_id"])].append(key)
+                    family_b = {
+                        family: float(np.mean([b_values[key] for key in keys]))
+                        for family, keys in families.items()
+                    }
+                    family_comparator = {
+                        family: float(
+                            np.mean([comparator_values[key] for key in keys])
+                        )
+                        for family, keys in families.items()
+                    }
+                    family_delta = np.asarray(
+                        [
+                            family_b[family] - family_comparator[family]
+                            for family in sorted(families)
+                        ],
+                        dtype=float,
+                    )
+                    ci_low, ci_high = _hierarchical_family_interval(
+                        deltas,
+                        metadata,
+                        replicates=bootstrap_replicates,
+                        seed=_derived_seed(
+                            bootstrap_seed,
+                            "family_macro",
+                            view,
+                            scope,
+                            group_values,
+                            comparator,
+                        ),
+                    )
+                    p_value: float | None = None
+                    if len(family_delta) >= 2:
+                        if np.allclose(family_delta, 0.0):
+                            p_value = 1.0
+                        else:
+                            from scipy.stats import wilcoxon
+
+                            p_value = float(
+                                wilcoxon(
+                                    family_delta,
+                                    alternative="two-sided",
+                                    zero_method="pratt",
+                                ).pvalue
+                            )
+                    result = {
+                        "view": view,
+                        **_group_prefix(scope, fields, group_values),
+                        "comparator": comparator,
+                        "comparator_role": method_roles[comparator],
+                        "family_count": len(families),
+                        "dataset_count": len(
+                            {str(metadata[key]["dataset_id"]) for key in pair_keys}
+                        ),
+                        "pair_count": len(pair_keys),
+                        "b_fais_mase_family_macro": float(np.mean(tuple(family_b.values()))),
+                        "comparator_mase_family_macro": float(
+                            np.mean(tuple(family_comparator.values()))
+                        ),
+                        "mase_family_macro_delta": float(np.mean(family_delta)),
+                        "mase_family_macro_delta_ci95_low": ci_low,
+                        "mase_family_macro_delta_ci95_high": ci_high,
+                        "family_win_rate": float(np.mean(family_delta < 0)),
+                        "family_tie_rate": float(np.mean(np.isclose(family_delta, 0.0))),
+                        "wilcoxon_p_value": p_value,
+                        "holm_adjusted_p_value": None,
+                    }
+                    results.append(result)
+
+    correction_groups: dict[tuple[str, str, str], list[int]] = defaultdict(list)
+    for index, row in enumerate(results):
+        if row["wilcoxon_p_value"] is not None:
+            correction_groups[
+                (str(row["view"]), str(row["scope"]), str(row["group_value"]))
+            ].append(index)
+    for indices in correction_groups.values():
+        ordered = sorted(indices, key=lambda index: results[index]["wilcoxon_p_value"])
+        previous = 0.0
+        count = len(ordered)
+        for rank, index in enumerate(ordered):
+            adjusted = min(
+                1.0,
+                max(
+                    previous,
+                    (count - rank) * float(results[index]["wilcoxon_p_value"]),
+                ),
+            )
+            results[index]["holm_adjusted_p_value"] = adjusted
+            previous = adjusted
+    return results
+
+
 def _comparison_summaries(
     episodes: Mapping[EpisodeKey, Mapping[str, Mapping[str, Any]]],
     metadata: Mapping[EpisodeKey, Mapping[str, Any]],
@@ -730,6 +945,7 @@ def _write_markdown(
     sources: Sequence[_Source],
     method_rows: Sequence[Mapping[str, Any]],
     comparison_rows: Sequence[Mapping[str, Any]],
+    primary_rows: Sequence[Mapping[str, Any]],
     bootstrap_replicates: int,
     bootstrap_seed: int,
 ) -> Path:
@@ -749,6 +965,11 @@ def _write_markdown(
         and row["comparator"] in {"clean", "locf", "linear_interp", "oracle"}
     ]
     small_count = sum(bool(row["small_sample"]) for row in comparison_rows)
+    primary_overall = [
+        row
+        for row in primary_rows
+        if row["scope"] == "overall" and row["view"] == "all_windows"
+    ]
     lines = [
         "# TSFM-FAIS multi-forecaster summary",
         "",
@@ -783,6 +1004,38 @@ def _write_markdown(
         f"{SMALL_SAMPLE_THRESHOLD} paired episodes and are marked as small samples.",
         "",
         "## Inputs",
+        "",
+    ]
+    lines[4:4] = [
+        "## Primary family-macro MASE comparisons",
+        "",
+        "Families receive equal weight. Intervals resample family, dataset, then "
+        "item/mask-realization clusters. Holm-adjusted values correct all comparators "
+        "within the displayed stratum.",
+        "",
+        *_markdown_table(
+            (
+                "comparator",
+                "families",
+                "pairs",
+                "MASE delta [95% CI]",
+                "family win",
+                "Holm p",
+            ),
+            [
+                (
+                    row["comparator"],
+                    row["family_count"],
+                    row["pair_count"],
+                    f"{_format_number(row['mase_family_macro_delta'])} "
+                    f"[{_format_number(row['mase_family_macro_delta_ci95_low'])}, "
+                    f"{_format_number(row['mase_family_macro_delta_ci95_high'])}]",
+                    _format_number(row["family_win_rate"]),
+                    _format_number(row["holm_adjusted_p_value"]),
+                )
+                for row in primary_overall
+            ],
+        ),
         "",
     ]
     lines.extend(
@@ -1036,18 +1289,26 @@ def summarize_multi_forecaster(
         bootstrap_replicates=bootstrap_replicates,
         bootstrap_seed=bootstrap_seed,
     )
+    primary_rows = _family_macro_primary(
+        episodes,
+        metadata,
+        method_roles,
+        bootstrap_replicates=bootstrap_replicates,
+        bootstrap_seed=bootstrap_seed,
+    )
     output = Path(output_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
     json_path = output / "main_summary.json"
     method_csv = output / "method_summary.csv"
     comparison_csv = output / "comparison_summary.csv"
+    primary_csv = output / "family_macro_comparison_summary.csv"
     markdown_path = output / "report.md"
     small_method_strata = sum(bool(row["small_sample"]) for row in method_rows)
     small_comparison_strata = sum(
         bool(row["small_sample"]) for row in comparison_rows
     )
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "sources": [source.payload() for source in sources],
         "episode_count": len(episodes),
         "forecaster_count": len({key[0] for key in episodes}),
@@ -1064,6 +1325,13 @@ def summarize_multi_forecaster(
             "replicates": bootstrap_replicates,
             "seed": bootstrap_seed,
             "minimum_pairs": 2,
+        },
+        "primary_analysis": {
+            "metric": "mase",
+            "weighting": "family_macro",
+            "views": ["all_windows", "windows_with_missing"],
+            "interval": "family/dataset/item-mask hierarchical percentile bootstrap",
+            "multiple_comparison_adjustment": "Holm within view and stratum",
         },
         "definitions": {
             "loss_direction": "lower is better",
@@ -1097,16 +1365,16 @@ def summarize_multi_forecaster(
             ),
             "small_sample": f"fewer than {SMALL_SAMPLE_THRESHOLD} valid episodes or pairs",
             "overall_weighting": (
-                "each forecaster/episode evaluation has equal weight; models and data "
-                "families are not macro-reweighted"
+                "method_summary and comparison_summary are episode-weighted diagnostics; "
+                "family_macro_comparison_summary is the primary family-equal analysis"
             ),
             "bootstrap_dependence_caveat": (
                 "episode bootstrap intervals do not adjust for dependence among rows that "
                 "share an item, forecast origin, family, or imputed context"
             ),
             "inference": (
-                "confidence intervals are descriptive uncertainty summaries; no p-values, "
-                "multiple-comparison adjustment, or significance claims are produced"
+                "the primary table reports two-sided family-level Wilcoxon p-values with "
+                "Holm adjustment; interpretation must also use effect sizes and intervals"
             ),
         },
         "warnings": {
@@ -1134,15 +1402,18 @@ def summarize_multi_forecaster(
         },
         "method_summary": method_rows,
         "comparison_summary": comparison_rows,
+        "family_macro_comparison_summary": primary_rows,
     }
     _write_json(json_path, payload)
     _write_csv(method_csv, method_rows)
     _write_csv(comparison_csv, comparison_rows)
+    _write_csv(primary_csv, primary_rows)
     _write_markdown(
         markdown_path,
         sources=sources,
         method_rows=method_rows,
         comparison_rows=comparison_rows,
+        primary_rows=primary_rows,
         bootstrap_replicates=bootstrap_replicates,
         bootstrap_seed=bootstrap_seed,
     )
@@ -1152,9 +1423,11 @@ def summarize_multi_forecaster(
         "forecaster_count": payload["forecaster_count"],
         "method_group_count": len(method_rows),
         "comparison_group_count": len(comparison_rows),
+        "family_macro_comparison_count": len(primary_rows),
         "main_summary_json": str(json_path),
         "method_summary_csv": str(method_csv),
         "comparison_summary_csv": str(comparison_csv),
+        "family_macro_comparison_summary_csv": str(primary_csv),
         "report_markdown": str(markdown_path),
     }
 
