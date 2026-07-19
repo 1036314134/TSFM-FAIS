@@ -57,7 +57,7 @@ class LazyLightGBMRegressor:
         *,
         sample_weight: np.ndarray | None = None,
         feature_names: Sequence[str] | None = None,
-    ) -> "LazyLightGBMRegressor":
+    ) -> LazyLightGBMRegressor:
         x = np.asarray(features, dtype=float)
         y = np.asarray(targets, dtype=float).reshape(-1)
         if x.ndim != 2 or len(x) != len(y):

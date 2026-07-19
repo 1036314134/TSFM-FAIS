@@ -183,6 +183,18 @@ class _FakeTeacher:
                 )
         return labels, clean_loss, 1.5
 
+    def candidate_losses_batched(
+        self,
+        _clean_context: np.ndarray,
+        _clean_future: np.ndarray,
+        candidates: dict[str, CandidateResult],
+        _spec: Any,
+    ) -> dict[str, float]:
+        return {
+            candidate_id: 1.25 + 0.01 * index
+            for index, candidate_id in enumerate(candidates)
+        }
+
     def pair_interactions_batched(
         self,
         _future: np.ndarray,
@@ -208,8 +220,12 @@ class _FakePipeline:
         _seed: int,
         *,
         max_blocks: int,
+        target_blocks: tuple[Any, ...] = (),
+        priority_channels: tuple[int, ...] = (),
     ) -> SeriesBatch:
         assert max_blocks >= 1
+        assert target_blocks
+        assert priority_channels == (0, 1)
         return batch
 
 
@@ -365,7 +381,9 @@ class _Harness:
             lambda spec, _forecast: {"candidate_cost_tier": float(spec.cost_tier)},
         )
         monkeypatch.setattr(
-            stage_execution, "proxy_features", lambda *_args: {"proxy_mae": 0.0}
+            stage_execution,
+            "proxy_features",
+            lambda *_args, **_kwargs: {"proxy_mae": 0.0},
         )
         monkeypatch.setattr(
             stage_execution,

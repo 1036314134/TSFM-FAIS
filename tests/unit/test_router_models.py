@@ -23,6 +23,14 @@ def test_losses_to_relevance_preserves_ties_and_inverts_loss_order() -> None:
     np.testing.assert_array_equal(relevance, [0, 1, 1, 0, 1])
 
 
+def test_losses_to_relevance_suppresses_numerical_near_ties() -> None:
+    losses = np.asarray([1.0, 1.0 + 1e-8, 2.0])
+
+    relevance = losses_to_relevance(losses, (3,))
+
+    np.testing.assert_array_equal(relevance, [1, 1, 0])
+
+
 def test_router_bundle_writes_schema_and_dependency_manifest(tmp_path) -> None:
     assert PublicRouterBundle is RouterBundle
     bundle = RouterBundle(

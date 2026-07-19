@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from importlib import metadata as package_metadata
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 import joblib
 import numpy as np
@@ -21,9 +22,12 @@ def _lightgbm_classes():
 
 
 def losses_to_relevance(
-    losses: np.ndarray, groups: Sequence[int]
+    losses: np.ndarray,
+    groups: Sequence[int],
+    *,
+    relative_tie_tolerance: float = 1e-5,
 ) -> np.ndarray:
-    """Convert lower-is-better losses to tied integer ranking relevance."""
+    """Convert losses to relevance while suppressing numerical near-ties."""
 
     values = np.asarray(losses, dtype=float).reshape(-1)
     group_sizes = tuple(int(size) for size in groups)
@@ -31,13 +35,27 @@ def losses_to_relevance(
         raise ValueError("groups must be positive and sum to the number of labels")
     if not np.isfinite(values).all():
         raise ValueError("ranking losses must be finite")
+    if not np.isfinite(relative_tie_tolerance) or relative_tie_tolerance < 0:
+        raise ValueError("relative_tie_tolerance must be finite and non-negative")
     relevance = np.empty(len(values), dtype=int)
     offset = 0
     for size in group_sizes:
         group = values[offset : offset + size]
-        unique = np.unique(group)
-        levels = {float(loss): len(unique) - index - 1 for index, loss in enumerate(unique)}
-        relevance[offset : offset + size] = [levels[float(loss)] for loss in group]
+        order = np.argsort(group, kind="stable")
+        cluster = np.zeros(size, dtype=int)
+        cluster_count = 1
+        for rank in range(1, size):
+            previous = float(group[order[rank - 1]])
+            current = float(group[order[rank]])
+            tolerance = relative_tie_tolerance * max(
+                1.0,
+                abs(previous),
+                abs(current),
+            )
+            if current - previous > tolerance:
+                cluster_count += 1
+            cluster[order[rank]] = cluster_count - 1
+        relevance[offset : offset + size] = cluster_count - cluster - 1
         offset += size
     return relevance
 
@@ -70,7 +88,7 @@ class RankerModel:
         features: np.ndarray,
         labels: np.ndarray,
         groups: Sequence[int],
-    ) -> "RankerModel":
+    ) -> RankerModel:
         LGBMRanker, _ = _lightgbm_classes()
         defaults = {
             "objective": "lambdarank",
@@ -78,7 +96,9 @@ class RankerModel:
             "learning_rate": 0.05,
             "num_leaves": 31,
             "random_state": 20260710,
+            "n_jobs": 1,
             "verbosity": -1,
+            "min_child_samples": max(2, min(20, len(features) // 8)),
         }
         defaults.update(self.params)
         self.model = LGBMRanker(**defaults)
@@ -88,7 +108,10 @@ class RankerModel:
     def predict(self, features: np.ndarray) -> np.ndarray:
         if self.model is None:
             raise RuntimeError("ranker has not been fitted")
-        return np.asarray(self.model.predict(np.asarray(features)), dtype=float)
+        return np.asarray(
+            self.model.predict(np.asarray(features), num_threads=1),
+            dtype=float,
+        )
 
 
 @dataclass
@@ -96,7 +119,7 @@ class PairwiseRiskModel:
     params: dict[str, Any] = field(default_factory=dict)
     model: Any = None
 
-    def fit(self, features: np.ndarray, labels: np.ndarray) -> "PairwiseRiskModel":
+    def fit(self, features: np.ndarray, labels: np.ndarray) -> PairwiseRiskModel:
         _, LGBMRegressor = _lightgbm_classes()
         defaults = {
             "objective": "huber",
@@ -104,7 +127,9 @@ class PairwiseRiskModel:
             "learning_rate": 0.05,
             "num_leaves": 31,
             "random_state": 20260710,
+            "n_jobs": 1,
             "verbosity": -1,
+            "min_child_samples": max(2, min(20, len(features) // 8)),
         }
         defaults.update(self.params)
         self.model = LGBMRegressor(**defaults)
@@ -114,7 +139,10 @@ class PairwiseRiskModel:
     def predict(self, features: np.ndarray) -> np.ndarray:
         if self.model is None:
             raise RuntimeError("pairwise model has not been fitted")
-        return np.asarray(self.model.predict(np.asarray(features)), dtype=float)
+        return np.asarray(
+            self.model.predict(np.asarray(features), num_threads=1),
+            dtype=float,
+        )
 
 
 @dataclass
@@ -148,7 +176,7 @@ class RouterBundle:
         return target
 
     @classmethod
-    def load(cls, path: str | Path) -> "RouterBundle":
+    def load(cls, path: str | Path) -> RouterBundle:
         source = Path(path)
         if source.is_dir():
             source = source / "router_bundle.joblib"

@@ -3,7 +3,11 @@ from __future__ import annotations
 import numpy as np
 
 from tsfm_fais.contracts import CandidateResult, ForecastResult, ForecastSpec, MissingBlock
-from tsfm_fais.routing.teacher import TeacherBuilder, replace_block
+from tsfm_fais.routing.teacher import (
+    TeacherBuilder,
+    coherence_adjusted_targets,
+    replace_block,
+)
 
 
 def _nonlinear_forecast(context: np.ndarray, spec: ForecastSpec) -> ForecastResult:
@@ -72,6 +76,25 @@ def test_teacher_builds_single_block_labels_and_pair_interaction_formula() -> No
         assert np.isclose(observed_losses[key], expected_losses[key])
     assert np.isclose(clean_loss, builder._loss(clean_context, clean_future, spec))
     assert np.isclose(anchor_loss, builder._loss(anchor, clean_future, spec, builder._scales(clean_context, spec.target_indices)))
+    full_losses = builder.candidate_losses_batched(
+        clean_context,
+        clean_future,
+        candidates,
+        spec,
+    )
+    adjusted = coherence_adjusted_targets(
+        batched_labels,
+        full_losses,
+        anchor_loss=anchor_loss,
+        visible_block_count=2,
+    )
+    for candidate_id, full_loss in full_losses.items():
+        total = sum(
+            target.routing_target
+            for (block_id, observed_candidate), target in adjusted.items()
+            if block_id in {"left", "right"} and observed_candidate == candidate_id
+        )
+        assert np.isclose(total, full_loss - anchor_loss)
     filtered = builder.unary_labels(
         "episode",
         clean_context,

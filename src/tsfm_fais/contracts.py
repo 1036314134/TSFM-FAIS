@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -115,6 +116,7 @@ class ImputerSpec:
     stochastic: bool = False
     device: Literal["cpu", "gpu", "any"] = "cpu"
     cost_tier: int = 1
+    max_fit_variates: int | None = None
     optional_extra: str | None = None
     dependencies: tuple[str, ...] = ()
     default_params: Mapping[str, Any] = field(default_factory=dict)
@@ -124,6 +126,8 @@ class ImputerSpec:
             raise ValueError("imputer_id cannot be empty")
         if self.cost_tier < 1:
             raise ValueError("cost_tier must be positive")
+        if self.max_fit_variates is not None and self.max_fit_variates < 2:
+            raise ValueError("max_fit_variates must be at least two")
 
 
 @dataclass

@@ -41,6 +41,29 @@ def _identity(tmp_path: Path) -> dict:
     )
 
 
+def test_atomic_progress_write_retries_transient_reader_lock(
+    tmp_path, monkeypatch
+) -> None:
+    target = tmp_path / "labels_progress.json"
+    original_replace = Path.replace
+    attempts = 0
+
+    def transient_lock(path, destination):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError("simulated Windows sharing violation")
+        return original_replace(path, destination)
+
+    monkeypatch.setattr(Path, "replace", transient_lock)
+    monkeypatch.setattr(label_resume, "sleep", lambda _delay: None)
+
+    label_resume._atomic_write_json(target, {"status": "running"})
+
+    assert attempts == 3
+    assert json.loads(target.read_text(encoding="utf-8")) == {"status": "running"}
+
+
 def _expectation(index: int, plan_sha: str) -> LabelEpisodeExpectation:
     return LabelEpisodeExpectation(
         artifact_index=index,

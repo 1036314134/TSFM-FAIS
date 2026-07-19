@@ -61,6 +61,7 @@ class ExperimentConfig(StrictModel):
     max_teacher_candidates_per_episode: int | None = Field(default=8, ge=2)
     max_pair_labels_per_episode: int = Field(default=8, ge=1)
     forecast_num_samples: int = Field(default=20, ge=1)
+    forecast_batch_size: int = Field(default=128, ge=1)
     save_all_candidate_outputs: bool = False
 
     @model_validator(mode="after")

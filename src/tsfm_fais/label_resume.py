@@ -16,6 +16,7 @@ import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from time import sleep
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -26,6 +27,25 @@ from tsfm_fais.artifacts import utc_now
 LABEL_PROGRESS_SCHEMA_VERSION = 1
 LABEL_SIDECAR_SCHEMA_VERSION = 1
 _SHA256_HEX_LENGTH = 64
+_ATOMIC_REPLACE_ATTEMPTS = 10
+_ATOMIC_REPLACE_BASE_DELAY_SECONDS = 0.02
+
+
+def _replace_atomic(temporary: Path, target: Path) -> None:
+    """Replace a progress file while tolerating brief Windows reader locks."""
+
+    for attempt in range(_ATOMIC_REPLACE_ATTEMPTS):
+        try:
+            temporary.replace(target)
+            return
+        except PermissionError:
+            if attempt + 1 == _ATOMIC_REPLACE_ATTEMPTS:
+                raise
+            delay = min(
+                _ATOMIC_REPLACE_BASE_DELAY_SECONDS * (2**attempt),
+                0.25,
+            )
+            sleep(delay)
 
 
 class LabelResumeError(ValueError):
@@ -413,7 +433,7 @@ def _atomic_write_json(path: Path, payload: Mapping[str, Any]) -> Path:
         handle.write("\n")
         handle.flush()
         os.fsync(handle.fileno())
-    temporary.replace(path)
+    _replace_atomic(temporary, path)
     return path
 
 
@@ -433,7 +453,7 @@ def _atomic_write_jsonl(path: Path, rows: Sequence[Mapping[str, Any]]) -> Path:
             handle.write("\n")
         handle.flush()
         os.fsync(handle.fileno())
-    temporary.replace(path)
+    _replace_atomic(temporary, path)
     return path
 
 

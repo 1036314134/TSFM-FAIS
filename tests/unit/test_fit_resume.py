@@ -16,7 +16,10 @@ from tsfm_fais.config import (
     RuntimeConfig,
 )
 from tsfm_fais.contracts import TimeSeriesItem
-from tsfm_fais.stage_execution import execute_fit_imputers
+from tsfm_fais.stage_execution import (
+    _fit_resume_resource_limit_migrations,
+    execute_fit_imputers,
+)
 from tsfm_fais.stages import StageInputs, StagePreparation
 
 
@@ -151,6 +154,72 @@ def test_fit_resume_rejects_changed_audit_or_training_data(tmp_path, monkeypatch
     with pytest.raises(ValueError, match="training batch summary changed"):
         execute_fit_imputers(_preparation(config, resume=True), config, inputs)
 
+
+def test_fit_resume_allows_only_safe_resource_limit_tightening(tmp_path) -> None:
+    shared = {
+        "schema_version": 1,
+        "training_sampling_protocol": "fit_prefix_descriptor_cap_v1",
+        "resolved_config_sha256": "config",
+        "audit_artifact_sha256": "audit",
+        "root_seed": 17,
+    }
+    stored = {
+        **shared,
+        "candidate_specs_sha256": "old",
+        "candidate_specs": {
+            "missforest": {
+                "spec": {
+                    "imputer_id": "missforest",
+                    "cost_tier": 3,
+                    "max_fit_variates": 128,
+                },
+                "effective_fit_params": {"n_jobs": 3},
+            }
+        },
+    }
+    current = json.loads(json.dumps(stored))
+    current["candidate_specs_sha256"] = "new"
+    current["candidate_specs"]["missforest"]["spec"]["max_fit_variates"] = 40
+    manifest = {
+        "datasets": {
+            "wide": {
+                "dimension": 51,
+                "candidates": {"missforest": {"status": "running"}},
+            },
+            "narrow": {
+                "dimension": 36,
+                "candidates": {"missforest": {"status": "fitted"}},
+            },
+        }
+    }
+
+    migrations = _fit_resume_resource_limit_migrations(
+        stored, current, manifest, tmp_path
+    )
+
+    assert migrations == [
+        {
+            "candidate_id": "missforest",
+            "previous_max_fit_variates": 128,
+            "current_max_fit_variates": 40,
+            "reason": "stricter_dimension_resource_limit",
+        }
+    ]
+
+    manifest["datasets"]["wide"]["candidates"]["missforest"]["status"] = "fitted"
+    assert (
+        _fit_resume_resource_limit_migrations(stored, current, manifest, tmp_path)
+        is None
+    )
+
+    changed_model = json.loads(json.dumps(current))
+    changed_model["candidate_specs"]["missforest"]["spec"]["cost_tier"] = 4
+    assert (
+        _fit_resume_resource_limit_migrations(
+            stored, changed_model, {"datasets": {}}, tmp_path
+        )
+        is None
+    )
 
 def test_fit_failure_is_atomically_recorded_before_fail_fast(tmp_path, monkeypatch) -> None:
     config = _config(tmp_path, fail_fast=True)

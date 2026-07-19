@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import itertools
 import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Mapping, Sequence
 
 from tsfm_fais.contracts import BudgetSpec, MissingBlock, RoutingResult
 
@@ -150,7 +150,7 @@ def _solver_result(
     method: str,
     explored_states: int,
 ) -> SolverResult:
-    assignments = dict(zip(problem.block_ids, assignment_values))
+    assignments = dict(zip(problem.block_ids, assignment_values, strict=True))
     return SolverResult(
         assignments=assignments,
         total_energy=float(energy),
@@ -184,7 +184,7 @@ class ExhaustiveSolver:
                 and len(set(values)) > problem.max_active_candidates
             ):
                 continue
-            assignments = dict(zip(problem.block_ids, values))
+            assignments = dict(zip(problem.block_ids, values, strict=True))
             energy = assignment_energy(problem, assignments)
             if (energy, values) < (best_energy, best_values or values):
                 best_values = values
@@ -222,7 +222,13 @@ class BeamSearchSolver:
         increment = unary
         if candidate_id not in state.active:
             increment += float(problem.activation_costs.get(candidate_id, 0.0))
-        assigned = dict(zip(problem.block_ids[: len(state.values)], state.values))
+        assigned = dict(
+            zip(
+                problem.block_ids[: len(state.values)],
+                state.values,
+                strict=True,
+            )
+        )
         for edge in problem.edges:
             if edge.left == block_id and edge.right in assigned:
                 other_block = edge.right
@@ -276,7 +282,7 @@ class BeamSearchSolver:
         best = beam[0]
         # Recompute to keep this API and the reference objective identical.
         final_energy = assignment_energy(
-            problem, dict(zip(problem.block_ids, best.values))
+            problem, dict(zip(problem.block_ids, best.values, strict=True))
         )
         return _solver_result(problem, best.values, final_energy, "beam", explored)
 
@@ -409,7 +415,7 @@ def beam_search(
     budget: BudgetSpec | None = None,
     beam_width: int = 32,
     beta: float = 1.0,
-    cost_weight: float = 0.05,
+    cost_weight: float = 0.0,
     invalid: set[tuple[str, str]] | None = None,
 ) -> RoutingResult:
     if beam_width < 1:
@@ -477,14 +483,18 @@ def exhaustive_search(
     costs: Mapping[str, float] | None = None,
     budget: BudgetSpec | None = None,
     beta: float = 1.0,
-    cost_weight: float = 0.05,
+    cost_weight: float = 0.0,
     invalid: set[tuple[str, str]] | None = None,
 ) -> RoutingResult:
     best: RoutingResult | None = None
     for assignment_values in itertools.product(candidates, repeat=len(graph.blocks)):
         mapping = {
             block.block_id: candidate
-            for block, candidate in zip(graph.blocks, assignment_values)
+            for block, candidate in zip(
+                graph.blocks,
+                assignment_values,
+                strict=True,
+            )
         }
         if invalid and any((block, candidate) in invalid for block, candidate in mapping.items()):
             continue

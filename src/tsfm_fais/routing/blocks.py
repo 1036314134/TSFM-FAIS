@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from collections.abc import Mapping
 
 import numpy as np
 
@@ -25,7 +25,7 @@ def detect_missing_blocks(observed_mask: np.ndarray, pattern: str = "observed") 
             transitions = np.diff(np.pad(missing.astype(np.int8), (1, 1)))
             starts = np.flatnonzero(transitions == 1)
             ends = np.flatnonzero(transitions == -1)
-            for start, end in zip(starts, ends):
+            for start, end in zip(starts, ends, strict=True):
                 blocks.append(
                     MissingBlock(
                         block_id=f"n{batch_index}:d{channel}:{int(start)}-{int(end)}",

@@ -253,6 +253,9 @@ def _run_stage(args: argparse.Namespace) -> int:
         labels_artifact=_optional_path(args.labels_artifact),
         router_artifact=_optional_path(args.router_artifact),
         forecaster_artifact=_optional_path(args.forecaster_artifact),
+        candidate_source_impute_artifact=_optional_path(
+            args.candidate_source_impute_artifact
+        ),
         forecaster_id=args.forecaster_id,
     )
     preparation = prepare_stage(
@@ -377,10 +380,18 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--labels-artifact")
     run.add_argument("--router-artifact")
     run.add_argument(
+        "--candidate-source-impute-artifact",
+        help=(
+            "completed impute-stage directory whose forecast-independent candidate "
+            "outputs can be reused after strict episode validation"
+        ),
+    )
+    run.add_argument(
         "--forecaster-artifact",
         help=(
-            "local checkpoint path; for multi-model labels, use a directory with "
-            "model-ID children or a JSON ID-to-path mapping"
+            "local checkpoint path for labels or forecast-consensus imputation; "
+            "for multi-model labels, use a directory with model-ID children or a "
+            "JSON ID-to-path mapping"
         ),
     )
     run.add_argument(

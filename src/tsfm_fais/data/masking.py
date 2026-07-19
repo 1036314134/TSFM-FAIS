@@ -146,9 +146,10 @@ def _place_independent_blocks(
     time_length, dimensions = mask.shape
     attempts = 0
     maximum_attempts = max(1000, target * 20)
-    while int((~mask).sum()) < target and attempts < maximum_attempts:
+    missing_count = int((~mask).sum())
+    while missing_count < target and attempts < maximum_attempts:
         attempts += 1
-        remaining = target - int((~mask).sum())
+        remaining = target - missing_count
         width = _draw_block_length(rng, lengths, time_length, remaining)
         channel = int(rng.integers(0, dimensions))
         start = int(rng.integers(0, time_length - width + 1))
@@ -158,7 +159,8 @@ def _place_independent_blocks(
             continue
         take = min(remaining, len(observed_indices))
         mask[start + observed_indices[:take], channel] = False
-    _hide_random(mask, rng, target - int((~mask).sum()))
+        missing_count += take
+    _hide_random(mask, rng, target - missing_count)
 
 
 def _place_synchronous_blocks(
@@ -171,24 +173,27 @@ def _place_synchronous_blocks(
     synchronous_times = target // dimensions
     time_mask = np.ones(time_length, dtype=bool)
     attempts = 0
-    while int((~time_mask).sum()) < synchronous_times and attempts < max(500, target * 10):
+    missing_times = 0
+    while missing_times < synchronous_times and attempts < max(500, target * 10):
         attempts += 1
-        remaining = synchronous_times - int((~time_mask).sum())
+        remaining = synchronous_times - missing_times
         width = _draw_block_length(rng, lengths, time_length, remaining)
         start = int(rng.integers(0, time_length - width + 1))
         available = np.flatnonzero(time_mask[start : start + width])
         take = min(remaining, len(available))
         time_mask[start + available[:take]] = False
-    if int((~time_mask).sum()) < synchronous_times:
+        missing_times += take
+    if missing_times < synchronous_times:
         available = np.flatnonzero(time_mask)
         selected = rng.choice(
             available,
-            size=synchronous_times - int((~time_mask).sum()),
+            size=synchronous_times - missing_times,
             replace=False,
         )
         time_mask[selected] = False
+        missing_times = synchronous_times
     mask[~time_mask, :] = False
-    _hide_random(mask, rng, target - int((~mask).sum()))
+    _hide_random(mask, rng, target - missing_times * dimensions)
 
 
 def _strongly_correlated_channels(
@@ -241,9 +246,10 @@ def _place_staggered_blocks(
     time_length = mask.shape[0]
     selected = tuple(map(int, channels))
     attempts = 0
-    while int((~mask).sum()) < target and attempts < max(1000, target * 20):
+    missing_count = int((~mask).sum())
+    while missing_count < target and attempts < max(1000, target * 20):
         attempts += 1
-        remaining = target - int((~mask).sum())
+        remaining = target - missing_count
         nominal = _draw_block_length(
             rng,
             lengths,
@@ -253,14 +259,15 @@ def _place_staggered_blocks(
         base = int(rng.integers(0, time_length - nominal + 1))
         maximum_shift = max(1, nominal // 2)
         for channel_offset, channel in enumerate(selected):
-            if int((~mask).sum()) >= target:
+            if missing_count >= target:
                 break
             shift = channel_offset % (2 * maximum_shift + 1) - maximum_shift
             start = min(time_length - nominal, max(0, base + shift))
             available = np.flatnonzero(mask[start : start + nominal, channel])
-            take = min(target - int((~mask).sum()), len(available))
+            take = min(target - missing_count, len(available))
             mask[start + available[:take], channel] = False
-    _hide_random(mask, rng, target - int((~mask).sum()))
+            missing_count += take
+    _hide_random(mask, rng, target - missing_count)
 
 
 def _place_value_dependent_blocks(
@@ -272,19 +279,21 @@ def _place_value_dependent_blocks(
     time_length = mask.shape[0]
     ordered = np.argsort(np.asarray(scores), axis=None)[::-1]
     length_index = 0
+    missing_count = int((~mask).sum())
     for flat_index in ordered:
-        if int((~mask).sum()) >= target:
+        if missing_count >= target:
             break
         time_index, channel = np.unravel_index(int(flat_index), scores.shape)
         if not mask[time_index, channel]:
             continue
-        remaining = target - int((~mask).sum())
+        remaining = target - missing_count
         width = min(time_length, remaining, lengths[length_index % len(lengths)])
         length_index += 1
         start = min(time_length - width, max(0, int(time_index) - width // 2))
         available = np.flatnonzero(mask[start : start + width, int(channel)])
         take = min(remaining, len(available))
         mask[start + available[:take], int(channel)] = False
+        missing_count += take
 
 
 def _value_scores(values: np.ndarray, calibration: np.ndarray) -> np.ndarray:

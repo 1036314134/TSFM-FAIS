@@ -8,10 +8,10 @@ import pytest
 from tsfm_fais.contracts import CandidateStatus, SeriesBatch
 from tsfm_fais.imputers.base import ImputerDependencyError
 from tsfm_fais.imputers.pypots import (
-    CSDIImputer,
-    SAITSImputer,
     TRMF_FROZEN_PROTOCOL_BLOCKER,
     TRMF_FROZEN_PROTOCOL_REASON,
+    CSDIImputer,
+    SAITSImputer,
     TimeMixerPPImputer,
     TRMFImputer,
 )

@@ -185,7 +185,7 @@ def test_internal_fallback_follows_configured_order(monkeypatch) -> None:
     assert result.routing.metadata["correlation_source"] == "training"
     assert result.routing.candidate_costs
     assert result.routing.activated_cost == 1.0
-    assert np.isclose(result.routing.cost_energy, 0.05)
+    assert np.isclose(result.routing.cost_energy, 0.0)
     assert np.isclose(
         result.routing.total_energy,
         result.routing.risk_energy + result.routing.cost_energy,
@@ -198,6 +198,52 @@ def test_pseudo_blocks_do_not_overlap_in_time_across_channels() -> None:
     pseudo = BlockwiseFAIS()._pseudo_batch(batch, seed=17, max_blocks=8)
     newly_hidden = batch.observed_mask & ~pseudo.observed_mask
     assert np.all(newly_hidden.sum(axis=2) <= 1)
+
+
+def test_pseudo_blocks_cover_priority_channels_with_matched_lengths() -> None:
+    values = np.arange(3 * 96, dtype=float).reshape(1, 96, 3)
+    batch = SeriesBatch(values, np.ones_like(values, dtype=bool))
+    blocks = (
+        MissingBlock("b0", 0, 0, 20, 32),
+        MissingBlock("b2", 0, 2, 40, 46),
+    )
+
+    pseudo = BlockwiseFAIS()._pseudo_batch(
+        batch,
+        seed=17,
+        max_blocks=2,
+        target_blocks=blocks,
+        priority_channels=(2, 0),
+    )
+    newly_hidden = batch.observed_mask & ~pseudo.observed_mask
+
+    assert newly_hidden[..., 0].sum() > 0
+    assert newly_hidden[..., 2].sum() > 0
+    assert np.all(newly_hidden.sum(axis=2) <= 1)
+
+
+def test_univariate_forecaster_uses_fast_selection_for_invisible_blocks() -> None:
+    values = np.arange(36, dtype=float).reshape(12, 3)
+    item = TimeSeriesItem(
+        item_id="invisible",
+        values=values,
+        variate_names=("target", "other_a", "other_b"),
+        start=pd.Timestamp("2026-01-01"),
+        freq="h",
+    )
+    mask = np.ones_like(values, dtype=bool)
+    mask[4:7, 2] = False
+
+    result = BlockwiseFAIS().impute(
+        item,
+        mask,
+        ForecastSpec("mock", "independent_univariate", 2, target_indices=(0,)),
+        BudgetSpec(max_candidates=6),
+    )
+
+    assert result.routing.shortlist == ("locf", "linear_interp")
+    assert set(result.routing.assignments.values()) == {"linear_interp"}
+    assert result.routing.metadata["forecast_irrelevant_block_count"] == 1
 
 
 def test_pipeline_skips_pairwise_features_for_large_block_sets() -> None:

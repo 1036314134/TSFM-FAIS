@@ -19,12 +19,13 @@ experiment:
   seeds: [20260710]
   max_items_per_dataset: 1
   max_training_windows_per_dataset: 8
-  max_train_origins_per_item: 1
-  max_eval_origins_per_item: 1
-  max_teacher_blocks_per_episode: 2
-  max_teacher_candidates_per_episode: 4
-  max_pair_labels_per_episode: 2
+  max_train_origins_per_item: 8
+  max_eval_origins_per_item: 2
+  max_teacher_blocks_per_episode: 4
+  max_teacher_candidates_per_episode: 20
+  max_pair_labels_per_episode: 4
   forecast_num_samples: 3
+  forecast_batch_size: 128
   deep_imputer_epochs: 1
   deep_imputer_batch_size: 4
   csdi_num_samples: 3

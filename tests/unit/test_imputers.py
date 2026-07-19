@@ -10,6 +10,7 @@ from tsfm_fais.imputers import (
     CandidateRunner,
     KNNMultivariateImputer,
     MICEImputer,
+    MissForestArtifact,
     MissForestImputer,
     SoftImputeImputer,
     create_imputer,
@@ -154,6 +155,36 @@ def test_missforest_trains_feature_models_on_complete_training_fold() -> None:
     result = imputer.impute(evaluation, artifact, seed=3)
     assert result.status is CandidateStatus.SUCCESS
     assert result.native_valid_mask[~evaluation.observed_mask].all()
+
+
+def test_missforest_predicts_single_threaded_without_mutating_artifact() -> None:
+    class RecordingForest:
+        def __init__(self) -> None:
+            self.n_jobs = 8
+            self.seen_n_jobs: list[int] = []
+
+        def predict(self, values: np.ndarray) -> np.ndarray:
+            self.seen_n_jobs.append(self.n_jobs)
+            return np.mean(values, axis=1)
+
+    values = np.arange(24, dtype=float).reshape(1, 8, 3)
+    mask = np.ones_like(values, dtype=bool)
+    mask[:, 2:6, 1] = False
+    batch = SeriesBatch(values, mask)
+    model = RecordingForest()
+    artifact = MissForestArtifact(
+        medians=np.median(values[0], axis=0),
+        models={1: model},
+        order=(1,),
+        observed_features=np.ones(3, dtype=bool),
+        training_deltas=(),
+    )
+
+    result = MissForestImputer(max_iter=1).impute(batch, artifact, seed=3)
+
+    assert result.status is CandidateStatus.SUCCESS
+    assert model.seen_n_jobs == [1]
+    assert model.n_jobs == 8
 
 
 def test_registry_creation_of_deep_adapter_does_not_import_pypots(monkeypatch) -> None:

@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import pytest
 
+from tsfm_fais.contracts import MissingBlock
 from tsfm_fais.experiment_sampling import (
     candidate_subset,
     connected_subset,
     deterministic_subset,
     evenly_spaced_subset,
+    forecast_aware_block_subset,
 )
-from tsfm_fais.contracts import MissingBlock
 from tsfm_fais.routing.graph import BlockEdge
 
 
@@ -41,3 +42,42 @@ def test_connected_subset_keeps_an_edge_when_quota_allows():
     edges = (BlockEdge("1", "4"),)
     selected = connected_subset(blocks, edges, 2, "episode")
     assert {block.block_id for block in selected} == {"1", "4"}
+
+
+def test_forecast_aware_blocks_drop_invisible_univariate_channels():
+    blocks = tuple(
+        MissingBlock(f"b{channel}", 0, channel, 2, 5)
+        for channel in range(4)
+    )
+    edges = (BlockEdge("b0", "b2"), BlockEdge("b1", "b3"))
+
+    selected = forecast_aware_block_subset(
+        blocks,
+        edges,
+        4,
+        (0, 1),
+        "independent_univariate",
+        "episode",
+    )
+
+    assert tuple(block.channel for block in selected) == (0, 1)
+
+
+def test_forecast_aware_joint_blocks_retain_each_target_channel():
+    blocks = tuple(
+        MissingBlock(f"b{channel}", 0, channel, 2, 5)
+        for channel in range(4)
+    )
+    edges = (BlockEdge("b0", "b2"), BlockEdge("b1", "b3"))
+
+    selected = forecast_aware_block_subset(
+        blocks,
+        edges,
+        3,
+        (0, 1),
+        "joint_multivariate",
+        "episode",
+    )
+
+    assert len(selected) == 3
+    assert {0, 1}.issubset({block.channel for block in selected})

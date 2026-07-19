@@ -27,6 +27,7 @@ class StageInputs:
     labels_artifact: Path | None = None
     router_artifact: Path | None = None
     forecaster_artifact: Path | None = None
+    candidate_source_impute_artifact: Path | None = None
     forecaster_id: str | None = None
 
     def to_manifest(self) -> dict[str, str | None]:
@@ -36,6 +37,9 @@ class StageInputs:
             "labels_artifact": _resolved_or_none(self.labels_artifact),
             "router_artifact": _resolved_or_none(self.router_artifact),
             "forecaster_artifact": _resolved_or_none(self.forecaster_artifact),
+            "candidate_source_impute_artifact": _resolved_or_none(
+                self.candidate_source_impute_artifact
+            ),
             "forecaster_id": self.forecaster_id,
         }
 
@@ -309,6 +313,24 @@ def _input_checks(
         )
         _router_semantics(router)
         checks.append(router)
+        checks.append(
+            _check(
+                "candidate_source_impute_artifact",
+                inputs.candidate_source_impute_artifact,
+                required=False,
+                kind="directory",
+                option="--candidate-source-impute-artifact",
+            )
+        )
+        checks.append(
+            _check(
+                "forecaster_artifact",
+                inputs.forecaster_artifact,
+                required=False,
+                kind="any",
+                option="--forecaster-artifact",
+            )
+        )
     return checks
 
 

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import importlib
-from typing import Any, Callable, Literal, cast
+from collections.abc import Callable
+from typing import Any, Literal, cast
 
 from .base import ForecastAdapter, ForecastAdapterSpec
 

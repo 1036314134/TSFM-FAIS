@@ -368,12 +368,18 @@ def _build_forecast_runner(
     artifact: Path,
     *,
     device: str,
+    batch_size: int = 128,
 ) -> ForecastRunner:
     source = artifact.resolve()
     if not source.exists():
         raise FileNotFoundError(f"forecaster artifact does not exist: {source}")
     registry = default_forecast_registry()
-    adapter = registry.build(model_id, model_name=str(source), device=device)
+    adapter = registry.build(
+        model_id,
+        model_name=str(source),
+        device=device,
+        batch_size=batch_size,
+    )
     ensure_backend = getattr(adapter, "_ensure_backend", None)
     if callable(ensure_backend):
         ensure_backend()
@@ -798,6 +804,7 @@ def evaluate_imputations(
         "horizon": config.experiment.horizon,
         "target_indices": target_signature,
         "forecast_num_samples": config.experiment.forecast_num_samples,
+        "forecast_batch_size": config.experiment.forecast_batch_size,
         "seed": config.seed,
         "mask_protocol": "sequence_mask_v2",
         "resolved_device": resolved_device,
@@ -848,6 +855,7 @@ def evaluate_imputations(
             ),
         },
         "forecast_num_samples": config.experiment.forecast_num_samples,
+        "forecast_batch_size": config.experiment.forecast_batch_size,
         "evaluation_signature": evaluation_signature,
         "metric_eligibility": (
             "candidate fallback rows remain in episode outputs for diagnostics; "
@@ -917,6 +925,7 @@ def evaluate_imputations(
                             forecaster_id,
                             resolved_forecaster_artifact,
                             device=resolved_device,
+                            batch_size=config.experiment.forecast_batch_size,
                         )
                     rows = _evaluate_episode(
                         record,

@@ -37,6 +37,7 @@ experiment:
   max_teacher_candidates_per_episode: 6
   max_pair_labels_per_episode: 4
   forecast_num_samples: 5
+  forecast_batch_size: 128
   save_all_candidate_outputs: false
 runtime:
   output_root: ../artifacts

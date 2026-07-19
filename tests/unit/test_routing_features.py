@@ -9,7 +9,12 @@ from tsfm_fais.contracts import (
     SeriesBatch,
 )
 from tsfm_fais.imputers import DEFAULT_REGISTRY
-from tsfm_fais.routing.features import block_features, candidate_features, proxy_features
+from tsfm_fais.routing.features import (
+    block_features,
+    candidate_features,
+    forecast_block_features,
+    proxy_features,
+)
 
 
 def test_proxy_features_penalize_nonfinite_uncertainty_with_finite_values() -> None:
@@ -54,6 +59,48 @@ def test_proxy_features_clip_overflowing_error_and_covariance() -> None:
     assert features["covariance_drift"] == 1e12
 
 
+def test_proxy_features_use_channel_matched_pseudo_errors() -> None:
+    truth = np.zeros((1, 4, 2), dtype=float)
+    mask = np.ones_like(truth, dtype=bool)
+    mask[:, 1:3, :] = False
+    values = truth.copy()
+    values[:, 1:3, 0] = 1.0
+    values[:, 1:3, 1] = 9.0
+    candidate = CandidateResult(
+        imputer_id="candidate",
+        values=values,
+        native_valid_mask=np.ones_like(values, dtype=bool),
+    )
+
+    features = proxy_features(candidate, truth, mask, channel=0)
+
+    assert features["proxy_mae"] == 1.0
+    assert features["proxy_global_mae"] == 5.0
+    assert features["proxy_channel_available"] == 1.0
+    assert features["proxy_channel_fraction"] == 0.5
+
+
+def test_forecast_block_features_mark_univariate_visibility() -> None:
+    spec = ForecastSpec(
+        "timesfm2p5",
+        "independent_univariate",
+        96,
+        96,
+        (0, 1),
+    )
+    target = MissingBlock("target", 0, 1, 2, 5)
+    auxiliary = MissingBlock("aux", 0, 2, 2, 5)
+
+    assert forecast_block_features(target, spec) == {
+        "block_is_forecast_target": 1.0,
+        "block_visible_to_forecaster": 1.0,
+    }
+    assert forecast_block_features(auxiliary, spec) == {
+        "block_is_forecast_target": 0.0,
+        "block_visible_to_forecaster": 0.0,
+    }
+
+
 def test_router_features_distinguish_forecasters_and_sequence_missing_rates() -> None:
     values = np.arange(24, dtype=float).reshape(1, 8, 3)
     mask = np.ones_like(values, dtype=bool)
@@ -62,6 +109,9 @@ def test_router_features_distinguish_forecasters_and_sequence_missing_rates() ->
         values,
         mask,
         metadata={
+            "dataset_id": "toy",
+            "family_id": "synthetic",
+            "forecast_origin": 99,
             "missing_mechanism": "independent_block",
             "target_missing_rate": 0.4,
             "global_missing_rate": 0.399,
@@ -83,6 +133,9 @@ def test_router_features_distinguish_forecasters_and_sequence_missing_rates() ->
     assert block_row["target_missing_rate"] == 0.4
     assert block_row["global_missing_rate"] == 0.399
     assert block_row["local_missing_rate"] == 0.125
+    assert block_row["dataset_id::toy"] == 1.0
+    assert block_row["family_id::synthetic"] == 1.0
+    assert block_row["forecast_origin_log1p"] == np.log1p(99)
     assert block_row["missing_mechanism::independent_block"] == 1.0
     assert timesfm["forecast_model::timesfm2p5"] == 1.0
     assert "forecast_model::tirex" not in timesfm

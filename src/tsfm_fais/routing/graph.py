@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Sequence
 
 import numpy as np
 
@@ -93,7 +93,7 @@ def build_block_graph(
 
     if connect_channel_neighbors:
         for group in groups.values():
-            for left, right in zip(group, group[1:]):
+            for left, right in zip(group, group[1:], strict=False):
                 gap = _interval_gap(left, right)
                 weight = 1.0 / (1.0 + gap)
                 key = _edge_key(left.block_id, right.block_id)

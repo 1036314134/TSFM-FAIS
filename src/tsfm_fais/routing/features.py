@@ -377,6 +377,17 @@ def block_features(
         "boundary_gap": float(abs(right - left)) if np.isfinite(left) and np.isfinite(right) else 0.0,
         "period_ratio": block.length / max(1, period or length),
     }
+    forecast_origin = batch.metadata.get("forecast_origin")
+    try:
+        numeric_origin = float(forecast_origin)
+    except (TypeError, ValueError):
+        numeric_origin = -1.0
+    if np.isfinite(numeric_origin) and numeric_origin >= 0:
+        features["forecast_origin_log1p"] = float(np.log1p(numeric_origin))
+    for field in ("dataset_id", "family_id"):
+        value = batch.metadata.get(field)
+        if isinstance(value, str) and value:
+            features[f"{field}::{value}"] = 1.0
     mechanism = batch.metadata.get("missing_mechanism")
     if isinstance(mechanism, str) and mechanism:
         features[f"missing_mechanism::{mechanism}"] = 1.0
@@ -402,27 +413,76 @@ def candidate_features(spec: ImputerSpec, forecast: ForecastSpec) -> dict[str, f
     return features
 
 
+def forecast_block_features(
+    block: MissingBlock,
+    forecast: ForecastSpec,
+) -> dict[str, float]:
+    """Describe whether a missing block can directly enter the forecaster."""
+
+    targets = set(forecast.target_indices or ())
+    is_target = block.channel in targets
+    is_visible = forecast.mode == "joint_multivariate" or is_target
+    return {
+        "block_is_forecast_target": float(is_target),
+        "block_visible_to_forecaster": float(is_visible),
+    }
+
+
 def proxy_features(
     candidate: CandidateResult,
     pseudo_truth: np.ndarray,
     pseudo_mask: np.ndarray,
     source: np.ndarray | None = None,
+    *,
+    channel: int | None = None,
 ) -> dict[str, float]:
     feature_cap = 1e12
     hidden = ~np.asarray(pseudo_mask, dtype=bool)
-    predicted = candidate.values
-    error = predicted[hidden] - np.asarray(pseudo_truth)[hidden]
+    selected_hidden = hidden
+    channel_available = 0.0
+    if channel is not None:
+        if not 0 <= int(channel) < hidden.shape[-1]:
+            raise ValueError("proxy channel is outside the variate axis")
+        channel_hidden = np.zeros_like(hidden, dtype=bool)
+        channel_hidden[..., int(channel)] = hidden[..., int(channel)]
+        if channel_hidden.any():
+            selected_hidden = channel_hidden
+            channel_available = 1.0
+    predicted = np.asarray(candidate.values, dtype=float)
+    truth = np.asarray(pseudo_truth, dtype=float)
+    error = predicted[selected_hidden] - truth[selected_hidden]
+    global_error = predicted[hidden] - truth[hidden]
     with np.errstate(over="ignore", invalid="ignore"):
         proxy_mae = float(np.mean(np.abs(error))) if error.size else 0.0
         proxy_rmse = (
             float(np.sqrt(np.mean(np.square(error)))) if error.size else 0.0
         )
+        global_mae = (
+            float(np.mean(np.abs(global_error))) if global_error.size else 0.0
+        )
+        global_rmse = (
+            float(np.sqrt(np.mean(np.square(global_error))))
+            if global_error.size
+            else 0.0
+        )
+        proxy_bias = float(np.mean(error)) if error.size else 0.0
     result: dict[str, float] = {
         "proxy_mae": proxy_mae,
         "proxy_rmse": proxy_rmse,
+        "proxy_global_mae": global_mae,
+        "proxy_global_rmse": global_rmse,
+        "proxy_bias": proxy_bias,
+        "proxy_channel_available": channel_available,
+        "proxy_channel_fraction": (
+            float(np.mean(selected_hidden[hidden])) if hidden.any() else 0.0
+        ),
         "runtime_seconds": float(candidate.runtime_seconds),
         "peak_memory_mb": candidate.peak_memory_bytes / (1024**2),
-        "native_coverage": float(np.mean(candidate.native_valid_mask[hidden])) if error.size else 1.0,
+        "native_coverage": (
+            float(np.mean(candidate.native_valid_mask[selected_hidden]))
+            if error.size
+            else 1.0
+        ),
     }
     if source is not None:
         with np.errstate(over="ignore", invalid="ignore"):
@@ -440,7 +500,9 @@ def proxy_features(
     else:
         result["covariance_drift"] = 0.0
     if candidate.uncertainty is not None:
-        selected_uncertainty = np.asarray(candidate.uncertainty, dtype=float)[hidden]
+        selected_uncertainty = np.asarray(candidate.uncertainty, dtype=float)[
+            selected_hidden
+        ]
         if error.size and selected_uncertainty.size:
             # A stochastic candidate may return a finite point estimate while its
             # sample variance overflows.  Preserve that evidence as a large risk

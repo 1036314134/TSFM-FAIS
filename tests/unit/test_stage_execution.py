@@ -23,15 +23,22 @@ from tsfm_fais.imputers import (
 from tsfm_fais.stage_execution import (
     _allowed_devices,
     _artifact_loading_manifest,
+    _candidate_anchor_calibrations,
+    _candidate_dataset_prior_statistics,
+    _candidate_global_prior_statistics,
+    _context_item,
     _episode_iter,
     _execution_metadata,
     _fit_candidate_params,
+    _fit_resource_exclusion,
     _forecast_spec,
     _forecaster_artifacts,
+    _label_context_features,
     _LabelArtifactManager,
     _pair_label_requests,
     _preflight_forecaster,
     _pypots_params,
+    _router_ranker_targets,
     _run_label_candidate_pairs,
     _selected_candidate_ids,
     _supplement_candidate_outputs,
@@ -90,6 +97,89 @@ def _item(length: int = 24) -> TimeSeriesItem:
         start=pd.Timestamp("2026-01-01"),
         freq="h",
     )
+
+
+def test_router_label_protocol_rejects_split_mismatch(tmp_path):
+    config = _config(tmp_path)
+    labels = tmp_path / "teacher_labels.jsonl"
+    labels.write_text("", encoding="utf-8")
+    (tmp_path / "labels_manifest.json").write_text(
+        json.dumps(
+            {
+                "split": "leave_family_out",
+                "origin_partition": "train",
+                "episode_sampling": {"partition": "train"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "resolved_config.json").write_text(
+        json.dumps(
+            {
+                "config": {
+                    "experiment": {
+                        **config.experiment.model_dump(mode="json"),
+                        "split": "leave_family_out",
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="label split does not match"):
+        stage_execution._validate_router_label_protocol(config, labels)
+
+
+def test_router_label_protocol_accepts_matching_rolling_config(tmp_path):
+    config = _config(tmp_path)
+    labels = tmp_path / "teacher_labels.jsonl"
+    labels.write_text("", encoding="utf-8")
+    (tmp_path / "labels_manifest.json").write_text(
+        json.dumps(
+            {
+                "split": "rolling_origin",
+                "origin_partition": "train",
+                "episode_sampling": {"partition": "train"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "resolved_config.json").write_text(
+        json.dumps({"config": {"experiment": config.experiment.model_dump(mode="json")}}),
+        encoding="utf-8",
+    )
+
+    protocol = stage_execution._validate_router_label_protocol(config, labels)
+
+    assert protocol["label_split"] == "rolling_origin"
+    assert protocol["label_origin_partition"] == "train"
+    assert "forecast_batch_size" in protocol["label_protocol_fields"]
+
+
+def test_router_label_protocol_rejects_forecast_batch_mismatch(tmp_path):
+    config = _config(tmp_path)
+    labels = tmp_path / "teacher_labels.jsonl"
+    labels.write_text("", encoding="utf-8")
+    (tmp_path / "labels_manifest.json").write_text(
+        json.dumps(
+            {
+                "split": "rolling_origin",
+                "origin_partition": "train",
+                "episode_sampling": {"partition": "train"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    experiment = config.experiment.model_dump(mode="json")
+    experiment["forecast_batch_size"] = config.experiment.forecast_batch_size // 2
+    (tmp_path / "resolved_config.json").write_text(
+        json.dumps({"config": {"experiment": experiment}}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="forecast_batch_size"):
+        stage_execution._validate_router_label_protocol(config, labels)
 
 
 def _item_with_id(item_id: str, length: int = 24) -> TimeSeriesItem:
@@ -153,9 +243,7 @@ def test_leave_family_out_reuses_one_sequence_mask_across_origins(tmp_path):
     dataset = SimpleNamespace(dataset_id="synthetic")
     episodes = [
         episode
-        for _, episode in _episode_iter(
-            config, dataset, [_item(length=80)], partition="eval"
-        )
+        for _, episode in _episode_iter(config, dataset, [_item(length=80)], partition="eval")
     ]
 
     assert len(episodes) > 2
@@ -240,6 +328,98 @@ def test_training_window_cap_covers_full_fit_range(tmp_path):
     assert capped.item_ids[-1] == uncapped.item_ids[-1]
 
 
+def test_training_batch_masks_only_fit_prefix_before_materializing_windows(
+    tmp_path,
+    monkeypatch,
+):
+    config = _config(tmp_path)
+    item = _item(80)
+    fit_end = _training_prefix_end(
+        len(item.values),
+        config.experiment.context_length,
+        config.experiment.horizon,
+        config.experiment.fit_prefix_fraction,
+    )
+    original_mask = stage_execution.mask_time_series
+    masked_lengths = []
+
+    def record_mask(values, *args, **kwargs):
+        masked_lengths.append(len(values))
+        return original_mask(values, *args, **kwargs)
+
+    monkeypatch.setattr(stage_execution, "mask_time_series", record_mask)
+    batch = _training_batch(
+        [item],
+        config.experiment.context_length,
+        config.experiment.horizon,
+        max_windows=3,
+        masking_specs=(MaskingSpec("value_dependent", 0.25),),
+        fit_fraction=config.experiment.fit_prefix_fraction,
+        training_stride=config.experiment.training_window_stride,
+    )
+
+    assert masked_lengths == [fit_end]
+    assert batch.shape[0] == 3
+    assert batch.metadata["training_sampling_protocol"] == ("fit_prefix_descriptor_cap_v1")
+
+
+def test_fit_resource_exclusion_is_candidate_metadata_driven():
+    mice = DEFAULT_REGISTRY.get_spec("mice")
+    missforest = DEFAULT_REGISTRY.get_spec("missforest")
+    csdi = DEFAULT_REGISTRY.get_spec("csdi")
+    helix = DEFAULT_REGISTRY.get_spec("helix")
+    knn = DEFAULT_REGISTRY.get_spec("knn_multivariate")
+
+    assert _fit_resource_exclusion(mice, 128) is None
+    assert _fit_resource_exclusion(mice, 129) == {
+        "status": "unavailable",
+        "reason": "dimension_resource_limit",
+        "dimension": 129,
+        "max_fit_variates": 128,
+    }
+    assert _fit_resource_exclusion(missforest, 40) is None
+    assert _fit_resource_exclusion(missforest, 41) == {
+        "status": "unavailable",
+        "reason": "dimension_resource_limit",
+        "dimension": 41,
+        "max_fit_variates": 40,
+    }
+    assert _fit_resource_exclusion(csdi, 129) == {
+        "status": "unavailable",
+        "reason": "dimension_resource_limit",
+        "dimension": 129,
+        "max_fit_variates": 128,
+    }
+    assert _fit_resource_exclusion(helix, 129) == {
+        "status": "unavailable",
+        "reason": "dimension_resource_limit",
+        "dimension": 129,
+        "max_fit_variates": 128,
+    }
+    assert _fit_resource_exclusion(knn, 10_000) is None
+
+
+def test_atomic_json_write_retries_transient_reader_lock(tmp_path, monkeypatch):
+    target = tmp_path / "manifest.json"
+    original_replace = Path.replace
+    attempts = 0
+
+    def transient_lock(path, destination):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError("simulated Windows sharing violation")
+        return original_replace(path, destination)
+
+    monkeypatch.setattr(Path, "replace", transient_lock)
+    monkeypatch.setattr(stage_execution, "sleep", lambda _delay: None)
+
+    stage_execution._write_json(target, {"status": "running"})
+
+    assert attempts == 3
+    assert json.loads(target.read_text(encoding="utf-8")) == {"status": "running"}
+
+
 def test_origin_caps_cover_each_chronological_partition(tmp_path):
     config = _config(tmp_path)
     item = _item(80)
@@ -306,9 +486,7 @@ def test_dataset_episode_cap_is_deterministic_balanced_and_applied_before_build(
 
     assert len(first) == len(second) == 12
     assert len(calls) == 24
-    assert [episode_id for episode_id, _ in first] == [
-        episode_id for episode_id, _ in second
-    ]
+    assert [episode_id for episode_id, _ in first] == [episode_id for episode_id, _ in second]
     assert first_summary == second_summary
     assert first_summary["cap_per_dataset"] == 12
     assert first_summary["eligible_episode_count"] == 72
@@ -444,9 +622,7 @@ class _FakeArtifactStore:
             if candidate_id in self.failures
         }
         artifacts = {
-            candidate_id: object()
-            for candidate_id in requested
-            if candidate_id not in failures
+            candidate_id: object() for candidate_id in requested if candidate_id not in failures
         }
         return ArtifactLoadResult(
             artifacts=artifacts,
@@ -467,13 +643,9 @@ def test_label_artifact_manager_caches_structured_candidates_once(tmp_path):
     assert "missforest" in pool
     assert "knn_multivariate" in pool
     assert store.calls == []
-    first, first_failures, first_ephemeral = manager.acquire(
-        ("missforest", "knn_multivariate")
-    )
+    first, first_failures, first_ephemeral = manager.acquire(("missforest", "knn_multivariate"))
     manager.release(first, first_ephemeral)
-    second, second_failures, second_ephemeral = manager.acquire(
-        ("missforest", "knn_multivariate")
-    )
+    second, second_failures, second_ephemeral = manager.acquire(("missforest", "knn_multivariate"))
     manager.release(second, second_ephemeral)
     manager.close()
     audit = manager.audit()
@@ -487,6 +659,34 @@ def test_label_artifact_manager_caches_structured_candidates_once(tmp_path):
     assert audit["by_candidate"]["missforest"]["cache_hit_count"] == 1
     assert audit["by_candidate"]["missforest"]["dataset_cache_evict_count"] == 1
     assert audit["by_candidate"]["knn_multivariate"]["deserialization_attempt_count"] == 1
+
+
+def test_label_artifact_manager_caches_deep_candidates_within_dataset(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    store = _FakeArtifactStore()
+    manager = _LabelArtifactManager(store, DEFAULT_REGISTRY, config)
+    cache_clears = []
+    monkeypatch.setattr(
+        "tsfm_fais.stage_execution._empty_cuda_cache",
+        lambda device: cache_clears.append(device),
+    )
+
+    candidate_ids = ("gpvae", "saits")
+    first, _, first_ephemeral = manager.acquire(candidate_ids)
+    manager.release(first, first_ephemeral)
+    second, _, second_ephemeral = manager.acquire(candidate_ids)
+    manager.release(second, second_ephemeral)
+    manager.close()
+    audit = manager.audit()
+
+    assert [call[0] for call in store.calls] == [candidate_ids]
+    assert first_ephemeral == second_ephemeral == ()
+    for candidate_id in candidate_ids:
+        assert audit["by_candidate"][candidate_id]["deserialization_attempt_count"] == 1
+        assert audit["by_candidate"][candidate_id]["cache_hit_count"] == 1
+        assert audit["by_candidate"][candidate_id]["dataset_cache_evict_count"] == 1
+        assert audit["by_candidate"][candidate_id]["deep_cleanup_count"] == 1
+    assert cache_clears == [_torch_device(config)]
 
 
 def test_label_artifact_manager_caches_structured_load_failure(tmp_path):
@@ -505,9 +705,7 @@ def test_label_artifact_manager_caches_structured_load_failure(tmp_path):
     assert audit["by_candidate"]["missforest"]["cached_failure_hit_count"] == 1
 
 
-def test_label_artifact_manager_close_releases_memmap_and_records_gc(
-    tmp_path, monkeypatch
-):
+def test_label_artifact_manager_close_releases_memmap_and_records_gc(tmp_path, monkeypatch):
     config = _config(tmp_path)
     manager = _LabelArtifactManager(_FakeArtifactStore(), DEFAULT_REGISTRY, config)
     path = tmp_path / "mapped.bin"
@@ -581,6 +779,7 @@ def test_label_deep_candidates_load_and_release_one_at_a_time(tmp_path, monkeypa
         params={},
         budget=BudgetSpec(max_candidates=3),
     )
+    manager.close()
     audit = manager.audit()
     manifest = _artifact_loading_manifest({"toy": {"mock": audit}})
 
@@ -597,7 +796,7 @@ def test_label_deep_candidates_load_and_release_one_at_a_time(tmp_path, monkeypa
     assert tuple(proxies) == candidate_ids
     assert audit["max_deep_load_batch"] == 1
     assert audit["deep_evict_count"] == 2
-    assert len(cache_clears) == 2
+    assert len(cache_clears) == 1
     assert manifest["dataset_count"] == 1
     assert manifest["max_deep_load_batch"] == 1
     assert manifest["datasets"]["toy"]["deep_cleanup_count"] == 2
@@ -644,7 +843,11 @@ def test_missforest_fit_params_use_strict_configured_parallelism(tmp_path):
 
 
 def test_forecast_spec_and_manifest_include_runtime_controls(tmp_path, monkeypatch):
-    config = _updated_config(_config(tmp_path), forecast_num_samples=7)
+    config = _updated_config(
+        _config(tmp_path),
+        forecast_num_samples=7,
+        forecast_batch_size=64,
+    )
     monkeypatch.setattr("tsfm_fais.stage_execution._cuda_available", lambda: False)
 
     spec = _forecast_spec(config, "sundial", dimensions=3)
@@ -652,6 +855,7 @@ def test_forecast_spec_and_manifest_include_runtime_controls(tmp_path, monkeypat
 
     assert spec.num_samples == 7
     assert metadata["sampling_limits"]["forecast_num_samples"] == 7
+    assert metadata["sampling_limits"]["forecast_batch_size"] == 64
     assert metadata["sampling_limits"]["missforest_n_jobs"] == 1
     assert metadata["sampling_limits"]["csdi_num_samples"] == 20
     assert metadata["sampling_limits"]["candidate_ids"] == list(_selected_candidate_ids(config))
@@ -816,3 +1020,232 @@ def test_pair_label_sampling_is_deterministic_and_covers_candidate_roles():
         ("b0", "b1"),
         ("b1", "b2"),
     }
+
+
+def test_candidate_global_priors_deduplicate_blocks_and_shrink_episode_median():
+    rows = [
+        {
+            "forecaster_id": "joint",
+            "episode_id": "e1",
+            "candidate_id": "strong",
+            "anchor_loss": 10.0,
+            "full_candidate_loss": 6.0,
+        },
+        {
+            "forecaster_id": "joint",
+            "episode_id": "e1",
+            "candidate_id": "strong",
+            "anchor_loss": 10.0,
+            "full_candidate_loss": 6.0,
+        },
+        {
+            "forecaster_id": "joint",
+            "episode_id": "e2",
+            "candidate_id": "strong",
+            "anchor_loss": 8.0,
+            "full_candidate_loss": 6.0,
+        },
+        {
+            "forecaster_id": "joint",
+            "episode_id": "e1",
+            "candidate_id": "weak",
+            "anchor_loss": 10.0,
+            "full_candidate_loss": 13.0,
+        },
+        {
+            "forecaster_id": "joint",
+            "episode_id": "e3",
+            "candidate_id": "ignored",
+            "anchor_loss": 1.0,
+            "full_candidate_loss": float("nan"),
+        },
+    ]
+
+    priors, support = _candidate_global_prior_statistics(rows, shrinkage=1.0)
+
+    assert support == {"joint": {"strong": 2, "weak": 1}}
+    assert priors["joint"]["strong"] == pytest.approx(-2.0)
+    assert priors["joint"]["weak"] == pytest.approx(1.5)
+
+
+def test_candidate_dataset_priors_shrink_to_model_prior() -> None:
+    rows = [
+        {
+            "forecaster_id": "joint",
+            "dataset_id": "toy",
+            "episode_id": episode_id,
+            "candidate_id": "method",
+            "anchor_loss": 3.0,
+            "full_candidate_loss": 5.0,
+        }
+        for episode_id in ("e1", "e2")
+    ]
+
+    priors, support = _candidate_dataset_prior_statistics(
+        rows,
+        {"joint": {"method": -1.0}},
+        shrinkage=4.0,
+    )
+
+    assert support == {"joint": {"toy": {"method": 2}}}
+    assert priors["joint"]["toy"]["method"] == pytest.approx(0.0)
+
+
+def test_candidate_dataset_priors_can_use_only_recent_origins() -> None:
+    rows = [
+        {
+            "forecaster_id": "joint",
+            "dataset_id": "toy",
+            "forecast_origin": origin,
+            "episode_id": f"toy__item__{origin}__block__0.2__7",
+            "candidate_id": "method",
+            "anchor_loss": 3.0,
+            "full_candidate_loss": loss,
+        }
+        for origin, loss in ((10, 8.0), (20, 1.0))
+    ]
+
+    priors, support = _candidate_dataset_prior_statistics(
+        rows,
+        {"joint": {"method": 0.0}},
+        shrinkage=0.0,
+        recent_origin_fraction=0.5,
+    )
+
+    assert support == {"joint": {"toy": {"method": 1}}}
+    assert priors["joint"]["toy"]["method"] == pytest.approx(-2.0)
+
+
+def test_router_ranker_uses_block_local_routing_targets() -> None:
+    targets, protocol = _router_ranker_targets(
+        [
+            {
+                "routing_target": -0.25,
+                "full_candidate_loss": 10.0,
+            },
+            {
+                "routing_target": 0.5,
+                "full_candidate_loss": 1.0,
+            },
+        ],
+        "routing_target",
+    )
+
+    np.testing.assert_allclose(targets, [-0.25, 0.5])
+    assert protocol == "coherence_adjusted_marginal_v1"
+
+
+def test_router_ranker_can_use_full_candidate_losses() -> None:
+    targets, protocol = _router_ranker_targets(
+        [
+            {"routing_target": -0.25, "full_candidate_loss": 10.0},
+            {"routing_target": 0.5, "full_candidate_loss": 1.0},
+        ],
+        "full_candidate_loss",
+    )
+
+    np.testing.assert_allclose(targets, [10.0, 1.0])
+    assert protocol == "full_candidate_forecast_loss_v2"
+
+
+def test_candidate_anchor_calibration_uses_only_recent_training_origins():
+    rows = []
+    proxy_pairs = (
+        (10, 4.0, 1.0, 0.0, 1.0),
+        (20, 0.0, 1.0, 0.0, 1.0),
+        (30, 0.5, 1.0, 0.0, 1.0),
+        (40, 2.0, 1.0, 0.0, 1.0),
+        (50, 4.0, 1.0, 2.0, 0.0),
+    )
+    for origin, first_proxy, second_proxy, first_loss, second_loss in proxy_pairs:
+        for candidate_id, proxy, loss in (
+            ("first", first_proxy, first_loss),
+            ("second", second_proxy, second_loss),
+        ):
+            row = {
+                "forecaster_id": "model",
+                "dataset_id": "data",
+                "episode_id": f"data__item__{origin}__block__0.4__7",
+                "candidate_id": candidate_id,
+                "full_candidate_loss": loss,
+                "unary_features": {"proxy_global_mae": proxy},
+            }
+            rows.extend((row, dict(row)))
+
+    calibrations = _candidate_anchor_calibrations(
+        rows,
+        ("first", "second"),
+    )
+
+    calibration = calibrations["model"]["data"]
+    assert calibration["max_training_origin"] == 50
+    assert calibration["calibration_origin_count"] == 4
+    assert calibration["calibration_episode_count"] == 4
+    assert calibration["calibration_first_candidate_count"] == 3
+    assert calibration["calibration_second_candidate_count"] == 1
+    assert calibration["calibration_accuracy"] == pytest.approx(1.0)
+    assert np.log(3 / 2) < calibration["proxy_log_ratio_threshold"] < np.log(5 / 2)
+
+    second_dataset_rows = []
+    for row in rows:
+        copied = dict(row)
+        copied["dataset_id"] = "other"
+        copied["episode_id"] = str(row["episode_id"]).replace("data__", "other__", 1)
+        second_dataset_rows.append(copied)
+    multi_dataset = _candidate_anchor_calibrations(
+        [*rows, *second_dataset_rows],
+        ("first", "second"),
+    )
+
+    aggregate = multi_dataset["model"]["__all__"]
+    assert aggregate["scope"] == "cross_dataset"
+    assert aggregate["max_training_origin"] is None
+    assert aggregate["source_dataset_count"] == 2
+    assert aggregate["calibration_episode_count"] == 8
+
+
+def test_label_context_features_recover_origin_from_legacy_episode_id():
+    features = _label_context_features(
+        {
+            "episode_id": "data__item__1234__synchronous_block__0.4__7",
+            "dataset_id": "data",
+            "family_id": "family",
+        }
+    )
+
+    assert features == {
+        "dataset_id::data": 1.0,
+        "family_id::family": 1.0,
+        "forecast_origin_log1p": pytest.approx(np.log1p(1234)),
+    }
+
+
+def test_context_item_preserves_episode_mask_metadata_for_inference():
+    item = _item(24)
+    values = item.values[8:16]
+    context = SeriesBatch(
+        values[None, ...],
+        np.ones((1, 8, values.shape[1]), dtype=bool),
+        metadata={
+            "dataset_id": "toy",
+            "forecast_origin": 16,
+            "missing_mechanism": "synchronous_block",
+            "target_missing_rate": 0.4,
+            "global_missing_rate": 0.39,
+            "local_missing_rate": 0.25,
+        },
+    )
+    episode = SimpleNamespace(
+        forecast_origin=16,
+        context=context,
+        clean_context=values,
+    )
+
+    routed_item = _context_item(item, episode)
+
+    assert routed_item.metadata["forecast_origin"] == 16
+    assert routed_item.metadata["missing_mechanism"] == "synchronous_block"
+    assert routed_item.metadata["target_missing_rate"] == 0.4
+    assert routed_item.metadata["global_missing_rate"] == 0.39
+    assert routed_item.metadata["local_missing_rate"] == 0.25
+    assert routed_item.metadata["series_length"] == 24

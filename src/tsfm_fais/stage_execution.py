@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass
 from dataclasses import field as dataclass_field
 from functools import partial
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, sleep
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -31,6 +31,7 @@ from tsfm_fais.contracts import (
     CandidateResult,
     CandidateStatus,
     ForecastSpec,
+    MissingBlock,
     SeriesBatch,
     TimeSeriesItem,
 )
@@ -47,9 +48,9 @@ from tsfm_fais.data import (
 )
 from tsfm_fais.experiment_sampling import (
     candidate_subset,
-    connected_subset,
     deterministic_subset,
     evenly_spaced_subset,
+    forecast_aware_block_subset,
 )
 from tsfm_fais.forecasting import ForecastRunner, default_forecast_registry
 from tsfm_fais.imputers import (
@@ -70,12 +71,18 @@ from tsfm_fais.routing.blocks import build_block_graph
 from tsfm_fais.routing.features import (
     block_features,
     candidate_features,
+    forecast_block_features,
     merge_features,
     pair_features,
     proxy_features,
 )
 from tsfm_fais.routing.models import RouterBundle, RouterTrainer
-from tsfm_fais.routing.teacher import TeacherBuilder
+from tsfm_fais.routing.teacher import (
+    CoherenceAdjustedTarget,
+    TeacherBuilder,
+    TeacherLabel,
+    coherence_adjusted_targets,
+)
 from tsfm_fais.stages import (
     StageInputs,
     StagePreparation,
@@ -85,6 +92,25 @@ from tsfm_fais.stages import (
 
 _IMPUTATION_SCHEMA_VERSION = 3
 _IMPUTATION_PROGRESS_SCHEMA_VERSION = 1
+_ATOMIC_REPLACE_ATTEMPTS = 10
+_ATOMIC_REPLACE_BASE_DELAY_SECONDS = 0.02
+
+
+def _replace_atomic(temporary: Path, target: Path) -> None:
+    """Replace a file while tolerating brief Windows reader locks."""
+
+    for attempt in range(_ATOMIC_REPLACE_ATTEMPTS):
+        try:
+            temporary.replace(target)
+            return
+        except PermissionError:
+            if attempt + 1 == _ATOMIC_REPLACE_ATTEMPTS:
+                raise
+            delay = min(
+                _ATOMIC_REPLACE_BASE_DELAY_SECONDS * (2**attempt),
+                0.25,
+            )
+            sleep(delay)
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> Path:
@@ -103,7 +129,7 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> Path:
         )
         handle.flush()
         os.fsync(handle.fileno())
-    temporary.replace(path)
+    _replace_atomic(temporary, path)
     return path
 
 
@@ -112,13 +138,11 @@ def _write_jsonl_atomic(path: Path, rows: Iterable[Mapping[str, Any]]) -> Path:
     temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
     with temporary.open("w", encoding="utf-8", newline="\n") as handle:
         for row in rows:
-            handle.write(
-                json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
-            )
+            handle.write(json.dumps(row, ensure_ascii=False, sort_keys=True, default=str))
             handle.write("\n")
         handle.flush()
         os.fsync(handle.fileno())
-    temporary.replace(path)
+    _replace_atomic(temporary, path)
     return path
 
 
@@ -129,7 +153,7 @@ def _write_npz_atomic(path: Path, **arrays: Any) -> Path:
         np.savez_compressed(handle, **arrays)
         handle.flush()
         os.fsync(handle.fileno())
-    temporary.replace(path)
+    _replace_atomic(temporary, path)
     return path
 
 
@@ -230,48 +254,51 @@ def _training_batch(
         raise ValueError("imputer training requires masking specs and seeds")
     if training_stride < 1:
         raise ValueError("training_stride must be positive")
-    windows: list[np.ndarray] = []
-    masks: list[np.ndarray] = []
-    window_ids: list[str] = []
-    for item in selected:
-        fit_end = _training_prefix_end(
-            len(item.values), context_length, horizon, fit_fraction
-        )
+    descriptors: list[tuple[int, int, MaskingSpec, int, int]] = []
+    for item_index, item in enumerate(selected):
+        fit_end = _training_prefix_end(len(item.values), context_length, horizon, fit_fraction)
         starts = list(range(0, fit_end - context_length + 1, training_stride))
         final_start = fit_end - context_length
         if not starts or starts[-1] != final_start:
             starts.append(final_start)
-        calibration = item.values[:fit_end]
         for spec in specs:
             for configured_seed in seeds:
-                realization = mask_time_series(
-                    item.values,
-                    spec,
-                    _sequence_mask_seed(
-                        dataset_id, item.item_id, spec, configured_seed
-                    ),
-                    calibration_values=calibration,
-                )
                 for start in starts:
-                    stop = start + context_length
-                    windows.append(realization.values[start:stop])
-                    masks.append(realization.observed_mask[start:stop])
-                    window_ids.append(
-                        f"{item.item_id}@{start}|{spec.mechanism}|"
-                        f"{spec.missing_rate:g}|{configured_seed}"
-                    )
-    selected_windows = evenly_spaced_subset(
-        tuple(zip(windows, masks, window_ids, strict=True)), max_windows
-    )
-    windows = [window for window, _, _ in selected_windows]
-    masks = [mask for _, mask, _ in selected_windows]
-    window_ids = [window_id for _, _, window_id in selected_windows]
+                    descriptors.append((item_index, fit_end, spec, configured_seed, start))
+
+    selected_descriptors = evenly_spaced_subset(tuple(descriptors), max_windows)
+    windows: list[np.ndarray] = []
+    masks: list[np.ndarray] = []
+    window_ids: list[str] = []
+    active_key: tuple[int, MaskingSpec, int] | None = None
+    active_realization: Any = None
+    for item_index, fit_end, spec, configured_seed, start in selected_descriptors:
+        item = selected[item_index]
+        realization_key = (item_index, spec, configured_seed)
+        if realization_key != active_key:
+            prefix = item.values[:fit_end]
+            active_realization = mask_time_series(
+                prefix,
+                spec,
+                _sequence_mask_seed(dataset_id, item.item_id, spec, configured_seed),
+                calibration_values=prefix,
+            )
+            active_key = realization_key
+        stop = start + context_length
+        windows.append(active_realization.values[start:stop])
+        masks.append(active_realization.observed_mask[start:stop])
+        window_ids.append(
+            f"{item.item_id}@{start}|{spec.mechanism}|{spec.missing_rate:g}|{configured_seed}"
+        )
     values = np.stack(windows)
     return SeriesBatch(
         values,
         np.stack(masks),
         item_ids=tuple(window_ids),
-        metadata={"mask_protocol": "sequence_mask_v2"},
+        metadata={
+            "mask_protocol": "sequence_mask_v2",
+            "training_sampling_protocol": "fit_prefix_descriptor_cap_v1",
+        },
     )
 
 
@@ -389,6 +416,18 @@ def _fit_candidate_params(config: AppConfig, spec: Any) -> dict[str, Any] | None
     return _pypots_params(config, spec)
 
 
+def _fit_resource_exclusion(spec: Any, num_variates: int) -> dict[str, Any] | None:
+    limit = getattr(spec, "max_fit_variates", None)
+    if limit is None or num_variates <= int(limit):
+        return None
+    return {
+        "status": "unavailable",
+        "reason": "dimension_resource_limit",
+        "dimension": int(num_variates),
+        "max_fit_variates": int(limit),
+    }
+
+
 def _execution_metadata(config: AppConfig) -> dict[str, Any]:
     limits = {
         name: getattr(config.experiment, name)
@@ -412,6 +451,7 @@ def _execution_metadata(config: AppConfig) -> dict[str, Any]:
             "csdi_num_samples": config.experiment.csdi_num_samples,
             "missforest_n_jobs": config.experiment.missforest_n_jobs,
             "forecast_num_samples": config.experiment.forecast_num_samples,
+            "forecast_batch_size": config.experiment.forecast_batch_size,
             "save_all_candidate_outputs": config.experiment.save_all_candidate_outputs,
         }
     )
@@ -471,9 +511,7 @@ def _router_content_signature(path: Path) -> dict[str, Any]:
             try:
                 folds_payload = json.loads(folds_path.read_text(encoding="utf-8"))
             except (OSError, UnicodeError, json.JSONDecodeError) as error:
-                raise ValueError(
-                    f"cannot sign invalid router fold manifest: {error}"
-                ) from error
+                raise ValueError(f"cannot sign invalid router fold manifest: {error}") from error
             folds = folds_payload.get("folds") if isinstance(folds_payload, dict) else None
             if not isinstance(folds, dict) or not folds:
                 raise ValueError("cannot sign router folds without a non-empty folds map")
@@ -517,9 +555,7 @@ def _impute_resume_identity(
         raise ValueError("impute resume identity requires a router artifact")
     imputer_manifest = inputs.imputer_artifacts.resolve() / "manifest.json"
     if not imputer_manifest.is_file():
-        raise FileNotFoundError(
-            f"imputer artifact manifest does not exist: {imputer_manifest}"
-        )
+        raise FileNotFoundError(f"imputer artifact manifest does not exist: {imputer_manifest}")
     forecast_registry = default_forecast_registry()
     forecast_adapter = forecast_registry.get(model_id)
     registry_files = {
@@ -534,6 +570,26 @@ def _impute_resume_identity(
     raw_forecaster_spec = asdict(forecast_adapter)
     forecaster_spec = json.loads(
         json.dumps(raw_forecaster_spec, ensure_ascii=False, sort_keys=True, default=str)
+    )
+    candidate_source: dict[str, Any] | None = None
+    if inputs.candidate_source_impute_artifact is not None:
+        source_root = inputs.candidate_source_impute_artifact.resolve()
+        source_manifest = source_root / "imputation_manifest.json"
+        source_progress = source_root / "imputation_progress.json"
+        if not source_manifest.is_file() or not source_progress.is_file():
+            raise FileNotFoundError(
+                "candidate source must contain imputation_manifest.json and "
+                "imputation_progress.json"
+            )
+        candidate_source = {
+            "path": str(source_root),
+            "manifest": _file_signature(source_manifest),
+            "progress": _file_signature(source_progress),
+        }
+    forecast_consensus_artifact = (
+        str(_forecaster_artifacts(inputs)[0][1].resolve())
+        if inputs.forecaster_artifact is not None
+        else None
     )
     return {
         "schema_version": 1,
@@ -554,6 +610,8 @@ def _impute_resume_identity(
             "spec": forecaster_spec,
         },
         "selected_candidates": list(registry.ids),
+        "candidate_source_impute_artifact": candidate_source,
+        "forecast_consensus_artifact": forecast_consensus_artifact,
     }
 
 
@@ -567,9 +625,7 @@ def _labels_resume_identity(
         raise ValueError("labels resume identity requires audit and imputer artifacts")
     imputer_manifest = inputs.imputer_artifacts.resolve() / "manifest.json"
     if not imputer_manifest.is_file():
-        raise FileNotFoundError(
-            f"imputer artifact manifest does not exist: {imputer_manifest}"
-        )
+        raise FileNotFoundError(f"imputer artifact manifest does not exist: {imputer_manifest}")
     adapter_spec = default_forecast_registry().get(model_id)
     forecaster_spec = json.loads(
         json.dumps(
@@ -610,9 +666,7 @@ def _training_batch_summary(batch: SeriesBatch) -> dict[str, Any]:
     digest.update(values.tobytes())
     digest.update(observed.tobytes())
     digest.update(
-        json.dumps(list(batch.item_ids), ensure_ascii=False, separators=(",", ":")).encode(
-            "utf-8"
-        )
+        json.dumps(list(batch.item_ids), ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     )
     return {
         "shape": list(batch.shape),
@@ -638,12 +692,90 @@ def _fit_resume_identity(
     )
     return {
         "schema_version": 1,
+        "training_sampling_protocol": "fit_prefix_descriptor_cap_v1",
         "resolved_config_sha256": _canonical_sha256(config.model_dump(mode="json")),
         "audit_artifact_sha256": _file_sha256(audit_artifact),
         "root_seed": config.seed,
         "candidate_specs_sha256": _canonical_sha256(candidate_specs),
         "candidate_specs": candidate_specs,
     }
+
+
+def _fit_resume_resource_limit_migrations(
+    stored: Mapping[str, Any],
+    current: Mapping[str, Any],
+    manifest: Mapping[str, Any],
+    output: Path,
+) -> list[dict[str, Any]] | None:
+    """Validate a resume identity change that only tightens fit dimensions."""
+
+    variable_keys = {"candidate_specs", "candidate_specs_sha256"}
+    stored_static = {key: value for key, value in stored.items() if key not in variable_keys}
+    current_static = {key: value for key, value in current.items() if key not in variable_keys}
+    if stored_static != current_static:
+        return None
+    stored_candidates = stored.get("candidate_specs")
+    current_candidates = current.get("candidate_specs")
+    if not isinstance(stored_candidates, Mapping) or not isinstance(current_candidates, Mapping):
+        return None
+    if set(stored_candidates) != set(current_candidates):
+        return None
+
+    migrations: list[dict[str, Any]] = []
+    for candidate_id in stored_candidates:
+        stored_entry = stored_candidates[candidate_id]
+        current_entry = current_candidates[candidate_id]
+        if not isinstance(stored_entry, Mapping) or not isinstance(current_entry, Mapping):
+            return None
+        if stored_entry.get("effective_fit_params") != current_entry.get("effective_fit_params"):
+            return None
+        stored_spec = dict(stored_entry.get("spec", {}))
+        current_spec = dict(current_entry.get("spec", {}))
+        stored_limit = stored_spec.pop("max_fit_variates", None)
+        current_limit = current_spec.pop("max_fit_variates", None)
+        if stored_spec != current_spec:
+            return None
+        if stored_limit == current_limit:
+            continue
+        if current_limit is None:
+            return None
+        if stored_limit is not None and int(current_limit) >= int(stored_limit):
+            return None
+        migrations.append(
+            {
+                "candidate_id": str(candidate_id),
+                "previous_max_fit_variates": stored_limit,
+                "current_max_fit_variates": int(current_limit),
+                "reason": "stricter_dimension_resource_limit",
+            }
+        )
+    if not migrations:
+        return None
+
+    datasets = manifest.get("datasets")
+    if not isinstance(datasets, Mapping):
+        return None
+    for migration in migrations:
+        candidate_id = migration["candidate_id"]
+        limit = int(migration["current_max_fit_variates"])
+        for dataset_id, dataset_entry in datasets.items():
+            if not isinstance(dataset_entry, Mapping):
+                return None
+            dimension = int(dataset_entry.get("dimension", -1))
+            if dimension <= limit:
+                continue
+            candidates = dataset_entry.get("candidates", {})
+            candidate_entry = (
+                candidates.get(candidate_id, {}) if isinstance(candidates, Mapping) else {}
+            )
+            if isinstance(candidate_entry, Mapping) and candidate_entry.get("status") == "fitted":
+                return None
+            dataset_dir = output / str(dataset_id)
+            if (dataset_dir / f"{candidate_id}.joblib").exists() or (
+                dataset_dir / candidate_id
+            ).exists():
+                return None
+    return migrations
 
 
 def _artifact_target(candidate_id: str, directory: Path, adapter: Any) -> tuple[str, Path]:
@@ -784,6 +916,7 @@ def execute_fit_imputers(
         "max_items_per_dataset": config.experiment.max_items_per_dataset,
         "max_training_windows_per_dataset": (config.experiment.max_training_windows_per_dataset),
         "mask_protocol": "sequence_mask_v2",
+        "training_sampling_protocol": "fit_prefix_descriptor_cap_v1",
         "fit_prefix_fraction": config.experiment.fit_prefix_fraction,
         "training_window_stride": config.experiment.training_window_stride,
         "missing_block_lengths": list(config.experiment.missing_block_lengths),
@@ -795,9 +928,27 @@ def execute_fit_imputers(
             raise ValueError("cannot resume: imputer manifest is invalid")
         stored_identity = manifest.get("resume")
         if stored_identity is not None and stored_identity != resume_identity:
-            raise ValueError(
-                "cannot resume: audit, seed, resolved config, or candidate specs changed"
+            migrations = _fit_resume_resource_limit_migrations(
+                stored_identity,
+                resume_identity,
+                manifest,
+                output,
             )
+            if migrations is None:
+                raise ValueError(
+                    "cannot resume: audit, seed, resolved config, or candidate specs changed"
+                )
+            manifest.setdefault("resource_policy_migrations", []).append(
+                {
+                    "applied_at": utc_now(),
+                    "changes": migrations,
+                    "previous_candidate_specs_sha256": stored_identity.get(
+                        "candidate_specs_sha256"
+                    ),
+                    "current_candidate_specs_sha256": resume_identity.get("candidate_specs_sha256"),
+                }
+            )
+            manifest["resume"] = resume_identity
         selected = manifest.get("selected_candidates")
         if selected is not None and selected != list(registry.ids):
             raise ValueError("cannot resume: selected candidates changed")
@@ -819,6 +970,11 @@ def execute_fit_imputers(
     seen_datasets: set[str] = set()
     for dataset, items in _datasets(config, inputs.audit_artifact):
         seen_datasets.add(dataset.dataset_id)
+        manifest["current_dataset_id"] = dataset.dataset_id
+        manifest["current_phase"] = "training_batch"
+        manifest.pop("current_candidate_id", None)
+        _write_json(manifest_path, manifest)
+        batch_started = perf_counter()
         batch = _training_batch(
             items,
             config.experiment.context_length,
@@ -849,6 +1005,9 @@ def execute_fit_imputers(
                 "dimension": batch.shape[2],
                 "context_length": batch.shape[1],
                 "mask_protocol": "sequence_mask_v2",
+                "training_sampling_protocol": "fit_prefix_descriptor_cap_v1",
+                "training_batch_seconds": perf_counter() - batch_started,
+                "status": "running",
                 "training_summary": training_summary,
                 "statistics": "training_statistics.npz",
                 "candidates": {},
@@ -870,6 +1029,9 @@ def execute_fit_imputers(
                     f"cannot resume {dataset.dataset_id}: training batch summary changed"
                 )
             dataset_entry["training_summary"] = training_summary
+            dataset_entry["training_sampling_protocol"] = "fit_prefix_descriptor_cap_v1"
+            dataset_entry["training_batch_seconds"] = perf_counter() - batch_started
+            dataset_entry["status"] = "running"
             if not isinstance(dataset_entry.get("candidates"), dict):
                 raise ValueError(f"cannot resume {dataset.dataset_id}: invalid candidates map")
         statistics_path = dataset_dir / str(dataset_entry["statistics"])
@@ -878,9 +1040,12 @@ def execute_fit_imputers(
         else:
             _write_training_statistics(statistics_path, medians, correlation)
         entries = dataset_entry["candidates"]
+        manifest["current_phase"] = "candidate_fit"
         _write_json(manifest_path, manifest)
 
         for spec in registry.specs():
+            manifest["current_candidate_id"] = spec.imputer_id
+            _write_json(manifest_path, manifest)
             existing = entries.get(spec.imputer_id)
             if isinstance(existing, dict) and existing.get("status") == "fitted":
                 _load_artifact_entry(
@@ -897,6 +1062,11 @@ def execute_fit_imputers(
                 continue
             if spec.fit_scope == "none":
                 entries[spec.imputer_id] = {"status": "stateless"}
+                _write_json(manifest_path, manifest)
+                continue
+            resource_exclusion = _fit_resource_exclusion(spec, batch.shape[2])
+            if resource_exclusion is not None:
+                entries[spec.imputer_id] = resource_exclusion
                 _write_json(manifest_path, manifest)
                 continue
             if spec.device != "any" and spec.device not in allowed_devices:
@@ -969,6 +1139,11 @@ def execute_fit_imputers(
             finally:
                 del artifact
                 _empty_cuda_cache(_torch_device(config))
+        dataset_entry["status"] = "completed"
+        dataset_entry["completed_at"] = utc_now()
+        manifest.pop("current_candidate_id", None)
+        manifest["current_phase"] = "dataset_completed"
+        _write_json(manifest_path, manifest)
     if not manifest["datasets"]:
         raise ValueError("audit artifact contains no enabled dataset from the manifest")
     extra_datasets = set(manifest["datasets"]).difference(seen_datasets)
@@ -979,6 +1154,9 @@ def execute_fit_imputers(
         )
     manifest["status"] = "completed"
     manifest["completed_at"] = utc_now()
+    manifest.pop("current_dataset_id", None)
+    manifest.pop("current_phase", None)
+    manifest.pop("current_candidate_id", None)
     _write_json(manifest_path, manifest)
     return {"imputer_artifacts": str(output), "manifest": str(manifest_path)}
 
@@ -987,7 +1165,20 @@ class _LabelArtifactManager:
     """Load only one label episode's fitted artifacts with a narrow cache."""
 
     _CACHE_IDS = frozenset(
-        {"knn_multivariate", "mice", "missforest", "softimpute"}
+        {
+            "knn_multivariate",
+            "mice",
+            "missforest",
+            "softimpute",
+            "brits",
+            "gpvae",
+            "saits",
+            "csdi",
+            "imputeformer",
+            "helix",
+            "timemixerpp",
+            "totem",
+        }
     )
 
     def __init__(
@@ -1024,10 +1215,7 @@ class _LabelArtifactManager:
             for spec in self.registry.specs()
             if self.registry.availability(spec.imputer_id).available
             and (spec.device == "any" or spec.device in allowed_devices)
-            and (
-                spec.fit_scope == "none"
-                or self.store.status(spec.imputer_id) == "fitted"
-            )
+            and (spec.fit_scope == "none" or self.store.status(spec.imputer_id) == "fitted")
         )
 
     def acquire(
@@ -1113,9 +1301,7 @@ class _LabelArtifactManager:
         """Drop episode-scoped artifacts and release deep-model device memory."""
 
         deep_candidates = tuple(
-            candidate_id
-            for candidate_id in ephemeral_ids
-            if self._is_deep(candidate_id)
+            candidate_id for candidate_id in ephemeral_ids if self._is_deep(candidate_id)
         )
         deep_released = bool(deep_candidates)
         for candidate_id in deep_candidates:
@@ -1137,16 +1323,25 @@ class _LabelArtifactManager:
             _empty_cuda_cache(_torch_device(self.config))
 
     def close(self) -> None:
-        """Evict dataset-scoped structured artifacts."""
+        """Evict all dataset-scoped artifacts and release deep device memory."""
 
+        deep_released = False
         for candidate_id in tuple(self._cache):
             self._cache.pop(candidate_id, None)
             self._totals["evict_count"] += 1
             self._totals["dataset_cache_evict_count"] += 1
             self._counts(candidate_id)["evict_count"] += 1
             self._counts(candidate_id)["dataset_cache_evict_count"] += 1
+            if self._is_deep(candidate_id):
+                deep_released = True
+                self._totals["deep_evict_count"] += 1
+                self._totals["deep_cleanup_count"] += 1
+                self._counts(candidate_id)["deep_evict_count"] += 1
+                self._counts(candidate_id)["deep_cleanup_count"] += 1
         self._cached_failures.clear()
         gc.collect()
+        if deep_released:
+            _empty_cuda_cache(_torch_device(self.config))
         self._totals["dataset_cache_cleanup_count"] += 1
 
     def audit(self) -> dict[str, Any]:
@@ -1183,7 +1378,7 @@ class _LabelArtifactManager:
             "max_deep_load_batch": self._max_deep_load_batch,
             "cache_policy": {"dataset_scoped": sorted(self._CACHE_IDS)},
             "by_candidate": by_candidate,
-    }
+        }
 
 
 def _run_label_candidate_pairs(
@@ -1281,9 +1476,7 @@ def _label_artifact_audit_delta(
     result["cache_policy"] = dict(after.get("cache_policy", {}))
     before_candidates = before.get("by_candidate", {})
     after_candidates = after.get("by_candidate", {})
-    before_candidates = (
-        before_candidates if isinstance(before_candidates, Mapping) else {}
-    )
+    before_candidates = before_candidates if isinstance(before_candidates, Mapping) else {}
     after_candidates = after_candidates if isinstance(after_candidates, Mapping) else {}
     by_candidate: dict[str, Any] = {}
     for candidate_id in sorted(set(before_candidates) | set(after_candidates)):
@@ -1349,9 +1542,7 @@ def _merge_label_artifact_loading_deltas(
         if isinstance(candidates, Mapping):
             for candidate_id, candidate_audit in candidates.items():
                 if not isinstance(candidate_audit, Mapping):
-                    raise LabelResumeError(
-                        "persisted candidate artifact-loading delta is invalid"
-                    )
+                    raise LabelResumeError("persisted candidate artifact-loading delta is invalid")
                 target = current["by_candidate"].setdefault(
                     str(candidate_id),
                     {
@@ -1385,9 +1576,7 @@ def _artifact_loading_manifest(
             load_seconds += float(audit.get("load_seconds", 0.0))
             raw_modes = audit.get("load_mode_counts", {})
             if isinstance(raw_modes, Mapping):
-                load_modes.update(
-                    {str(mode): int(count) for mode, count in raw_modes.items()}
-                )
+                load_modes.update({str(mode): int(count) for mode, count in raw_modes.items()})
             max_deep_load_batch = max(
                 max_deep_load_batch,
                 int(audit.get("max_deep_load_batch", 0)),
@@ -1544,6 +1733,7 @@ def _balanced_episode_subset(
     selected: list[int] = []
 
     while len(selected) < limit:
+
         def score(index: int) -> tuple[int, int, int, int, int, int, int, int]:
             descriptor = descriptors[index]
             mechanism = descriptor.masking.mechanism
@@ -1615,8 +1805,7 @@ def _episode_selection_summary(
     def values(descriptors: tuple[_EpisodeDescriptor, ...], field: str) -> tuple[str, ...]:
         if field == "mechanism_rate":
             return tuple(
-                f"{entry.masking.mechanism}|{entry.masking.missing_rate:g}"
-                for entry in descriptors
+                f"{entry.masking.mechanism}|{entry.masking.missing_rate:g}" for entry in descriptors
             )
         if field == "mechanism":
             return tuple(entry.masking.mechanism for entry in descriptors)
@@ -1627,9 +1816,7 @@ def _episode_selection_summary(
         if field == "seed":
             return tuple(str(entry.configured_seed) for entry in descriptors)
         if field == "origin":
-            return tuple(
-                f"{entry.item.item_id}|{entry.forecast_origin}" for entry in descriptors
-            )
+            return tuple(f"{entry.item.item_id}|{entry.forecast_origin}" for entry in descriptors)
         raise ValueError(f"unknown episode coverage field: {field}")
 
     coverage = {
@@ -1670,8 +1857,7 @@ def _episode_plan(
             "partition": "all",
             "cap_per_dataset": {"train": train_cap, "eval": eval_cap},
             "eligible_episode_count": (
-                train_summary["eligible_episode_count"]
-                + eval_summary["eligible_episode_count"]
+                train_summary["eligible_episode_count"] + eval_summary["eligible_episode_count"]
             ),
             "selected_episode_count": len(selected),
             "truncated": train_summary["truncated"] or eval_summary["truncated"],
@@ -1828,9 +2014,7 @@ def _forecaster_artifacts(inputs: StageInputs) -> tuple[tuple[str, Path], ...]:
     elif source.is_dir():
         resolved = {model_id: source / model_id for model_id in model_ids}
     else:
-        raise ValueError(
-            "multiple forecasters require a checkpoint directory or JSON mapping"
-        )
+        raise ValueError("multiple forecasters require a checkpoint directory or JSON mapping")
     missing = [model_id for model_id, path in resolved.items() if not path.exists()]
     if missing:
         raise ValueError("forecaster artifacts do not exist for: " + ", ".join(sorted(missing)))
@@ -1959,6 +2143,57 @@ def _candidate_is_eligible(
     eligible: Mapping[str, tuple[str, ...]],
 ) -> bool:
     return candidate_id in eligible[block.block_id]
+
+
+def _forecast_visible_blocks(
+    blocks: Iterable[MissingBlock],
+    spec: ForecastSpec,
+) -> tuple[MissingBlock, ...]:
+    entries = tuple(blocks)
+    if spec.mode == "joint_multivariate":
+        return entries
+    targets = set(spec.target_indices or ())
+    return tuple(block for block in entries if block.channel in targets)
+
+
+def _coherence_adjusted_label_targets(
+    teacher: TeacherBuilder,
+    labels: Iterable[TeacherLabel],
+    clean_context: np.ndarray,
+    clean_future: np.ndarray,
+    candidates: Mapping[str, CandidateResult],
+    all_blocks: Iterable[MissingBlock],
+    spec: ForecastSpec,
+    anchor_loss: float,
+) -> dict[tuple[str, str], CoherenceAdjustedTarget]:
+    label_rows = tuple(labels)
+    visible_blocks = _forecast_visible_blocks(all_blocks, spec)
+    if not visible_blocks:
+        raise ValueError("teacher episode has no forecast-visible missing blocks")
+    fully_native = {
+        candidate_id: candidate
+        for candidate_id, candidate in candidates.items()
+        if all(
+            candidate.native_valid_mask[
+                block.batch_index,
+                block.start : block.end,
+                block.channel,
+            ].all()
+            for block in visible_blocks
+        )
+    }
+    full_losses = teacher.candidate_losses_batched(
+        clean_context,
+        clean_future,
+        fully_native,
+        spec,
+    )
+    return coherence_adjusted_targets(
+        label_rows,
+        full_losses,
+        anchor_loss=anchor_loss,
+        visible_block_count=len(visible_blocks),
+    )
 
 
 def _supplement_candidate_outputs(
@@ -2105,12 +2340,21 @@ def _build_label_episode_rows(
         config.seed,
         dataset.dataset_id,
         episode_id,
+        forced=(
+            "locf",
+            "linear_interp",
+            "gpvae",
+            "knn_multivariate",
+        ),
     )
+    spec = _forecast_spec(config, model_id, episode.context.shape[2])
     full_graph = build_block_graph(episode.blocks, correlation)
-    blocks = connected_subset(
+    blocks = forecast_aware_block_subset(
         episode.blocks,
         full_graph.edges,
         config.experiment.max_teacher_blocks_per_episode,
+        spec.target_indices or (),
+        spec.mode,
         config.seed,
         dataset.dataset_id,
         episode_id,
@@ -2143,6 +2387,8 @@ def _build_label_episode_rows(
         episode.context,
         episode.seed,
         max_blocks=(config.experiment.max_teacher_blocks_per_episode or 8),
+        target_blocks=blocks,
+        priority_channels=spec.target_indices or (),
     )
     candidates, pseudo_candidates = _run_label_candidate_pairs(
         artifact_manager,
@@ -2177,7 +2423,6 @@ def _build_label_episode_rows(
                     and candidates[candidate_id].native_valid_mask[selector].all()
                 )
             )
-        spec = _forecast_spec(config, model_id, episode.context.shape[2])
         teacher = TeacherBuilder(
             forecast_runner.predict,
             seasonality=dataset.period,
@@ -2195,9 +2440,17 @@ def _build_label_episode_rows(
                 eligible=eligible,
             ),
         )
-        losses = {
-            (label.block_id, label.candidate_id): label for label in unary_labels
-        }
+        routing_targets = _coherence_adjusted_label_targets(
+            teacher,
+            unary_labels,
+            episode.clean_context[None, ...],
+            episode.clean_future[None, ...],
+            candidates,
+            episode.blocks,
+            spec,
+            anchor_loss,
+        )
+        losses = {(label.block_id, label.candidate_id): label for label in unary_labels}
         unary_rows: list[Mapping[str, Any]] = []
         for block in blocks:
             group_id = f"{model_id}::{episode_id}::{block.block_id}"
@@ -2205,6 +2458,7 @@ def _build_label_episode_rows(
                 label = losses.get((block.block_id, candidate_id))
                 if label is None:
                     continue
+                target = routing_targets[(block.block_id, candidate_id)]
                 imputer_spec = imputer_registry.get_spec(candidate_id)
                 prior = merge_features(
                     block_features(
@@ -2212,6 +2466,7 @@ def _build_label_episode_rows(
                         block,
                         dataset.period,
                     ),
+                    forecast_block_features(block, spec),
                     candidate_features(imputer_spec, spec),
                 )
                 unary = merge_features(
@@ -2220,6 +2475,7 @@ def _build_label_episode_rows(
                         pseudo_candidates[candidate_id],
                         episode.context.values,
                         proxy_mask,
+                        channel=block.channel,
                     ),
                 )
                 unary_rows.append(
@@ -2227,6 +2483,7 @@ def _build_label_episode_rows(
                         "episode_id": episode_id,
                         "dataset_id": dataset.dataset_id,
                         "family_id": dataset.family_id,
+                        "forecast_origin": episode.forecast_origin,
                         "forecaster_id": model_id,
                         "group_id": group_id,
                         "block_id": block.block_id,
@@ -2237,15 +2494,18 @@ def _build_label_episode_rows(
                         "clean_loss": clean_loss,
                         "anchor_loss": anchor_loss,
                         "degradation": label.degradation,
+                        "local_marginal": target.local_marginal,
+                        "full_candidate_loss": target.full_candidate_loss,
+                        "global_marginal_per_block": target.global_marginal_per_block,
+                        "coherence_adjustment": target.coherence_adjustment,
+                        "routing_target": target.routing_target,
                     }
                 )
         if not unary_rows:
             return _LabelEpisodeRows(candidate_ids, block_ids, (), ())
         labeled_eligible = {
             block_id: tuple(
-                candidate_id
-                for candidate_id in candidate_ids
-                if (block_id, candidate_id) in losses
+                candidate_id for candidate_id in candidate_ids if (block_id, candidate_id) in losses
             )
             for block_id in eligible
         }
@@ -2356,7 +2616,7 @@ def _execute_labels_legacy(
                 model_id,
                 forecaster_artifact,
                 device=torch_device,
-                batch_size=8,
+                batch_size=config.experiment.forecast_batch_size,
             )
             forecast_runner = ForecastRunner(forecast_registry, adapters={model_id: adapter})
             teacher: TeacherBuilder | None = None
@@ -2391,12 +2651,25 @@ def _execute_labels_legacy(
                             config.seed,
                             dataset.dataset_id,
                             episode_id,
+                            forced=(
+                                "locf",
+                                "linear_interp",
+                                "gpvae",
+                                "knn_multivariate",
+                            ),
+                        )
+                        spec = _forecast_spec(
+                            config,
+                            model_id,
+                            episode.context.shape[2],
                         )
                         full_graph = build_block_graph(episode.blocks, correlation)
-                        blocks = connected_subset(
+                        blocks = forecast_aware_block_subset(
                             episode.blocks,
                             full_graph.edges,
                             config.experiment.max_teacher_blocks_per_episode,
+                            spec.target_indices or (),
+                            spec.mode,
                             config.seed,
                             dataset.dataset_id,
                             episode_id,
@@ -2428,6 +2701,8 @@ def _execute_labels_legacy(
                             episode.context,
                             episode.seed,
                             max_blocks=(config.experiment.max_teacher_blocks_per_episode or 8),
+                            target_blocks=blocks,
+                            priority_channels=spec.target_indices or (),
                         )
                         candidates, pseudo_candidates = _run_label_candidate_pairs(
                             artifact_manager,
@@ -2461,7 +2736,6 @@ def _execute_labels_legacy(
                                     and candidates[candidate_id].native_valid_mask[selector].all()
                                 )
                             )
-                        spec = _forecast_spec(config, model_id, episode.context.shape[2])
                         teacher = TeacherBuilder(
                             forecast_runner.predict,
                             seasonality=dataset.period,
@@ -2479,6 +2753,16 @@ def _execute_labels_legacy(
                                 eligible=eligible,
                             ),
                         )
+                        routing_targets = _coherence_adjusted_label_targets(
+                            teacher,
+                            unary_labels,
+                            episode.clean_context[None, ...],
+                            episode.clean_future[None, ...],
+                            candidates,
+                            episode.blocks,
+                            spec,
+                            anchor_loss,
+                        )
                         losses = {
                             (label.block_id, label.candidate_id): label for label in unary_labels
                         }
@@ -2489,6 +2773,7 @@ def _execute_labels_legacy(
                                 label = losses.get((block.block_id, candidate_id))
                                 if label is None:
                                     continue
+                                target = routing_targets[(block.block_id, candidate_id)]
                                 imputer_spec = imputer_registry.get_spec(candidate_id)
                                 prior = merge_features(
                                     block_features(
@@ -2496,6 +2781,7 @@ def _execute_labels_legacy(
                                         block,
                                         dataset.period,
                                     ),
+                                    forecast_block_features(block, spec),
                                     candidate_features(imputer_spec, spec),
                                 )
                                 unary = merge_features(
@@ -2504,6 +2790,7 @@ def _execute_labels_legacy(
                                         pseudo_candidates[candidate_id],
                                         episode.context.values,
                                         proxy_mask,
+                                        channel=block.channel,
                                     ),
                                 )
                                 _append_jsonl(
@@ -2512,6 +2799,7 @@ def _execute_labels_legacy(
                                         "episode_id": episode_id,
                                         "dataset_id": dataset.dataset_id,
                                         "family_id": dataset.family_id,
+                                        "forecast_origin": episode.forecast_origin,
                                         "forecaster_id": model_id,
                                         "group_id": group_id,
                                         "block_id": block.block_id,
@@ -2522,6 +2810,13 @@ def _execute_labels_legacy(
                                         "clean_loss": clean_loss,
                                         "anchor_loss": anchor_loss,
                                         "degradation": label.degradation,
+                                        "local_marginal": target.local_marginal,
+                                        "full_candidate_loss": target.full_candidate_loss,
+                                        "global_marginal_per_block": (
+                                            target.global_marginal_per_block
+                                        ),
+                                        "coherence_adjustment": (target.coherence_adjustment),
+                                        "routing_target": target.routing_target,
                                     },
                                 )
                                 row_count += 1
@@ -2594,9 +2889,9 @@ def _execute_labels_legacy(
                         dataset_sampling,
                     )
                     artifact_manager.close()
-                    artifact_loading_records.setdefault(dataset.dataset_id, {})[
-                        model_id
-                    ] = artifact_manager.audit()
+                    artifact_loading_records.setdefault(dataset.dataset_id, {})[model_id] = (
+                        artifact_manager.audit()
+                    )
                     pipeline = None
                     artifacts.clear()
                     _empty_cuda_cache(torch_device)
@@ -2622,17 +2917,17 @@ def _execute_labels_legacy(
         "pair_labels": str(pairs_path),
         "forecasters": [model_id for model_id, _ in selected_forecasters],
         "imputer_artifacts": str(inputs.imputer_artifacts.resolve()),
+        "split": config.experiment.split,
         "origin_partition": "train",
         "episode_count": episode_execution_count,
         "unique_episode_count": sampling_manifest["selected_episode_count"],
-        "max_train_episodes_per_dataset": (
-            config.experiment.max_train_episodes_per_dataset
-        ),
+        "max_train_episodes_per_dataset": (config.experiment.max_train_episodes_per_dataset),
         "episode_sampling": sampling_manifest,
         "artifact_loading": _artifact_loading_manifest(artifact_loading_records),
         "ranking_groups": group_count,
         "unary_rows": row_count,
         "pair_rows": pair_count,
+        "routing_target_protocol": "coherence_adjusted_marginal_v1",
         "selected_candidates": list(selected_candidate_ids),
         "max_teacher_blocks_per_episode": (config.experiment.max_teacher_blocks_per_episode),
         "max_teacher_candidates_per_episode": (
@@ -2709,9 +3004,7 @@ def _execute_labels_resumable_single(
                     raise LabelResumeError(f"progress entry {key} must be an object")
                 expectation_payload = entry.get("expectation")
                 if not isinstance(expectation_payload, Mapping):
-                    raise LabelResumeError(
-                        f"progress entry {key} has no valid expectation"
-                    )
+                    raise LabelResumeError(f"progress entry {key} has no valid expectation")
                 expectation = LabelEpisodeExpectation.from_payload(expectation_payload)
                 sampling_cell = _label_sampling_cell(episode_id, episode)
                 _validate_label_expectation_core(
@@ -2736,9 +3029,7 @@ def _execute_labels_resumable_single(
     expected_episode_count = artifact_index
     if expected_episode_count == 0:
         raise ValueError("no label episodes were selected")
-    expected_keys = {
-        f"{index:08d}" for index in range(expected_episode_count)
-    }
+    expected_keys = {f"{index:08d}" for index in range(expected_episode_count)}
     extra_entries = set(progress.payload["entries"]).difference(expected_keys)
     if extra_entries:
         raise LabelResumeError(
@@ -2747,9 +3038,7 @@ def _execute_labels_resumable_single(
         )
     registered_plans = set(progress.payload["dataset_plans"])
     if registered_plans != set(dataset_episode_ids):
-        raise LabelResumeError(
-            "labels progress dataset plans differ from the rebuilt dataset plan"
-        )
+        raise LabelResumeError("labels progress dataset plans differ from the rebuilt dataset plan")
 
     executed_count = 0
     if pending:
@@ -2759,7 +3048,7 @@ def _execute_labels_resumable_single(
             model_id,
             forecaster_artifact,
             device=_torch_device(config),
-            batch_size=8,
+            batch_size=config.experiment.forecast_batch_size,
         )
         forecast_runner = ForecastRunner(
             forecast_registry,
@@ -2774,9 +3063,7 @@ def _execute_labels_resumable_single(
                 expected_ids = dataset_episode_ids[dataset.dataset_id]
                 start = cursor
                 stop = start + len(expected_ids)
-                pending_indices = tuple(
-                    index for index in range(start, stop) if index in pending
-                )
+                pending_indices = tuple(index for index in range(start, stop) if index in pending)
                 cursor = stop
                 if not pending_indices:
                     continue
@@ -2811,12 +3098,15 @@ def _execute_labels_resumable_single(
                     config,
                 )
                 candidate_pool = artifact_manager.candidate_pool(allowed_devices)
-                deferred: tuple[
-                    LabelEpisodeExpectation,
-                    _LabelEpisodeRows,
-                    Mapping[str, Any],
-                    bool,
-                ] | None = None
+                deferred: (
+                    tuple[
+                        LabelEpisodeExpectation,
+                        _LabelEpisodeRows,
+                        Mapping[str, Any],
+                        bool,
+                    ]
+                    | None
+                ) = None
                 try:
                     for offset, (episode_id, episode) in enumerate(episodes):
                         index = start + offset
@@ -2943,6 +3233,7 @@ def _execute_labels_resumable_single(
         "pair_labels_sha256": rebuilt["pair_labels_sha256"],
         "forecasters": [model_id],
         "imputer_artifacts": str(inputs.imputer_artifacts.resolve()),
+        "split": config.experiment.split,
         "origin_partition": "train",
         "episode_count": expected_episode_count,
         "unique_episode_count": sampling_manifest["selected_episode_count"],
@@ -2954,24 +3245,19 @@ def _execute_labels_resumable_single(
         "resume_count": int(progress.payload.get("resume_count", 0)),
         "repair_count": int(progress.payload.get("repair_count", 0)),
         "progress": str(progress.progress_path),
-        "max_train_episodes_per_dataset": (
-            config.experiment.max_train_episodes_per_dataset
-        ),
+        "max_train_episodes_per_dataset": (config.experiment.max_train_episodes_per_dataset),
         "episode_sampling": sampling_manifest,
         "artifact_loading": _artifact_loading_manifest(artifact_loading_records),
         "ranking_groups": rebuilt["ranking_groups"],
         "unary_rows": rebuilt["unary_rows"],
         "pair_rows": rebuilt["pair_rows"],
+        "routing_target_protocol": "coherence_adjusted_marginal_v1",
         "selected_candidates": list(selected_candidate_ids),
-        "max_teacher_blocks_per_episode": (
-            config.experiment.max_teacher_blocks_per_episode
-        ),
+        "max_teacher_blocks_per_episode": (config.experiment.max_teacher_blocks_per_episode),
         "max_teacher_candidates_per_episode": (
             config.experiment.max_teacher_candidates_per_episode
         ),
-        "max_pair_labels_per_episode": (
-            config.experiment.max_pair_labels_per_episode
-        ),
+        "max_pair_labels_per_episode": (config.experiment.max_pair_labels_per_episode),
         "csdi_num_samples": config.experiment.csdi_num_samples,
         "torch_device": _torch_device(config),
         "forecasters_loaded_sequentially": True,
@@ -3019,6 +3305,385 @@ def _matrix(rows: list[dict[str, Any]], field: str, names: tuple[str, ...]) -> n
     )
 
 
+def _candidate_global_prior_statistics(
+    rows: Iterable[Mapping[str, Any]],
+    *,
+    shrinkage: float = 1.0,
+) -> tuple[dict[str, dict[str, float]], dict[str, dict[str, int]]]:
+    """Aggregate model-specific candidate evidence across training episodes.
+
+    ``full_candidate_loss`` is repeated once per labelled block.  The first
+    aggregation level therefore collapses rows by forecaster, episode, and
+    candidate before computing the across-episode median.  Priors are relative
+    to the episode anchor and are shrunk towards zero so that sparse evidence
+    cannot dominate the block-specific rankers.
+    """
+
+    if not np.isfinite(shrinkage) or shrinkage < 0:
+        raise ValueError("candidate prior shrinkage must be finite and non-negative")
+    episode_values: dict[tuple[str, str, str], list[float]] = {}
+    for row in rows:
+        if "full_candidate_loss" not in row or "anchor_loss" not in row:
+            continue
+        try:
+            value = float(row["full_candidate_loss"]) - float(row["anchor_loss"])
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite(value):
+            continue
+        key = (
+            str(row.get("forecaster_id", "")),
+            str(row.get("episode_id", "")),
+            str(row.get("candidate_id", "")),
+        )
+        if not all(key):
+            continue
+        episode_values.setdefault(key, []).append(value)
+
+    samples: dict[tuple[str, str], list[float]] = {}
+    for (forecaster_id, _episode_id, candidate_id), values in episode_values.items():
+        samples.setdefault((forecaster_id, candidate_id), []).append(float(np.median(values)))
+
+    priors: dict[str, dict[str, float]] = {}
+    support: dict[str, dict[str, int]] = {}
+    for (forecaster_id, candidate_id), values in sorted(samples.items()):
+        count = len(values)
+        raw_prior = float(np.median(values))
+        prior = raw_prior * count / (count + float(shrinkage))
+        priors.setdefault(forecaster_id, {})[candidate_id] = prior
+        support.setdefault(forecaster_id, {})[candidate_id] = count
+    return priors, support
+
+
+def _candidate_dataset_prior_statistics(
+    rows: Iterable[Mapping[str, Any]],
+    global_priors: Mapping[str, Mapping[str, float]],
+    *,
+    shrinkage: float = 4.0,
+    recent_origin_fraction: float = 1.0,
+) -> tuple[
+    dict[str, dict[str, dict[str, float]]],
+    dict[str, dict[str, dict[str, int]]],
+]:
+    """Estimate historical dataset priors with shrinkage to model-wide priors."""
+
+    if not np.isfinite(shrinkage) or shrinkage < 0:
+        raise ValueError("dataset prior shrinkage must be finite and non-negative")
+    if not np.isfinite(recent_origin_fraction) or not 0 < recent_origin_fraction <= 1:
+        raise ValueError("recent origin fraction must lie in (0, 1]")
+    episode_values: dict[tuple[str, str, int | None, str, str], list[float]] = {}
+    for row in rows:
+        try:
+            value = float(row["full_candidate_loss"]) - float(row["anchor_loss"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not np.isfinite(value):
+            continue
+        key = (
+            str(row.get("forecaster_id", "")),
+            str(row.get("dataset_id", "")),
+            _row_forecast_origin(row),
+            str(row.get("episode_id", "")),
+            str(row.get("candidate_id", "")),
+        )
+        if not all((key[0], key[1], key[3], key[4])):
+            continue
+        episode_values.setdefault(key, []).append(value)
+
+    recent_origins: dict[tuple[str, str], set[int]] = {}
+    if recent_origin_fraction < 1.0:
+        origins: dict[tuple[str, str], set[int]] = {}
+        for forecaster_id, dataset_id, origin, _episode_id, _candidate_id in episode_values:
+            if origin is not None:
+                origins.setdefault((forecaster_id, dataset_id), set()).add(origin)
+        for group, values in origins.items():
+            ordered = sorted(values)
+            recent_count = max(1, int(np.ceil(len(ordered) * recent_origin_fraction)))
+            recent_origins[group] = set(ordered[-recent_count:])
+
+    samples: dict[tuple[str, str, str], list[float]] = {}
+    for (
+        forecaster_id,
+        dataset_id,
+        origin,
+        _episode_id,
+        candidate_id,
+    ), values in episode_values.items():
+        allowed_origins = recent_origins.get((forecaster_id, dataset_id))
+        if allowed_origins is not None and origin not in allowed_origins:
+            continue
+        samples.setdefault((forecaster_id, dataset_id, candidate_id), []).append(
+            float(np.median(values))
+        )
+
+    priors: dict[str, dict[str, dict[str, float]]] = {}
+    support: dict[str, dict[str, dict[str, int]]] = {}
+    for (forecaster_id, dataset_id, candidate_id), values in sorted(samples.items()):
+        count = len(values)
+        raw_prior = float(np.median(values))
+        parent_prior = float(global_priors.get(forecaster_id, {}).get(candidate_id, 0.0))
+        prior = (count * raw_prior + float(shrinkage) * parent_prior) / (count + float(shrinkage))
+        priors.setdefault(forecaster_id, {}).setdefault(dataset_id, {})[candidate_id] = prior
+        support.setdefault(forecaster_id, {}).setdefault(dataset_id, {})[candidate_id] = count
+    return priors, support
+
+
+def _row_forecast_origin(row: Mapping[str, Any]) -> int | None:
+    raw_origin = row.get("forecast_origin")
+    if raw_origin is None:
+        parts = str(row.get("episode_id", "")).split("__")
+        raw_origin = parts[-4] if len(parts) >= 4 else None
+    try:
+        origin = int(raw_origin)
+    except (TypeError, ValueError):
+        return None
+    return origin if origin >= 0 else None
+
+
+def _candidate_anchor_calibrations(
+    rows: Iterable[Mapping[str, Any]],
+    anchor_candidates: tuple[str, str],
+    *,
+    recent_origin_fraction: float = 0.5,
+    min_recent_origins: int = 4,
+    min_support: int = 4,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Calibrate a training-only proxy rule for temporal extrapolation.
+
+    Teacher rows repeat episode-level candidate losses for every labelled
+    block.  The calibration first collapses those repetitions, retains the
+    most recent training origins, and chooses a threshold on the log proxy
+    error ratio that minimizes downstream forecast loss.  The resulting rule
+    is specific to a forecaster and dataset and never consumes evaluation
+    targets.
+    """
+
+    if len(anchor_candidates) != 2 or len(set(anchor_candidates)) != 2:
+        raise ValueError("anchor calibration requires two distinct candidates")
+    if not 0 < recent_origin_fraction <= 1:
+        raise ValueError("recent origin fraction must lie in (0, 1]")
+    if min_recent_origins < 1 or min_support < 1:
+        raise ValueError("anchor calibration support limits must be positive")
+
+    first_candidate, second_candidate = anchor_candidates
+    repeated: dict[tuple[str, str, str, str], dict[str, list[float]]] = {}
+    origins: dict[tuple[str, str, str, str], int] = {}
+    for row in rows:
+        candidate_id = str(row.get("candidate_id", ""))
+        if candidate_id not in anchor_candidates:
+            continue
+        forecaster_id = str(row.get("forecaster_id", ""))
+        dataset_id = str(row.get("dataset_id", ""))
+        episode_id = str(row.get("episode_id", ""))
+        origin = _row_forecast_origin(row)
+        if not forecaster_id or not dataset_id or not episode_id or origin is None:
+            continue
+        try:
+            loss = float(row["full_candidate_loss"])
+            proxy = float(row["unary_features"]["proxy_global_mae"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not np.isfinite(loss) or not np.isfinite(proxy) or proxy < 0:
+            continue
+        key = (forecaster_id, dataset_id, episode_id, candidate_id)
+        values = repeated.setdefault(key, {"loss": [], "proxy": []})
+        values["loss"].append(loss)
+        values["proxy"].append(proxy)
+        origins[key] = origin
+
+    episodes: dict[tuple[str, str, str], dict[str, tuple[float, float, int]]] = {}
+    for key, values in repeated.items():
+        forecaster_id, dataset_id, episode_id, candidate_id = key
+        episodes.setdefault((forecaster_id, dataset_id, episode_id), {})[candidate_id] = (
+            float(np.median(values["loss"])),
+            float(np.median(values["proxy"])),
+            origins[key],
+        )
+
+    grouped: dict[tuple[str, str], list[tuple[int, float, float, float, float]]] = {}
+    for (forecaster_id, dataset_id, _episode_id), candidates in episodes.items():
+        if first_candidate not in candidates or second_candidate not in candidates:
+            continue
+        first_loss, first_proxy, first_origin = candidates[first_candidate]
+        second_loss, second_proxy, second_origin = candidates[second_candidate]
+        if first_origin != second_origin:
+            continue
+        proxy_log_ratio = float(np.log1p(first_proxy) - np.log1p(second_proxy))
+        grouped.setdefault((forecaster_id, dataset_id), []).append(
+            (
+                first_origin,
+                proxy_log_ratio,
+                first_loss,
+                second_loss,
+                min(first_loss, second_loss),
+            )
+        )
+
+    calibrations: dict[str, dict[str, dict[str, Any]]] = {}
+    recent_by_group: dict[tuple[str, str], list[tuple[int, float, float, float, float]]] = {}
+
+    def calibrated_policy(
+        calibration_samples: list[tuple[int, float, float, float, float]],
+        *,
+        max_training_origin: int | None,
+        calibration_origin_count: int,
+        source_dataset_count: int,
+        scope: str,
+    ) -> dict[str, Any]:
+        proxy_values = sorted({sample[1] for sample in calibration_samples})
+        span = proxy_values[-1] - proxy_values[0]
+        margin = max(0.05, 0.1 * span)
+        thresholds = [proxy_values[0] - margin]
+        thresholds.extend(
+            (left + right) / 2.0
+            for left, right in zip(proxy_values, proxy_values[1:], strict=False)
+        )
+        thresholds.append(proxy_values[-1] + margin)
+
+        scored: list[tuple[float, float, int, float, float]] = []
+        for threshold in thresholds:
+            selected_losses = [
+                first_loss if proxy_ratio <= threshold else second_loss
+                for _, proxy_ratio, first_loss, second_loss, _ in calibration_samples
+            ]
+            oracle_losses = [sample[4] for sample in calibration_samples]
+            correct = sum(
+                selected <= oracle + 1e-12
+                for selected, oracle in zip(selected_losses, oracle_losses, strict=True)
+            )
+            scored.append(
+                (
+                    float(np.mean(selected_losses)),
+                    float(np.mean(np.asarray(selected_losses) - oracle_losses)),
+                    -int(correct),
+                    abs(float(threshold)),
+                    float(threshold),
+                )
+            )
+        mean_loss, mean_regret, negative_correct, _, threshold = min(scored)
+        first_count = sum(sample[1] <= threshold for sample in calibration_samples)
+        return {
+            "scope": scope,
+            "candidates": [first_candidate, second_candidate],
+            "proxy_log_ratio_threshold": threshold,
+            "max_training_origin": max_training_origin,
+            "source_dataset_count": source_dataset_count,
+            "calibration_origin_count": calibration_origin_count,
+            "calibration_episode_count": len(calibration_samples),
+            "calibration_first_candidate_count": first_count,
+            "calibration_second_candidate_count": (len(calibration_samples) - first_count),
+            "calibration_accuracy": -negative_correct / len(calibration_samples),
+            "calibration_mean_loss": mean_loss,
+            "calibration_mean_regret": mean_regret,
+        }
+
+    for (forecaster_id, dataset_id), samples in sorted(grouped.items()):
+        unique_origins = sorted({sample[0] for sample in samples})
+        recent_count = min(
+            len(unique_origins),
+            max(
+                min_recent_origins,
+                int(np.ceil(len(unique_origins) * recent_origin_fraction)),
+            ),
+        )
+        recent_origins = set(unique_origins[-recent_count:])
+        recent = [sample for sample in samples if sample[0] in recent_origins]
+        if len(recent) < min_support or len(recent_origins) < 2:
+            continue
+        recent_by_group[(forecaster_id, dataset_id)] = recent
+        calibrations.setdefault(forecaster_id, {})[dataset_id] = calibrated_policy(
+            recent,
+            max_training_origin=max(unique_origins),
+            calibration_origin_count=len(recent_origins),
+            source_dataset_count=1,
+            scope="dataset",
+        )
+
+    forecasters = sorted({key[0] for key in recent_by_group})
+    for forecaster_id in forecasters:
+        source_groups = [
+            samples
+            for (model_id, _dataset_id), samples in recent_by_group.items()
+            if model_id == forecaster_id
+        ]
+        if len(source_groups) < 2:
+            continue
+        aggregate = [sample for samples in source_groups for sample in samples]
+        if len(aggregate) < min_support:
+            continue
+        calibrations.setdefault(forecaster_id, {})["__all__"] = calibrated_policy(
+            aggregate,
+            max_training_origin=None,
+            calibration_origin_count=sum(
+                len({sample[0] for sample in samples}) for samples in source_groups
+            ),
+            source_dataset_count=len(source_groups),
+            scope="cross_dataset",
+        )
+    return calibrations
+
+
+def _label_context_features(row: Mapping[str, Any]) -> dict[str, float]:
+    """Recover inference-available context fields for stored label rows."""
+
+    features: dict[str, float] = {}
+    for field in ("dataset_id", "family_id"):
+        value = row.get(field)
+        if isinstance(value, str) and value:
+            features[f"{field}::{value}"] = 1.0
+    origin = _row_forecast_origin(row)
+    if origin is not None:
+        features["forecast_origin_log1p"] = float(np.log1p(origin))
+    return features
+
+
+def _augment_label_context_features(
+    rows: Iterable[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    augmented: list[dict[str, Any]] = []
+    for raw_row in rows:
+        row = dict(raw_row)
+        context = _label_context_features(row)
+        for field in ("prior_features", "unary_features"):
+            values = dict(row[field])
+            values.update(context)
+            row[field] = values
+        augmented.append(row)
+    return augmented
+
+
+def _router_ranker_targets(
+    rows: list[Mapping[str, Any]],
+    target_field: str = "auto",
+) -> tuple[np.ndarray, str]:
+    """Resolve an explicit ranker label field, with ``auto`` for legacy callers."""
+
+    has_routing_target = tuple("routing_target" in row for row in rows)
+    if any(has_routing_target) and not all(has_routing_target):
+        raise ValueError("router labels mix incompatible routing target protocols")
+    if target_field not in {"auto", "routing_target", "full_candidate_loss"}:
+        raise ValueError(f"unknown router ranker target {target_field!r}")
+    field = (
+        ("routing_target" if all(has_routing_target) else "full_candidate_loss")
+        if target_field == "auto"
+        else target_field
+    )
+    if field == "routing_target" and not all(has_routing_target):
+        raise ValueError("router labels lack the configured routing_target field")
+    protocol = (
+        "coherence_adjusted_marginal_v1"
+        if field == "routing_target"
+        else "full_candidate_forecast_loss_v2"
+    )
+    try:
+        targets = np.asarray([float(row[field]) for row in rows], dtype=float)
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"router labels lack valid {field} targets") from error
+    if not np.isfinite(targets).all():
+        raise ValueError(f"router labels contain non-finite {field} targets")
+    return targets, protocol
+
+
 def _fit_router_bundle(
     rows: list[dict[str, Any]],
     pair_rows: list[dict[str, Any]],
@@ -3027,22 +3692,103 @@ def _fit_router_bundle(
 ) -> RouterBundle:
     if not rows or not pair_rows:
         raise ValueError("router fitting requires non-empty unary and pair rows")
-    grouped: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
+    rows = _augment_label_context_features(rows)
+    source_unary_rows = len(rows)
+    forecast_eligible_rows: list[dict[str, Any]] = []
     for row in rows:
+        try:
+            full_candidate_loss = float(row["full_candidate_loss"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not np.isfinite(full_candidate_loss):
+            continue
+        forecast_eligible_rows.append(row)
+    grouped: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
+    for row in forecast_eligible_rows:
         grouped.setdefault(str(row["group_id"]), []).append(row)
-    ordered_rows = [row for group in grouped.values() for row in group]
-    feature_names = tuple(
-        sorted(set().union(*(set(row["unary_features"]) for row in ordered_rows)))
+    grouped = OrderedDict(
+        (group_id, group) for group_id, group in grouped.items() if len(group) >= 2
     )
-    prior = _matrix(ordered_rows, "prior_features", feature_names)
-    unary = _matrix(ordered_rows, "unary_features", feature_names)
-    labels = np.asarray([row["degradation"] for row in ordered_rows], dtype=float)
+    ordered_rows = [row for group in grouped.values() for row in group]
+    if not ordered_rows:
+        raise ValueError("router fitting has no valid full-candidate ranking groups")
+    candidates = tuple(sorted({str(row["candidate_id"]) for row in ordered_rows}))
+    runtime_samples: dict[str, list[float]] = {candidate_id: [] for candidate_id in candidates}
+    memory_samples: dict[str, list[float]] = {candidate_id: [] for candidate_id in candidates}
+    for row in ordered_rows:
+        candidate_id = str(row["candidate_id"])
+        runtime = float(row["unary_features"].get("runtime_seconds", 0.0))
+        memory = float(row["unary_features"].get("peak_memory_mb", 0.0))
+        if np.isfinite(runtime) and runtime >= 0:
+            runtime_samples[candidate_id].append(runtime)
+        if np.isfinite(memory) and memory >= 0:
+            memory_samples[candidate_id].append(memory)
+    candidate_runtime_seconds = {
+        candidate_id: (float(np.median(samples)) if samples else 0.0)
+        for candidate_id, samples in runtime_samples.items()
+    }
+    candidate_peak_memory_mb = {
+        candidate_id: (float(np.median(samples)) if samples else 0.0)
+        for candidate_id, samples in memory_samples.items()
+    }
+    stabilized_rows: list[dict[str, Any]] = []
+    for row in ordered_rows:
+        candidate_id = str(row["candidate_id"])
+        unary_features = dict(row["unary_features"])
+        unary_features["runtime_seconds"] = candidate_runtime_seconds[candidate_id]
+        unary_features["peak_memory_mb"] = candidate_peak_memory_mb[candidate_id]
+        stabilized_rows.append({**row, "unary_features": unary_features})
+    feature_names = tuple(
+        sorted(set().union(*(set(row["unary_features"]) for row in stabilized_rows)))
+    )
+    prior = _matrix(stabilized_rows, "prior_features", feature_names)
+    unary = _matrix(stabilized_rows, "unary_features", feature_names)
+    if not all("full_candidate_loss" in row for row in ordered_rows):
+        raise ValueError("forecast-aware router fitting requires full_candidate_loss labels")
+    labels, ranker_target_protocol = _router_ranker_targets(
+        ordered_rows,
+        str(metadata.get("ranker_target", "full_candidate_loss")),
+    )
+    routing_target_protocol = ranker_target_protocol
     groups = tuple(len(group) for group in grouped.values())
 
     pair_feature_names = tuple(sorted(set().union(*(set(row["features"]) for row in pair_rows))))
     pair_matrix = _matrix(pair_rows, "features", pair_feature_names)
     pair_labels = np.asarray([row["interaction"] for row in pair_rows], dtype=float)
-    candidates = tuple(sorted({str(row["candidate_id"]) for row in ordered_rows}))
+    runtime_floor = min(
+        (max(value, 1e-6) for value in candidate_runtime_seconds.values()),
+        default=1e-6,
+    )
+    candidate_shortlist_costs = {
+        candidate_id: float(
+            np.clip(
+                1.0 + np.log1p(max(runtime / runtime_floor - 1.0, 0.0)),
+                1.0,
+                20.0,
+            )
+        )
+        for candidate_id, runtime in candidate_runtime_seconds.items()
+    }
+    candidate_prior_shrinkage = 1.0
+    candidate_global_priors, candidate_global_support = _candidate_global_prior_statistics(
+        ordered_rows,
+        shrinkage=candidate_prior_shrinkage,
+    )
+    candidate_dataset_prior_shrinkage = 4.0
+    candidate_prior_recent_origin_fraction = float(
+        metadata.get("candidate_prior_recent_origin_fraction", 1.0)
+    )
+    candidate_dataset_priors, candidate_dataset_support = _candidate_dataset_prior_statistics(
+        ordered_rows,
+        candidate_global_priors,
+        shrinkage=candidate_dataset_prior_shrinkage,
+        recent_origin_fraction=candidate_prior_recent_origin_fraction,
+    )
+    # Fixed anchors and graph-wide switch penalties collapsed assignments in
+    # held-out-family validation.  The shortlist remains extensible and keeps
+    # only the two configured safety candidates as unconditional entries.
+    shortlist_anchor_candidates: tuple[str, ...] = ()
+    candidate_anchor_calibrations: dict[str, Any] = {}
     bundle = RouterTrainer().fit(
         prior,
         unary,
@@ -3059,12 +3805,137 @@ def _fit_router_bundle(
             "created_at": utc_now(),
             "ranking_groups": len(groups),
             "unary_rows": len(ordered_rows),
+            "source_unary_rows": source_unary_rows,
+            "excluded_unary_rows": source_unary_rows - len(ordered_rows),
             "pair_rows": len(pair_rows),
+            "candidate_runtime_seconds": candidate_runtime_seconds,
+            "candidate_peak_memory_mb": candidate_peak_memory_mb,
+            "candidate_operational_feature_protocol": "training_median_v1",
+            "candidate_shortlist_costs": candidate_shortlist_costs,
+            "runtime_cost_scope": "shortlist_execution",
+            "routing_target_protocol": routing_target_protocol,
+            "ranker_target_protocol": ranker_target_protocol,
+            "candidate_global_prior_protocol": ("model_specific_full_context_relative_loss_v1"),
+            "candidate_global_priors": candidate_global_priors,
+            "candidate_global_support": candidate_global_support,
+            "candidate_global_prior_weight": 0.0,
+            "candidate_global_prior_min_support": 2,
+            "candidate_global_prior_forced_count": 0,
+            "candidate_global_prior_shrinkage": candidate_prior_shrinkage,
+            "candidate_dataset_prior_protocol": (
+                "recent_origin_dataset_median_hierarchical_v2"
+                if candidate_prior_recent_origin_fraction < 1.0
+                else "historical_dataset_median_hierarchical_v1"
+            ),
+            "candidate_dataset_priors": candidate_dataset_priors,
+            "candidate_dataset_support": candidate_dataset_support,
+            "candidate_dataset_prior_shrinkage": (candidate_dataset_prior_shrinkage),
+            "candidate_prior_recent_origin_fraction": (candidate_prior_recent_origin_fraction),
+            "shortlist_anchor_candidates": list(shortlist_anchor_candidates),
+            "shortlist_anchor_protocol": "disabled_by_held_out_validation_v2",
+            "candidate_anchor_calibration_protocol": "disabled_v2",
+            "candidate_anchor_calibrations": candidate_anchor_calibrations,
+            "candidate_anchor_recent_origin_fraction": 0.5,
+            "candidate_anchor_min_recent_origins": 4,
+            "candidate_anchor_min_support": 4,
+            "candidate_switch_penalty_protocol": "configured_v2",
+            "candidate_switch_penalty": 0.0,
+            "proxy_outlier_protocol": "within_shortlist_robust_mae_v1",
+            "proxy_outlier_multiplier": 5.0,
             **dict(metadata),
         }
     )
     bundle.save(output)
     return bundle
+
+
+_ROUTER_LABEL_PROTOCOL_FIELDS = (
+    "context_length",
+    "horizon",
+    "forecast_stride",
+    "target_indices",
+    "missing_block_lengths",
+    "missing_mechanisms",
+    "missing_rates",
+    "forecast_batch_size",
+)
+
+
+def _protocol_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return tuple(
+            (str(key), _protocol_value(entry))
+            for key, entry in sorted(value.items(), key=lambda item: str(item[0]))
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_protocol_value(entry) for entry in value)
+    return value
+
+
+def _validate_router_label_protocol(
+    config: AppConfig,
+    labels_artifact: Path,
+) -> dict[str, Any]:
+    """Reject teacher labels generated under an incompatible time protocol."""
+
+    manifest_path = labels_artifact.with_name("labels_manifest.json")
+    manifest: Mapping[str, Any] = {}
+    if manifest_path.is_file():
+        loaded_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(loaded_manifest, Mapping):
+            raise ValueError("labels manifest must contain a JSON object")
+        manifest = loaded_manifest
+        if manifest.get("origin_partition") != "train":
+            raise ValueError("train-router requires labels from the train origin partition")
+        sampling = manifest.get("episode_sampling")
+        if isinstance(sampling, Mapping) and sampling.get("partition") != "train":
+            raise ValueError("label episode sampling must use the train partition")
+
+    resolved_path = labels_artifact.with_name("resolved_config.json")
+    source_experiment: Mapping[str, Any] = {}
+    if resolved_path.is_file():
+        resolved = json.loads(resolved_path.read_text(encoding="utf-8"))
+        if not isinstance(resolved, Mapping):
+            raise ValueError("resolved label config must contain a JSON object")
+        source_config = resolved.get("config", resolved)
+        if not isinstance(source_config, Mapping):
+            raise ValueError("resolved label config is missing its config object")
+        loaded_experiment = source_config.get("experiment", {})
+        if not isinstance(loaded_experiment, Mapping):
+            raise ValueError("resolved label config is missing its experiment object")
+        source_experiment = loaded_experiment
+
+    expected_experiment = config.experiment.model_dump()
+    recorded_splits = tuple(
+        str(value)
+        for value in (manifest.get("split"), source_experiment.get("split"))
+        if value is not None
+    )
+    if any(value != config.experiment.split for value in recorded_splits):
+        raise ValueError(
+            "label split does not match train-router config: "
+            f"labels={sorted(set(recorded_splits))}, "
+            f"router={config.experiment.split}"
+        )
+    mismatches = [
+        field
+        for field in _ROUTER_LABEL_PROTOCOL_FIELDS
+        if source_experiment
+        and (
+            field not in source_experiment
+            or _protocol_value(source_experiment[field])
+            != _protocol_value(expected_experiment[field])
+        )
+    ]
+    if mismatches:
+        raise ValueError(
+            "label experiment protocol does not match train-router config: " + ", ".join(mismatches)
+        )
+    return {
+        "label_split": config.experiment.split,
+        "label_origin_partition": "train",
+        "label_protocol_fields": list(_ROUTER_LABEL_PROTOCOL_FIELDS),
+    }
 
 
 def execute_train_router(
@@ -3074,6 +3945,7 @@ def execute_train_router(
 ) -> Mapping[str, Any]:
     if inputs.labels_artifact is None:
         raise ValueError("train-router requires teacher labels")
+    label_protocol = _validate_router_label_protocol(config, inputs.labels_artifact)
     rows = _read_jsonl(inputs.labels_artifact)
     if not rows:
         raise ValueError("teacher label file is empty")
@@ -3082,7 +3954,7 @@ def execute_train_router(
     if not pair_rows:
         raise ValueError("pair label file is empty")
 
-    lineage: dict[str, Any] = {}
+    lineage: dict[str, Any] = dict(label_protocol)
     labels_manifest = inputs.labels_artifact.with_name("labels_manifest.json")
     if labels_manifest.is_file():
         label_metadata = json.loads(labels_manifest.read_text(encoding="utf-8"))
@@ -3102,6 +3974,19 @@ def execute_train_router(
             "cost_weight": router_config.cost_weight,
             "beta_grid": list(router_config.beta_grid),
             "cost_weight_grid": list(router_config.cost_weight_grid),
+            "evidence_tuning_family": router_config.evidence_tuning_family,
+            "evidence_blend": {
+                model_id: weights.model_dump()
+                for model_id, weights in router_config.evidence_blend.items()
+            },
+            "candidate_global_prior_min_support": (router_config.candidate_prior_min_support),
+            "candidate_prior_recent_origin_fraction": (
+                router_config.candidate_prior_recent_origin_fraction
+            ),
+            "candidate_switch_penalty": router_config.candidate_switch_penalty,
+            "ranker_target": router_config.ranker_target,
+            "forecast_consensus": router_config.forecast_consensus.model_dump(),
+            "shortlist_anchor_candidates": list(router_config.forecast_consensus.candidates),
         }
     )
 
@@ -3160,6 +4045,12 @@ def _context_item(item: TimeSeriesItem, episode: Any) -> TimeSeriesItem:
     context_start = (
         item.start + start_index * to_offset(frequency) if timestamps is None else timestamps[0]
     )
+    episode_metadata = dict(episode.context.metadata)
+    metadata = {
+        **dict(item.metadata),
+        **episode_metadata,
+        "series_length": len(item.values),
+    }
     return TimeSeriesItem(
         item_id=item.item_id,
         values=episode.clean_context,
@@ -3167,7 +4058,7 @@ def _context_item(item: TimeSeriesItem, episode: Any) -> TimeSeriesItem:
         start=context_start,
         freq=item.freq,
         timestamps=timestamps,
-        metadata=item.metadata,
+        metadata=metadata,
     )
 
 
@@ -3227,9 +4118,7 @@ def _load_or_create_imputation_progress(
         try:
             progress = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError) as error:
-            raise ValueError(
-                f"cannot resume with invalid imputation progress: {error}"
-            ) from error
+            raise ValueError(f"cannot resume with invalid imputation progress: {error}") from error
         if not isinstance(progress, dict):
             raise ValueError("cannot resume: imputation progress must be a JSON object")
         if progress.get("schema_version") != _IMPUTATION_PROGRESS_SCHEMA_VERSION:
@@ -3258,15 +4147,12 @@ def _load_or_create_imputation_progress(
             preparation.store.root / "imputation_manifest.json",
         )
         has_residual = any(
-            candidate.is_file()
-            or (candidate.is_dir() and any(candidate.iterdir()))
+            candidate.is_file() or (candidate.is_dir() and any(candidate.iterdir()))
             for candidate in residual_paths
             if candidate.exists()
         )
         if has_residual:
-            raise ValueError(
-                "cannot safely resume impute outputs without imputation_progress.json"
-            )
+            raise ValueError("cannot safely resume impute outputs without imputation_progress.json")
     elif path.exists():
         raise FileExistsError(f"imputation progress already exists: {path}")
 
@@ -3338,25 +4224,18 @@ def _validate_resumable_imputation(
     for field, expected in expected_identity.items():
         if entry.get(field) != expected:
             raise ValueError(
-                "cannot resume: progress entry identity differs at "
-                f"{expected_index:08d}.{field}"
+                f"cannot resume: progress entry identity differs at {expected_index:08d}.{field}"
             )
     try:
-        output_path = _safe_artifact_path(
-            artifact_root / "imputations", str(relative_file)
-        )
-        assignment_path = _safe_artifact_path(
-            artifact_root, str(relative_assignment)
-        )
+        output_path = _safe_artifact_path(artifact_root / "imputations", str(relative_file))
+        assignment_path = _safe_artifact_path(artifact_root, str(relative_assignment))
     except ValueError as error:
         raise ValueError(f"cannot resume: {error}") from error
     if not output_path.is_file() or not assignment_path.is_file():
         return False, "committed output pair is incomplete", None
     expected_npz_hash = entry.get("npz_sha256")
     expected_assignment_hash = entry.get("assignment_sha256")
-    if not isinstance(expected_npz_hash, str) or not isinstance(
-        expected_assignment_hash, str
-    ):
+    if not isinstance(expected_npz_hash, str) or not isinstance(expected_assignment_hash, str):
         return False, "committed output hashes are missing", None
     if _file_sha256(output_path) != expected_npz_hash:
         return False, "imputation NPZ hash mismatch", None
@@ -3493,10 +4372,7 @@ def _validate_resumable_imputation(
             expected_future = np.asarray(episode.clean_future, dtype=float)
             expected_mask = np.asarray(episode.context.observed_mask[0], dtype=bool)
             if not (
-                values.shape
-                == observed_mask.shape
-                == clean_context.shape
-                == expected_context.shape
+                values.shape == observed_mask.shape == clean_context.shape == expected_context.shape
             ):
                 return False, "imputation NPZ context shapes differ", None
             if clean_future.shape != expected_future.shape:
@@ -3522,9 +4398,7 @@ def _validate_resumable_imputation(
                 return False, "imputation NPZ candidate IDs differ", None
             count = len(candidate_ids)
             candidate_values = np.asarray(archive["candidate_values"], dtype=float)
-            candidate_native = np.asarray(
-                archive["candidate_native_valid"], dtype=bool
-            )
+            candidate_native = np.asarray(archive["candidate_native_valid"], dtype=bool)
             expected_candidate_shape = (count, *expected_context.shape)
             if candidate_values.shape != expected_candidate_shape or (
                 candidate_native.shape != expected_candidate_shape
@@ -3538,12 +4412,10 @@ def _validate_resumable_imputation(
             ):
                 return False, "candidate output changed observed values", None
             statuses = np.asarray(archive["candidate_status"]).reshape(-1)
-            runtimes = np.asarray(
-                archive["candidate_runtime_seconds"], dtype=float
-            ).reshape(-1)
-            memories = np.asarray(
-                archive["candidate_peak_memory_bytes"], dtype=np.int64
-            ).reshape(-1)
+            runtimes = np.asarray(archive["candidate_runtime_seconds"], dtype=float).reshape(-1)
+            memories = np.asarray(archive["candidate_peak_memory_bytes"], dtype=np.int64).reshape(
+                -1
+            )
             if not (len(statuses) == len(runtimes) == len(memories) == count):
                 return False, "imputation NPZ candidate metadata lengths differ", None
             if any(not str(status) for status in statuses):
@@ -3636,9 +4508,7 @@ class _ImputeArtifactManager:
             raise RuntimeError("imputation artifact leases must not overlap")
         previous_loads = self._load_counts[candidate_id]
         if previous_loads and not repair:
-            raise RuntimeError(
-                f"candidate {candidate_id!r} was already loaded for this dataset"
-            )
+            raise RuntimeError(f"candidate {candidate_id!r} was already loaded for this dataset")
         params = _pypots_params(self.config, spec)
         result = self.store.load_artifacts(
             (candidate_id,),
@@ -3654,9 +4524,7 @@ class _ImputeArtifactManager:
         leased = bool(result.artifacts)
         if leased:
             self._active_leases += 1
-            self._max_active_leases = max(
-                self._max_active_leases, self._active_leases
-            )
+            self._max_active_leases = max(self._max_active_leases, self._active_leases)
         return result.artifacts, result.failures, leased
 
     def release(self, artifacts: dict[str, Any], leased: bool) -> None:
@@ -3711,7 +4579,108 @@ class _ImputeEpisodeWork:
     prepare_seconds: float = 0.0
     raw_actual: dict[str, CandidateResult] = dataclass_field(default_factory=dict)
     raw_pseudo: dict[str, CandidateResult] = dataclass_field(default_factory=dict)
+    raw_backtest: dict[str, CandidateResult] = dataclass_field(default_factory=dict)
     actual_modes: dict[str, str] = dataclass_field(default_factory=dict)
+    reused_actual_candidate_count: int = 0
+
+
+def _validate_candidate_source(root: Path) -> dict[str, Any]:
+    """Validate one completed source artifact before candidate reuse."""
+
+    source = root.resolve()
+    progress_path = source / "imputation_progress.json"
+    manifest_path = source / "imputation_manifest.json"
+    try:
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"invalid candidate source metadata: {error}") from error
+    if not isinstance(progress, dict) or progress.get("status") != "completed":
+        raise ValueError("candidate source imputation progress is not completed")
+    if not isinstance(manifest, dict) or not manifest.get("save_all_candidate_outputs"):
+        raise ValueError("candidate source did not save all candidate outputs")
+    if int(manifest.get("episode_count", -1)) != int(progress.get("expected_episode_count", -2)):
+        raise ValueError("candidate source episode counts are inconsistent")
+    return {
+        "path": str(source),
+        "forecaster_id": manifest.get("forecaster_id"),
+        "episode_count": int(manifest["episode_count"]),
+        "progress_sha256": _file_sha256(progress_path),
+        "manifest_sha256": _file_sha256(manifest_path),
+    }
+
+
+def _load_reused_actual_candidates(
+    source_root: Path,
+    work: _ImputeEpisodeWork,
+    dataset: Any,
+    registry: ImputerRegistry,
+) -> dict[str, CandidateResult]:
+    """Load forecast-independent candidate arrays after strict episode checks."""
+
+    if work.plan is None:  # pragma: no cover - preparation invariant
+        raise RuntimeError("candidate reuse requires a prepared route plan")
+    path = source_root.resolve() / "imputations" / work.relative
+    if not path.is_file():
+        raise FileNotFoundError(f"candidate source episode does not exist: {path}")
+    with np.load(path, allow_pickle=False) as archive:
+        for field, expected in (
+            ("episode_id", work.episode_id),
+            ("dataset_id", dataset.dataset_id),
+            ("family_id", dataset.family_id),
+            ("item_id", work.episode.item_id),
+            ("mask_protocol", "sequence_mask_v2"),
+            ("mask_seed", int(work.episode.mask_seed)),
+            ("mask_realization_id", str(work.episode.mask_realization_id)),
+        ):
+            if _npz_scalar(archive, field) != expected:
+                raise ValueError(f"candidate source identity mismatch: {field}")
+        observed_mask = np.asarray(archive["observed_mask"], dtype=bool)
+        clean_context = np.asarray(archive["clean_context"], dtype=float)
+        clean_future = np.asarray(archive["clean_future"], dtype=float)
+        if not np.array_equal(observed_mask, work.plan.batch.observed_mask[0]):
+            raise ValueError("candidate source observed mask differs")
+        if not np.array_equal(clean_context, work.episode.clean_context):
+            raise ValueError("candidate source clean context differs")
+        if not np.array_equal(clean_future, work.episode.clean_future):
+            raise ValueError("candidate source clean future differs")
+        candidate_ids = tuple(str(value) for value in np.asarray(archive["candidate_ids"]).tolist())
+        if len(set(candidate_ids)) != len(candidate_ids):
+            raise ValueError("candidate source contains duplicate candidate IDs")
+        if unknown := set(candidate_ids).difference(registry.ids):
+            raise ValueError(
+                f"candidate source contains unconfigured candidates: {sorted(unknown)}"
+            )
+        values = np.asarray(archive["candidate_values"], dtype=float)
+        native = np.asarray(archive["candidate_native_valid"], dtype=bool)
+        statuses = np.asarray(archive["candidate_status"]).reshape(-1)
+        runtimes = np.asarray(archive["candidate_runtime_seconds"], dtype=float).reshape(-1)
+        memories = np.asarray(archive["candidate_peak_memory_bytes"], dtype=np.int64).reshape(-1)
+        expected_shape = (len(candidate_ids), *work.episode.clean_context.shape)
+        if values.shape != expected_shape or native.shape != expected_shape:
+            raise ValueError("candidate source array shapes differ")
+        if not (len(statuses) == len(runtimes) == len(memories) == len(candidate_ids)):
+            raise ValueError("candidate source metadata lengths differ")
+        results: dict[str, CandidateResult] = {}
+        for index, candidate_id in enumerate(candidate_ids):
+            status = CandidateStatus(str(statuses[index]))
+            result = CandidateResult(
+                imputer_id=candidate_id,
+                values=values[index][None, ...],
+                native_valid_mask=native[index][None, ...],
+                runtime_seconds=float(runtimes[index]),
+                peak_memory_bytes=int(memories[index]),
+                status=status,
+                failure_reason=(
+                    None
+                    if status in {CandidateStatus.SUCCESS, CandidateStatus.PARTIAL}
+                    else "reused source candidate was not successful"
+                ),
+                metadata={"candidate_source": str(path)},
+            )
+            result.validate_against(work.plan.batch)
+            results[candidate_id] = result
+    return results
 
 
 def _prepare_impute_work(
@@ -3778,9 +4747,7 @@ def _desired_actual_mode(
 ) -> str | None:
     if work.plan is None:  # pragma: no cover - preparation invariant
         raise RuntimeError("imputation work has no route plan")
-    if candidate_id in work.plan.shortlist or candidate_id in _fallback_ids(
-        work.plan, pipeline
-    ):
+    if candidate_id in work.plan.shortlist or candidate_id in _fallback_ids(work.plan, pipeline):
         return "routing"
     if save_all and candidate_id in evaluation_ids:
         return "evaluation"
@@ -3803,11 +4770,10 @@ def _run_raw_impute_candidate(
     *,
     run_actual: bool,
     run_pseudo: bool,
+    run_backtest: bool,
 ) -> None:
     params: dict[str, Mapping[str, Any]] = {}
-    candidate_params = _pypots_params(
-        config, pipeline.imputer_registry.get_spec(candidate_id)
-    )
+    candidate_params = _pypots_params(config, pipeline.imputer_registry.get_spec(candidate_id))
     if candidate_params is not None:
         params[candidate_id] = candidate_params
     if run_actual:
@@ -3837,6 +4803,20 @@ def _run_raw_impute_candidate(
                 budget=_raw_run_budget(allowed_devices),
             )
         )
+    if run_backtest:
+        if work.plan is None or work.plan.backtest_batch is None:
+            raise RuntimeError("shortlisted candidate has no backtest batch")
+        work.raw_backtest.update(
+            pipeline.candidate_runner.run_many(
+                (candidate_id,),
+                work.plan.backtest_batch,
+                artifacts,
+                seed=work.episode.seed,
+                params=params,
+                artifact_failures=artifact_failures,
+                budget=_raw_run_budget(allowed_devices),
+            )
+        )
 
 
 def _memory_limited_result(
@@ -3857,8 +4837,7 @@ def _memory_limited_result(
         peak_memory_bytes=result.peak_memory_bytes,
         status=CandidateStatus.FAILED,
         failure_reason=(
-            f"peak memory {result.peak_memory_bytes} exceeds budget "
-            f"{budget.max_memory_bytes}"
+            f"peak memory {result.peak_memory_bytes} exceeds budget {budget.max_memory_bytes}"
         ),
         metadata=dict(result.metadata),
     )
@@ -3867,7 +4846,11 @@ def _memory_limited_result(
 def _budgeted_route_results(
     work: _ImputeEpisodeWork,
     registry: ImputerRegistry,
-) -> tuple[dict[str, CandidateResult], dict[str, CandidateResult]]:
+) -> tuple[
+    dict[str, CandidateResult],
+    dict[str, CandidateResult],
+    dict[str, CandidateResult],
+]:
     if work.plan is None:  # pragma: no cover - preparation invariant
         raise RuntimeError("imputation work has no route plan")
     plan = work.plan
@@ -3897,15 +4880,13 @@ def _budgeted_route_results(
                 raise RuntimeError(
                     f"missing raw actual result for {work.episode_id}/{candidate_id}"
                 )
-            result = _memory_limited_result(
-                work.raw_actual[candidate_id], plan.batch, plan.budget
-            )
+            result = _memory_limited_result(work.raw_actual[candidate_id], plan.batch, plan.budget)
             elapsed += result.runtime_seconds
         actual[candidate_id] = result
 
     pseudo: dict[str, CandidateResult] = {}
     if plan.pseudo_batch is None:
-        return actual, pseudo
+        return actual, pseudo, {}
     elapsed = sum(result.runtime_seconds for result in actual.values())
     for candidate_id in plan.shortlist:
         spec = registry.get_spec(candidate_id)
@@ -3936,7 +4917,41 @@ def _budgeted_route_results(
             )
             elapsed += result.runtime_seconds
         pseudo[candidate_id] = result
-    return actual, pseudo
+    backtest: dict[str, CandidateResult] = {}
+    if plan.backtest_batch is None:
+        return actual, pseudo, backtest
+    for candidate_id in plan.shortlist:
+        spec = registry.get_spec(candidate_id)
+        if spec.device != "any" and spec.device not in plan.budget.allowed_devices:
+            result = failed_candidate_result(
+                candidate_id,
+                plan.backtest_batch,
+                f"device {spec.device!r} is excluded by the budget",
+                status=CandidateStatus.UNAVAILABLE,
+            )
+        elif (
+            plan.budget.max_runtime_seconds is not None
+            and elapsed >= plan.budget.max_runtime_seconds
+        ):
+            result = failed_candidate_result(
+                candidate_id,
+                plan.backtest_batch,
+                "runtime budget exhausted before candidate execution",
+                status=CandidateStatus.UNAVAILABLE,
+            )
+        else:
+            if candidate_id not in work.raw_backtest:
+                raise RuntimeError(
+                    f"missing raw historical backtest result for {work.episode_id}/{candidate_id}"
+                )
+            result = _memory_limited_result(
+                work.raw_backtest[candidate_id],
+                plan.backtest_batch,
+                plan.budget,
+            )
+            elapsed += result.runtime_seconds
+        backtest[candidate_id] = result
+    return actual, pseudo, backtest
 
 
 def _rebuild_impute_plans(
@@ -3962,21 +4977,22 @@ def _candidate_tasks_missing(
     pipeline: BlockwiseFAIS,
     evaluation_ids: frozenset[str],
     save_all: bool,
-) -> tuple[str | None, bool, bool]:
+) -> tuple[str | None, bool, bool, bool]:
     if work.plan is None:  # pragma: no cover - preparation invariant
         raise RuntimeError("imputation work has no route plan")
-    mode = _desired_actual_mode(
-        work, candidate_id, pipeline, evaluation_ids, save_all
-    )
-    run_actual = mode is not None and (
-        candidate_id not in work.raw_actual
-    )
+    mode = _desired_actual_mode(work, candidate_id, pipeline, evaluation_ids, save_all)
+    run_actual = mode is not None and (candidate_id not in work.raw_actual)
     run_pseudo = (
         work.plan.pseudo_batch is not None
         and candidate_id in work.plan.shortlist
         and candidate_id not in work.raw_pseudo
     )
-    return mode, run_actual, run_pseudo
+    run_backtest = (
+        work.plan.backtest_batch is not None
+        and candidate_id in work.plan.shortlist
+        and candidate_id not in work.raw_backtest
+    )
+    return mode, run_actual, run_pseudo, run_backtest
 
 
 def _run_impute_candidate_sweep(
@@ -3999,14 +5015,15 @@ def _run_impute_candidate_sweep(
             candidate_id
             for candidate_id in registry.ids
             if any(
-                _desired_actual_mode(
-                    work,
-                    candidate_id,
-                    pipeline,
-                    evaluation_ids,
-                    save_all,
+                any(
+                    _candidate_tasks_missing(
+                        work,
+                        candidate_id,
+                        pipeline,
+                        evaluation_ids,
+                        save_all,
+                    )[1:]
                 )
-                is not None
                 for work in works
             )
         )
@@ -4033,14 +5050,14 @@ def _run_impute_candidate_sweep(
                         registry, available_artifact_ids, allowed_devices
                     )
             for work in works:
-                mode, run_actual, run_pseudo = _candidate_tasks_missing(
+                mode, run_actual, run_pseudo, run_backtest = _candidate_tasks_missing(
                     work,
                     candidate_id,
                     pipeline,
                     evaluation_ids,
                     save_all,
                 )
-                if mode is None and not run_pseudo:
+                if mode is None and not run_pseudo and not run_backtest:
                     continue
                 _run_raw_impute_candidate(
                     work,
@@ -4053,6 +5070,7 @@ def _run_impute_candidate_sweep(
                     allowed_devices,
                     run_actual=run_actual,
                     run_pseudo=run_pseudo,
+                    run_backtest=run_backtest,
                 )
         finally:
             manager.release(artifacts, leased)
@@ -4094,6 +5112,7 @@ def _run_impute_candidate_sweep(
                 for work in works:
                     work.raw_actual.pop(candidate_id, None)
                     work.raw_pseudo.pop(candidate_id, None)
+                    work.raw_backtest.pop(candidate_id, None)
                     work.actual_modes.pop(candidate_id, None)
                 _rebuild_impute_plans(
                     works,
@@ -4106,14 +5125,14 @@ def _run_impute_candidate_sweep(
                     registry, available_artifact_ids, allowed_devices
                 )
                 for work in works:
-                    mode, run_actual, run_pseudo = _candidate_tasks_missing(
+                    mode, run_actual, run_pseudo, run_backtest = _candidate_tasks_missing(
                         work,
                         candidate_id,
                         pipeline,
                         evaluation_ids,
                         save_all,
                     )
-                    if mode is None and not run_pseudo:
+                    if mode is None and not run_pseudo and not run_backtest:
                         continue
                     _run_raw_impute_candidate(
                         work,
@@ -4126,6 +5145,7 @@ def _run_impute_candidate_sweep(
                         allowed_devices,
                         run_actual=run_actual,
                         run_pseudo=run_pseudo,
+                        run_backtest=run_backtest,
                     )
                 processed.add(candidate_id)
                 continue
@@ -4133,14 +5153,14 @@ def _run_impute_candidate_sweep(
                 registry, available_artifact_ids, allowed_devices
             )
             for work in works:
-                mode, run_actual, run_pseudo = _candidate_tasks_missing(
+                mode, run_actual, run_pseudo, run_backtest = _candidate_tasks_missing(
                     work,
                     candidate_id,
                     pipeline,
                     evaluation_ids,
                     save_all,
                 )
-                if mode is None and not run_pseudo:
+                if mode is None and not run_pseudo and not run_backtest:
                     continue
                 _run_raw_impute_candidate(
                     work,
@@ -4153,6 +5173,7 @@ def _run_impute_candidate_sweep(
                     allowed_devices,
                     run_actual=run_actual,
                     run_pseudo=run_pseudo,
+                    run_backtest=run_backtest,
                 )
         finally:
             manager.release(artifacts, leased)
@@ -4173,28 +5194,19 @@ def _commit_imputation_output(
     pipeline_rss_delta: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     candidate_ids = tuple(
-        candidate_id
-        for candidate_id in registry.ids
-        if candidate_id in result.candidates
+        candidate_id for candidate_id in registry.ids if candidate_id in result.candidates
     )
     if candidate_ids:
         candidate_values = np.stack(
             [result.candidates[candidate_id].values[0] for candidate_id in candidate_ids]
         )
         candidate_native_valid = np.stack(
-            [
-                result.candidates[candidate_id].native_valid_mask[0]
-                for candidate_id in candidate_ids
-            ]
+            [result.candidates[candidate_id].native_valid_mask[0] for candidate_id in candidate_ids]
         )
     else:
         candidate_values = np.empty((0, *result.values.shape), dtype=float)
-        candidate_native_valid = np.empty(
-            (0, *result.values.shape), dtype=bool
-        )
-    mechanism, missing_rate, configured_seed = _episode_parameters(
-        work.episode_id
-    )
+        candidate_native_valid = np.empty((0, *result.values.shape), dtype=bool)
+    mechanism, missing_rate, configured_seed = _episode_parameters(work.episode_id)
     target = output / work.relative
     assignment_target = preparation.store.root / work.relative_assignment
     _write_npz_atomic(
@@ -4212,18 +5224,10 @@ def _commit_imputation_output(
         clean_future=work.episode.clean_future,
         mask_protocol=np.asarray(["sequence_mask_v2"], dtype=str),
         mask_seed=np.asarray([work.episode.mask_seed], dtype=np.uint64),
-        mask_realization_id=np.asarray(
-            [work.episode.mask_realization_id], dtype=str
-        ),
-        target_missing_rate=np.asarray(
-            [work.episode.target_missing_rate], dtype=np.float64
-        ),
-        global_missing_rate=np.asarray(
-            [work.episode.global_missing_rate], dtype=np.float64
-        ),
-        local_missing_rate=np.asarray(
-            [work.episode.local_missing_rate], dtype=np.float64
-        ),
+        mask_realization_id=np.asarray([work.episode.mask_realization_id], dtype=str),
+        target_missing_rate=np.asarray([work.episode.target_missing_rate], dtype=np.float64),
+        global_missing_rate=np.asarray([work.episode.global_missing_rate], dtype=np.float64),
+        local_missing_rate=np.asarray([work.episode.local_missing_rate], dtype=np.float64),
         mase_scale=np.asarray(work.mase_scale, dtype=np.float64),
         mase_scale_lag=np.asarray([work.mase_scale_lag], dtype=np.int64),
         period=np.asarray([dataset.period], dtype=np.int64),
@@ -4231,41 +5235,22 @@ def _commit_imputation_output(
         candidate_values=candidate_values,
         candidate_native_valid=candidate_native_valid,
         candidate_status=np.asarray(
-            [
-                result.candidates[candidate_id].status.value
-                for candidate_id in candidate_ids
-            ],
+            [result.candidates[candidate_id].status.value for candidate_id in candidate_ids],
             dtype=str,
         ),
         candidate_runtime_seconds=np.asarray(
-            [
-                result.candidates[candidate_id].runtime_seconds
-                for candidate_id in candidate_ids
-            ],
+            [result.candidates[candidate_id].runtime_seconds for candidate_id in candidate_ids],
             dtype=float,
         ),
         candidate_peak_memory_bytes=np.asarray(
-            [
-                result.candidates[candidate_id].peak_memory_bytes
-                for candidate_id in candidate_ids
-            ],
+            [result.candidates[candidate_id].peak_memory_bytes for candidate_id in candidate_ids],
             dtype=np.int64,
         ),
-        pipeline_runtime_seconds=np.asarray(
-            pipeline_runtime_seconds, dtype=np.float64
-        ),
-        pipeline_rss_before_bytes=np.asarray(
-            work.pipeline_rss_before, dtype=np.int64
-        ),
-        pipeline_rss_after_bytes=np.asarray(
-            pipeline_rss_after, dtype=np.int64
-        ),
-        pipeline_rss_delta_bytes=np.asarray(
-            pipeline_rss_delta, dtype=np.int64
-        ),
-        pipeline_peak_memory_bytes=np.asarray(
-            pipeline_rss_delta, dtype=np.int64
-        ),
+        pipeline_runtime_seconds=np.asarray(pipeline_runtime_seconds, dtype=np.float64),
+        pipeline_rss_before_bytes=np.asarray(work.pipeline_rss_before, dtype=np.int64),
+        pipeline_rss_after_bytes=np.asarray(pipeline_rss_after, dtype=np.int64),
+        pipeline_rss_delta_bytes=np.asarray(pipeline_rss_delta, dtype=np.int64),
+        pipeline_peak_memory_bytes=np.asarray(pipeline_rss_delta, dtype=np.int64),
     )
     assignment = {
         "schema_version": _IMPUTATION_SCHEMA_VERSION,
@@ -4350,6 +5335,14 @@ def execute_impute(
     if len(model_ids) != 1:
         raise ValueError("impute requires exactly one forecaster ID")
     model_id = model_ids[0]
+    from tsfm_fais.config import load_yaml
+    from tsfm_fais.registry_configs import RouterConfig
+
+    runtime_router_config = RouterConfig.model_validate(
+        load_yaml(config.registries.router_config)
+    )
+    runtime_consensus = runtime_router_config.forecast_consensus
+    runtime_consensus_mode = runtime_consensus.mode
     imputer_registry = _selected_imputer_registry(config)
     selected_candidate_ids = _selected_candidate_ids(config)
     resume_identity = _impute_resume_identity(
@@ -4417,6 +5410,24 @@ def execute_impute(
             router_cache[held_out] = router
         return router_cache[held_out]
 
+    forecast_consensus_runner: ForecastRunner | None = None
+    if inputs.forecaster_artifact is not None:
+        selected_forecasters = _forecaster_artifacts(inputs)
+        if len(selected_forecasters) != 1 or selected_forecasters[0][0] != model_id:
+            raise ValueError("impute forecast-consensus artifact does not match model ID")
+        forecast_registry = default_forecast_registry()
+        forecast_adapter = _preflight_forecaster(
+            forecast_registry,
+            model_id,
+            selected_forecasters[0][1],
+            device=_torch_device(config),
+            batch_size=config.experiment.forecast_batch_size,
+        )
+        forecast_consensus_runner = ForecastRunner(
+            forecast_registry,
+            adapters={model_id: forecast_adapter},
+        )
+
     output = preparation.store.root / "imputations"
     assignment_root = preparation.store.root / "assignment_records"
     assignments_path = preparation.store.root / "routing_assignments.jsonl"
@@ -4428,6 +5439,16 @@ def execute_impute(
         output,
         assignment_root,
     )
+    candidate_source_summary = (
+        _validate_candidate_source(inputs.candidate_source_impute_artifact)
+        if inputs.candidate_source_impute_artifact is not None
+        else None
+    )
+    candidate_source_root = (
+        inputs.candidate_source_impute_artifact.resolve()
+        if inputs.candidate_source_impute_artifact is not None
+        else None
+    )
     output.mkdir(parents=True, exist_ok=preparation.resuming)
     assignment_root.mkdir(parents=True, exist_ok=preparation.resuming)
     progress_entries: dict[str, Any] = progress["entries"]
@@ -4438,9 +5459,7 @@ def execute_impute(
     pipeline_runtime_total = 0.0
     pipeline_rss_delta_max = 0
     assignment_records_by_index: dict[int, dict[str, Any]] = {}
-    artifact_loading: dict[str, dict[str, Any]] = dict(
-        progress.get("artifact_loading", {})
-    )
+    artifact_loading: dict[str, dict[str, Any]] = dict(progress.get("artifact_loading", {}))
     for dataset, items in _datasets(config, inputs.audit_artifact):
         dataset_sampling: dict[str, Any] = {}
         dataset_episodes = tuple(
@@ -4462,6 +5481,12 @@ def execute_impute(
         router = router_for(dataset)
         if router is None:
             continue
+        consensus_required = (
+            runtime_consensus_mode in {"medoid", "historical_backtest"}
+            or runtime_consensus.anchor_period_exceeded_mode == "medoid"
+        )
+        if consensus_required and forecast_consensus_runner is None:
+            raise ValueError("forecast-consensus router requires --forecaster-artifact")
         item_lookup = {item.item_id: item for item in items}
         pending: list[_ImputeEpisodeWork] = []
         for episode_id, episode in dataset_episodes:
@@ -4476,21 +5501,19 @@ def execute_impute(
                 source_item.values[:scale_end], dataset.period
             )
             item = _context_item(source_item, episode)
+            item.metadata["mase_scale"] = list(map(float, mase_scale))
+            item.metadata["mase_scale_lag"] = int(mase_scale_lag)
             spec = _forecast_spec(config, model_id, episode.context.shape[2])
             relative = Path(dataset.dataset_id) / f"{count:08d}.npz"
             relative_assignment = (
-                Path("assignment_records")
-                / dataset.dataset_id
-                / f"{count:08d}.json"
+                Path("assignment_records") / dataset.dataset_id / f"{count:08d}.json"
             )
             entry_key = f"{count:08d}"
             existing = progress_entries.get(entry_key)
             invalid_reason: str | None = None
             if existing is not None:
                 if not isinstance(existing, dict):
-                    raise ValueError(
-                        f"cannot resume: progress entry {entry_key} is not an object"
-                    )
+                    raise ValueError(f"cannot resume: progress entry {entry_key} is not an object")
                 valid, invalid_reason, recovered = _validate_resumable_imputation(
                     existing,
                     expected_index=count,
@@ -4554,12 +5577,8 @@ def execute_impute(
             imputer_registry,
             config,
         )
-        available_artifact_ids = artifact_manager.declared_available(
-            selected_candidate_ids
-        )
-        artifact_failures = artifact_manager.declared_failures(
-            selected_candidate_ids
-        )
+        available_artifact_ids = artifact_manager.declared_available(selected_candidate_ids)
+        artifact_failures = artifact_manager.declared_failures(selected_candidate_ids)
         pipeline = BlockwiseFAIS(
             config=config,
             router=router,
@@ -4568,6 +5587,9 @@ def execute_impute(
             artifact_load_failures=artifact_failures,
             training_medians=medians,
             training_correlation=correlation,
+            forecast_predictor=(
+                None if forecast_consensus_runner is None else forecast_consensus_runner.predict
+            ),
         )
         for work in pending:
             _prepare_impute_work(
@@ -4577,6 +5599,15 @@ def execute_impute(
                 artifact_failures,
                 allowed_devices,
             )
+            if candidate_source_root is not None:
+                reused = _load_reused_actual_candidates(
+                    candidate_source_root,
+                    work,
+                    dataset,
+                    imputer_registry,
+                )
+                work.raw_actual.update(reused)
+                work.reused_actual_candidate_count = len(reused)
         loading_audit = _run_impute_candidate_sweep(
             pending,
             pipeline,
@@ -4590,6 +5621,9 @@ def execute_impute(
             {
                 "pending_episode_count": len(pending),
                 "available_artifact_ids": sorted(available_artifact_ids),
+                "candidate_source_reused_actual_count": sum(
+                    work.reused_actual_candidate_count for work in pending
+                ),
             }
         )
         artifact_loading[dataset.dataset_id] = loading_audit
@@ -4602,16 +5636,34 @@ def execute_impute(
         for work in pending:
             if work.plan is None:  # pragma: no cover - preparation invariant
                 raise RuntimeError("imputation work has no route plan")
-            candidates, pseudo_candidates = _budgeted_route_results(
+            candidates, pseudo_candidates, backtest_candidates = _budgeted_route_results(
                 work,
                 imputer_registry,
             )
+            if forecast_consensus_runner is not None:
+                from tsfm_fais.evaluation import _set_forecast_seed
+
+                _set_forecast_seed(
+                    stable_seed(
+                        config.seed,
+                        model_id,
+                        work.episode_id,
+                        "routing_forecast_consensus",
+                    )
+                )
             finish_started = perf_counter()
             result = pipeline.finish_route(
                 work.plan,
                 candidates,
                 pseudo_candidates,
+                backtest_candidates=backtest_candidates,
                 fallback_candidates=work.raw_actual,
+            )
+            result.routing.metadata["reused_actual_candidate_count"] = (
+                work.reused_actual_candidate_count
+            )
+            result.routing.metadata["candidate_source_impute_artifact"] = (
+                None if candidate_source_root is None else str(candidate_source_root)
             )
             finish_seconds = perf_counter() - finish_started
             fallback_runtime_ids = {
@@ -4628,6 +5680,7 @@ def execute_impute(
                 work.prepare_seconds
                 + sum(value.runtime_seconds for value in candidates.values())
                 + sum(value.runtime_seconds for value in pseudo_candidates.values())
+                + sum(value.runtime_seconds for value in backtest_candidates.values())
                 + sum(
                     work.raw_actual[candidate_id].runtime_seconds
                     for candidate_id in fallback_runtime_ids
@@ -4681,6 +5734,7 @@ def execute_impute(
             executed_count += 1
             work.raw_actual.clear()
             work.raw_pseudo.clear()
+            work.raw_backtest.clear()
             work.actual_modes.clear()
     if count == 0:
         raise ValueError("no imputation episode was generated")
@@ -4694,9 +5748,7 @@ def execute_impute(
         )
     if len(assignment_records_by_index) != count:
         raise ValueError("cannot finalize impute: assignment count is inconsistent")
-    assignment_records = [
-        assignment_records_by_index[index] for index in range(count)
-    ]
+    assignment_records = [assignment_records_by_index[index] for index in range(count)]
     sampling_manifest = _episode_sampling_manifest(
         "eval",
         config.experiment.max_eval_episodes_per_dataset,
@@ -4716,9 +5768,7 @@ def execute_impute(
         "episodes_reused": reused_count,
         "repaired_episode_count": int(progress.get("repair_count", 0)),
         "origin_partition": "eval",
-        "max_eval_episodes_per_dataset": (
-            config.experiment.max_eval_episodes_per_dataset
-        ),
+        "max_eval_episodes_per_dataset": (config.experiment.max_eval_episodes_per_dataset),
         "episode_sampling": sampling_manifest,
         "forecaster_id": model_id,
         "selected_candidates": list(selected_candidate_ids),
@@ -4729,6 +5779,8 @@ def execute_impute(
         "pipeline_rss_delta_max_bytes": pipeline_rss_delta_max,
         "pipeline_memory_measurement": "endpoint_rss_delta_approximation",
         "artifact_loading": artifact_loading,
+        "candidate_source_impute_artifact": candidate_source_summary,
+        "forecast_consensus_artifact": resume_identity.get("forecast_consensus_artifact"),
     }
     _write_json(preparation.store.root / "imputation_manifest.json", summary)
     progress.update(

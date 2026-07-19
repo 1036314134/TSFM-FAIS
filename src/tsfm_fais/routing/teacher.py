@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Sequence, cast
+from typing import Any, cast
 
 import numpy as np
 
@@ -141,10 +142,8 @@ class RoutingTeacher:
             rankings[block.block_id] = tuple(
                 candidate_id
                 for _, candidate_id in sorted(
-                    (
-                        (unary[(block.block_id, candidate_id)], candidate_id)
-                        for candidate_id in candidates
-                    )
+                    (unary[(block.block_id, candidate_id)], candidate_id)
+                    for candidate_id in candidates
                 )
             )
         return TeacherTargets(
@@ -173,6 +172,74 @@ class TeacherLabel:
     forecast_loss: float
     clean_loss: float
     degradation: float
+
+
+@dataclass(frozen=True)
+class CoherenceAdjustedTarget:
+    """Auditable block risk after allocating a full-candidate forecast effect."""
+
+    local_marginal: float
+    full_candidate_loss: float | None
+    global_marginal_per_block: float
+    coherence_adjustment: float
+    routing_target: float
+
+
+def coherence_adjusted_targets(
+    labels: Sequence[TeacherLabel],
+    full_candidate_losses: Mapping[str, float],
+    *,
+    anchor_loss: float,
+    visible_block_count: int,
+) -> dict[tuple[str, str], CoherenceAdjustedTarget]:
+    """Combine local counterfactuals with each candidate's full-context loss.
+
+    The candidate-wide residual is centered by the mean observed local
+    marginal.  Consequently, when a candidate has labels for every visible
+    block, its adjusted block risks sum exactly to its full-context loss delta
+    relative to the anchor.
+    """
+
+    if visible_block_count < 1:
+        raise ValueError("visible_block_count must be positive")
+    if not np.isfinite(anchor_loss):
+        raise ValueError("anchor_loss must be finite")
+    local_by_candidate: dict[str, list[float]] = {}
+    for label in labels:
+        local = float(label.forecast_loss - anchor_loss)
+        if not np.isfinite(local):
+            raise ValueError("teacher label marginal must be finite")
+        local_by_candidate.setdefault(label.candidate_id, []).append(local)
+
+    adjustments: dict[str, tuple[float | None, float, float]] = {}
+    for candidate_id, local_values in local_by_candidate.items():
+        mean_local = float(np.mean(local_values))
+        full_loss = full_candidate_losses.get(candidate_id)
+        if full_loss is None:
+            adjustments[candidate_id] = (None, mean_local, 0.0)
+            continue
+        full_loss = float(full_loss)
+        if not np.isfinite(full_loss):
+            raise ValueError("full candidate loss must be finite")
+        global_per_block = (full_loss - anchor_loss) / visible_block_count
+        adjustments[candidate_id] = (
+            full_loss,
+            float(global_per_block),
+            float(global_per_block - mean_local),
+        )
+
+    targets: dict[tuple[str, str], CoherenceAdjustedTarget] = {}
+    for label in labels:
+        local = float(label.forecast_loss - anchor_loss)
+        full_loss, global_per_block, adjustment = adjustments[label.candidate_id]
+        targets[(label.block_id, label.candidate_id)] = CoherenceAdjustedTarget(
+            local_marginal=local,
+            full_candidate_loss=full_loss,
+            global_marginal_per_block=global_per_block,
+            coherence_adjustment=adjustment,
+            routing_target=float(local + adjustment),
+        )
+    return targets
 
 
 ForecastCallable = Callable[[np.ndarray, ForecastSpec], ForecastResult]
@@ -348,9 +415,49 @@ class TeacherBuilder:
                 clean_loss=clean_loss,
                 degradation=float(loss - clean_loss),
             )
-            for (block, candidate_id), loss in zip(keys, losses[2:])
+            for (block, candidate_id), loss in zip(
+                keys,
+                losses[2:],
+                strict=True,
+            )
         ]
         return labels, clean_loss, anchor_loss
+
+    def candidate_losses_batched(
+        self,
+        clean_context: np.ndarray,
+        clean_future: np.ndarray,
+        candidates: Mapping[str, CandidateResult],
+        spec: ForecastSpec,
+    ) -> dict[str, float]:
+        """Evaluate each complete candidate context in one forecast call."""
+
+        if not candidates:
+            return {}
+        clean = np.asarray(clean_context, dtype=float)
+        targets = spec.target_indices or tuple(range(clean.shape[2]))
+        scales = self._scales(clean, targets)
+        candidate_ids = tuple(candidates)
+        contexts: list[np.ndarray] = []
+        for candidate_id in candidate_ids:
+            values = np.asarray(candidates[candidate_id].values, dtype=float)
+            if values.shape != clean.shape or not np.isfinite(values).all():
+                raise ValueError(
+                    "complete candidate values must be finite and match clean_context"
+                )
+            contexts.append(values)
+        batch_size = clean.shape[0]
+        repeated_future = np.concatenate([clean_future] * len(contexts), axis=0)
+        losses = self._losses(
+            np.concatenate(contexts, axis=0),
+            repeated_future,
+            spec,
+            scales,
+        ).reshape(len(contexts), batch_size).mean(axis=1)
+        return {
+            candidate_id: float(loss)
+            for candidate_id, loss in zip(candidate_ids, losses, strict=True)
+        }
 
     def pair_interaction(
         self,

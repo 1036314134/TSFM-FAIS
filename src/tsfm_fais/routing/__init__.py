@@ -3,13 +3,11 @@
 from .blocks import (
     assemble_routed_values,
     block_mask,
-)
-from .blocks import build_block_graph as build_legacy_block_graph
-from .blocks import (
     detect_missing_blocks,
     extract_missing_blocks,
     validate_blocks,
 )
+from .blocks import build_block_graph as build_legacy_block_graph
 from .bundle import RouterBundle as InferenceRouterBundle
 from .features import (
     RoutingFeatureExtractor,
@@ -48,11 +46,13 @@ from .solver import (
     solve_routing,
 )
 from .teacher import (
+    CoherenceAdjustedTarget,
     RoutingTeacher,
     TeacherBuilder,
     TeacherLabel,
     TeacherTargets,
     TeacherWeights,
+    coherence_adjusted_targets,
     replace_block,
 )
 
@@ -61,6 +61,7 @@ __all__ = [
     "BlockEdge",
     "BlockGraph",
     "CandidateShortlister",
+    "CoherenceAdjustedTarget",
     "ExhaustiveSolver",
     "InferenceRouterBundle",
     "LazyLightGBMRegressor",
@@ -86,6 +87,7 @@ __all__ = [
     "block_mask",
     "build_block_graph",
     "build_legacy_block_graph",
+    "coherence_adjusted_targets",
     "detect_missing_blocks",
     "exhaustive_search",
     "extract_missing_blocks",

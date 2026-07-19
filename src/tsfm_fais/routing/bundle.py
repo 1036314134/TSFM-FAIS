@@ -63,7 +63,7 @@ class RouterBundle:
         targets: Mapping[tuple[str, str], float] | np.ndarray,
         *,
         sample_weight: np.ndarray | None = None,
-    ) -> "RouterBundle":
+    ) -> RouterBundle:
         features, keys = table.flatten()
         if isinstance(targets, Mapping):
             try:
@@ -92,7 +92,7 @@ class RouterBundle:
         predictions = np.asarray(self.unary_model.predict(features), dtype=float).reshape(-1)
         if len(predictions) != len(keys) or not np.all(np.isfinite(predictions)):
             raise ValueError("unary model returned invalid predictions")
-        return {key: float(value) for key, value in zip(keys, predictions)}
+        return {key: float(value) for key, value in zip(keys, predictions, strict=True)}
 
     def route(
         self,

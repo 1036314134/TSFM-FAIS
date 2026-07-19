@@ -312,7 +312,7 @@ def test_candidate_major_sweep_loads_once_and_keeps_roles_episode_local() -> Non
     assert all(set(work.raw_actual) == set(registry.ids) for work in works)
     assert all(set(work.raw_pseudo) == {"fit_a", "fit_b"} for work in works)
     assert works[1].raw_actual["fit_b"].status is CandidateStatus.FAILED
-    budgeted, _ = _budgeted_route_results(works[1], registry)
+    budgeted, _, _ = _budgeted_route_results(works[1], registry)
     assert budgeted["fit_b"].status is CandidateStatus.FAILED
 
 

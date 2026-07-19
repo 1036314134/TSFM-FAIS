@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from copy import copy
 from dataclasses import dataclass
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 
@@ -165,6 +167,15 @@ class MissForestImputer(BaseImputer):
             n_jobs=self.n_jobs,
         )
 
+    @staticmethod
+    def _predict_deterministically(model: Any, values: np.ndarray) -> np.ndarray:
+        """Aggregate forest predictions on one thread without mutating the artifact."""
+
+        predictor = copy(model)
+        if hasattr(predictor, "n_jobs"):
+            predictor.n_jobs = 1
+        return np.asarray(predictor.predict(values), dtype=float)
+
     def _fit(
         self, train_batch: SeriesBatch, metadata: Mapping[str, Any]
     ) -> MissForestArtifact:
@@ -193,8 +204,9 @@ class MissForestImputer(BaseImputer):
                 model = self._new_model(feature)
                 model.fit(filled[observed_rows][:, predictors], values[observed_rows, feature])
                 if missing_rows.any():
-                    filled[missing_rows, feature] = model.predict(
-                        filled[missing_rows][:, predictors]
+                    filled[missing_rows, feature] = self._predict_deterministically(
+                        model,
+                        filled[missing_rows][:, predictors],
                     )
                 iteration_models[feature] = model
             denominator = max(float(np.sum(filled * filled)), 1e-12)
@@ -231,7 +243,10 @@ class MissForestImputer(BaseImputer):
                 if not rows.any() or model is None:
                     continue
                 predictors = [index for index in range(values.shape[1]) if index != feature]
-                filled[rows, feature] = model.predict(filled[rows][:, predictors])
+                filled[rows, feature] = self._predict_deterministically(
+                    model,
+                    filled[rows][:, predictors],
+                )
             denominator = max(float(np.sum(filled * filled)), 1e-12)
             delta = float(np.sum((filled - previous) ** 2) / denominator)
             if delta >= previous_delta or delta <= 1e-7:

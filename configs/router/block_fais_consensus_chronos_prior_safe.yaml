@@ -1,0 +1,43 @@
+schema_version: 1
+shortlist_size: 6
+forced_candidates: [locf, linear_interp]
+pseudo_blocks: 8
+beam_width: 32
+beta: 1.0
+cost_weight: 0.0
+beta_grid: [0.0, 0.25, 0.5, 1.0]
+cost_weight_grid: [0.0, 0.01, 0.05, 0.1]
+prior_model: lightgbm_lambdarank
+unary_model: lightgbm_lambdarank
+pairwise_model: lightgbm_huber
+ranker_target: full_candidate_loss
+evidence_tuning_family: ett
+evidence_blend:
+  chronos2: {r0: 0.0, r1: 0.1, proxy: 0.2, global_prior: 0.7}
+  timesfm2p5: {r0: 0.1, r1: 0.1, proxy: 0.3, global_prior: 0.5}
+candidate_prior_min_support: 4
+candidate_switch_penalty: 0.0
+forecast_consensus:
+  mode: medoid
+  candidates: [locf, linear_interp, seasonal_lag, kalman_ar]
+  dataset_prior_candidates: 0
+  dataset_prior_candidates_by_model:
+    chronos2: 2
+    timesfm2p5: 0
+  prior_weight: 0.0
+  prior_weight_by_model:
+    chronos2: 0.0
+    timesfm2p5: 0.8
+  prior_override_max_medoid_penalty_by_model:
+    chronos2: 0.8
+  prior_override_min_margin_by_model:
+    chronos2: 0.005
+  selection_granularity: episode
+  selection_granularity_by_model:
+    chronos2: episode
+    timesfm2p5: episode
+  context_mode: targets_with_correlates
+  max_context_variates: 8
+fallback:
+  internal: [linear_interp, locf, train_median]
+  tail: [locf, train_median]

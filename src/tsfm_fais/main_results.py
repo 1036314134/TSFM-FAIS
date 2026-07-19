@@ -147,6 +147,7 @@ def _resolve_source(
             "horizon",
             "target_indices",
             "forecast_num_samples",
+            "forecast_batch_size",
             "seed",
             "mask_protocol",
         )

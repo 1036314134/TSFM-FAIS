@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
-from typing import Any, Iterable, Iterator
+from typing import Any
 
 from tsfm_fais.contracts import ImputerSpec
 
@@ -32,6 +33,7 @@ def _spec(
     stochastic: bool = False,
     device: str = "cpu",
     cost_tier: int = 1,
+    max_fit_variates: int | None = None,
     optional_extra: str | None = None,
     dependencies: tuple[str, ...] = ("numpy",),
     default_params: dict[str, Any] | None = None,
@@ -48,6 +50,7 @@ def _spec(
         stochastic=stochastic,
         device=device,  # type: ignore[arg-type]
         cost_tier=cost_tier,
+        max_fit_variates=max_fit_variates,
         optional_extra=optional_extra,
         dependencies=dependencies,
         default_params=default_params or {},
@@ -127,6 +130,7 @@ IMPUTER_SPECS: tuple[ImputerSpec, ...] = (
         fit_scope="dataset",
         cost_tier=2,
         stochastic=True,
+        max_fit_variates=128,
         dependencies=("numpy", "sklearn"),
         default_params={"max_iter": 10, "random_state": 0},
     ),
@@ -138,6 +142,7 @@ IMPUTER_SPECS: tuple[ImputerSpec, ...] = (
         fit_scope="dataset",
         cost_tier=3,
         stochastic=True,
+        max_fit_variates=40,
         dependencies=("numpy", "sklearn"),
         default_params={"n_estimators": 100, "max_iter": 10, "random_state": 0},
     ),
@@ -213,6 +218,7 @@ IMPUTER_SPECS: tuple[ImputerSpec, ...] = (
         cost_tier=5,
         stochastic=True,
         device="any",
+        max_fit_variates=128,
         optional_extra="deep-imputers",
         dependencies=("pypots", "torch"),
         default_params={"epochs": 10, "batch_size": 32, "num_samples": 20},
@@ -239,6 +245,7 @@ IMPUTER_SPECS: tuple[ImputerSpec, ...] = (
         cost_tier=4,
         stochastic=True,
         device="any",
+        max_fit_variates=128,
         optional_extra="deep-imputers",
         dependencies=("pypots", "torch"),
         default_params={"epochs": 10, "batch_size": 32},
