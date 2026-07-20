@@ -306,8 +306,32 @@ class ForecastConsensusConfig(_StrictModel):
         return self
 
 
+def _validate_selector_param_value(value: Any, path: str) -> None:
+    """Keep serialized selector parameters deterministic and JSON-compatible."""
+
+    if value is None or isinstance(value, (bool, int, str)):
+        return
+    if isinstance(value, float):
+        if not np.isfinite(value):
+            raise ValueError(f"{path} must be finite")
+        return
+    if isinstance(value, (list, tuple)):
+        for index, entry in enumerate(value):
+            _validate_selector_param_value(entry, f"{path}[{index}]")
+        return
+    if isinstance(value, dict):
+        for key, entry in value.items():
+            if not isinstance(key, str) or not key.strip():
+                raise ValueError(f"{path} keys must be non-empty strings")
+            _validate_selector_param_value(entry, f"{path}.{key}")
+        return
+    raise ValueError(f"{path} must be JSON-compatible")
+
+
 class RouterConfig(_StrictModel):
     schema_version: Literal[1] = 1
+    selector_methods: tuple[str, ...] = ("block_fais",)
+    selector_params: dict[str, dict[str, Any]] = Field(default_factory=dict)
     shortlist_size: int = Field(ge=1)
     forced_candidates: tuple[str, ...]
     pseudo_blocks: int = Field(ge=1, le=8)
@@ -319,7 +343,11 @@ class RouterConfig(_StrictModel):
     prior_model: Literal["lightgbm_lambdarank"]
     unary_model: Literal["lightgbm_lambdarank"]
     pairwise_model: Literal["lightgbm_huber"]
-    ranker_target: Literal["full_candidate_loss", "routing_target"] = "full_candidate_loss"
+    ranker_target: Literal[
+        "forecast_loss",
+        "full_candidate_loss",
+        "routing_target",
+    ] = "full_candidate_loss"
     evidence_tuning_family: str | None = None
     evidence_blend: dict[str, EvidenceBlendWeights] = Field(default_factory=dict)
     candidate_prior_min_support: int = Field(default=4, ge=1)
@@ -330,6 +358,45 @@ class RouterConfig(_StrictModel):
 
     @model_validator(mode="after")
     def validate_values(self) -> RouterConfig:
+        from tsfm_fais.routing.baselines import (
+            BASELINE_SELECTOR_METHODS,
+            BASELINE_SELECTOR_PARAM_NAMES,
+        )
+
+        supported_selectors = {"block_fais", *BASELINE_SELECTOR_METHODS}
+        if not self.selector_methods or len(set(self.selector_methods)) != len(
+            self.selector_methods
+        ):
+            raise ValueError("selector_methods must be non-empty and unique")
+        unknown_selectors = set(self.selector_methods).difference(supported_selectors)
+        if unknown_selectors:
+            raise ValueError(
+                "unsupported selector methods: " + ", ".join(sorted(unknown_selectors))
+            )
+        unknown_param_methods = set(self.selector_params).difference(supported_selectors)
+        if unknown_param_methods:
+            raise ValueError(
+                "selector_params contains unsupported methods: "
+                + ", ".join(sorted(unknown_param_methods))
+            )
+        unselected_param_methods = set(self.selector_params).difference(self.selector_methods)
+        if unselected_param_methods:
+            raise ValueError(
+                "selector_params contains unselected methods: "
+                + ", ".join(sorted(unselected_param_methods))
+            )
+        for method, params in self.selector_params.items():
+            allowed_params = BASELINE_SELECTOR_PARAM_NAMES.get(method, frozenset())
+            unknown_params = set(params).difference(allowed_params)
+            if unknown_params:
+                raise ValueError(
+                    f"selector_params.{method} contains unsupported parameters: "
+                    + ", ".join(sorted(unknown_params))
+                )
+            for name, value in params.items():
+                if not name.strip():
+                    raise ValueError(f"selector_params.{method} contains an empty key")
+                _validate_selector_param_value(value, f"selector_params.{method}.{name}")
         for name, values in (
             ("forced_candidates", self.forced_candidates),
             ("beta_grid", self.beta_grid),

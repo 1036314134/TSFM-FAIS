@@ -34,6 +34,7 @@ deep-imputers = [
   "pypots>=1.5,<1.6",
   "torch>=2.3,<3",
 ]
+selector-baselines = ["torch>=2.3,<3"]
 forecast-chronos = ["chronos-forecasting>=2.1,<3"]
 forecast-timesfm = ["timesfm>=2.0"]
 forecast-tirex = ["tirex-ts>=1.4,<2"]

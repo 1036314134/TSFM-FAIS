@@ -652,6 +652,28 @@ def _feature_matrix(rows: list[dict[str, float]], feature_names: tuple[str, ...]
     return np.asarray([[row.get(name, 0.0) for name in feature_names] for row in rows], dtype=float)
 
 
+def _predict_router_scores(
+    model: Any,
+    features: np.ndarray,
+    *,
+    keys: Sequence[tuple[str, str]],
+    seed: int,
+) -> np.ndarray:
+    """Score candidate rows while preserving the legacy ranker interface."""
+
+    matrix = np.asarray(features, dtype=float)
+    contextual_predict = getattr(model, "predict_with_context", None)
+    if callable(contextual_predict):
+        predictions = contextual_predict(
+            matrix,
+            keys=tuple(keys),
+            seed=int(seed),
+        )
+    else:
+        predictions = model.predict(matrix)
+    return np.asarray(predictions, dtype=float)
+
+
 def _nonnegative_mapping_value(values: object, key: str) -> float:
     if not isinstance(values, Mapping):
         return 0.0
@@ -1093,6 +1115,20 @@ class BlockwiseFAIS:
     ) -> None:
         self.config = config
         self.router = router
+        raw_requires_pseudo = (
+            False
+            if router is None
+            else router.metadata.get("requires_pseudo_candidates", True)
+        )
+        if not isinstance(raw_requires_pseudo, (bool, np.bool_)):
+            raise ValueError("requires_pseudo_candidates router metadata must be boolean")
+        self.requires_pseudo_candidates = bool(raw_requires_pseudo)
+        raw_selector_method = (
+            "b_fais" if router is None else router.metadata.get("selector_method", "b_fais")
+        )
+        if not isinstance(raw_selector_method, str) or not raw_selector_method.strip():
+            raise ValueError("selector_method router metadata must be a non-empty string")
+        self.selector_method = raw_selector_method.strip()
         self.imputer_registry = imputer_registry or DEFAULT_REGISTRY
         self.candidate_runner = CandidateRunner(self.imputer_registry)
         self._artifacts_supplied = imputer_artifacts is not None
@@ -1983,6 +2019,7 @@ class BlockwiseFAIS:
         candidates: tuple[str, ...],
         forecast_spec: ForecastSpec,
         period: int | None,
+        seed: int,
     ) -> dict[tuple[str, str], float]:
         unary: dict[tuple[str, str], float] = {}
         for block in blocks:
@@ -2018,7 +2055,12 @@ class BlockwiseFAIS:
                     )
                 )
                 keys.append((block.block_id, candidate_id))
-        predictions = self.router.prior.predict(_feature_matrix(rows, self.router.feature_names))
+        predictions = _predict_router_scores(
+            self.router.prior,
+            _feature_matrix(rows, self.router.feature_names),
+            keys=keys,
+            seed=seed,
+        )
         risks = _ranker_risks(
             keys,
             predictions,
@@ -2126,6 +2168,7 @@ class BlockwiseFAIS:
         forecast_spec: ForecastSpec,
         period: int | None,
         fallback: Mapping[tuple[str, str], float],
+        seed: int = 20260710,
     ) -> tuple[dict[tuple[str, str], float], dict[tuple[str, str], float]]:
         if self.router is None:
             return (
@@ -2178,7 +2221,12 @@ class BlockwiseFAIS:
                     )
                 )
                 keys.append((block.block_id, candidate_id))
-        predictions = self.router.unary.predict(_feature_matrix(rows, self.router.feature_names))
+        predictions = _predict_router_scores(
+            self.router.unary,
+            _feature_matrix(rows, self.router.feature_names),
+            keys=keys,
+            seed=seed,
+        )
         r1_risks = _ranker_risks(
             keys,
             predictions,
@@ -2821,7 +2869,14 @@ class BlockwiseFAIS:
         for spec in self.imputer_registry.specs():
             if not np.isfinite(costs[spec.imputer_id]) or costs[spec.imputer_id] < 0:
                 costs[spec.imputer_id] = float(spec.cost_tier)
-        prior_unary = self._heuristic_unary(batch, blocks, candidate_ids, forecast_spec, period)
+        prior_unary = self._heuristic_unary(
+            batch,
+            blocks,
+            candidate_ids,
+            forecast_spec,
+            period,
+            seed,
+        )
         reliable_priors = self._reliable_candidate_global_priors(
             forecast_spec,
             candidate_ids,
@@ -2869,7 +2924,7 @@ class BlockwiseFAIS:
         )
         pseudo_batch = (
             None
-            if self.router is None
+            if self.router is None or not self.requires_pseudo_candidates
             else self._pseudo_batch(
                 batch,
                 seed,
@@ -2971,7 +3026,16 @@ class BlockwiseFAIS:
         if plan.is_noop:
             return FAISResult(
                 values=batch.values[0].copy(),
-                routing=RoutingResult({}, (), 0.0),
+                routing=RoutingResult(
+                    {},
+                    (),
+                    0.0,
+                    metadata={
+                        "selector_method": self.selector_method,
+                        "requires_pseudo_candidates": self.requires_pseudo_candidates,
+                        "solver": "noop",
+                    },
+                ),
                 candidates={},
                 observed_mask=mask,
             )
@@ -2999,7 +3063,7 @@ class BlockwiseFAIS:
                 )
             result.validate_against(batch)
 
-        if self.router is None:
+        if self.router is None or not self.requires_pseudo_candidates:
             unary = {
                 key: value for key, value in plan.prior_unary.items() if key[1] in plan.shortlist
             }
@@ -3041,6 +3105,7 @@ class BlockwiseFAIS:
                 plan.forecast_spec,
                 plan.period,
                 plan.prior_unary,
+                seed=plan.seed,
             )
         pairwise_skipped_for_scale = len(plan.blocks) > self.max_pairwise_blocks
         pairwise = (
@@ -3639,6 +3704,8 @@ class BlockwiseFAIS:
         routing.metadata["ensemble_block_weights"] = ensemble_block_weights
         routing.metadata["candidate_anchor_block_assignments"] = dict(anchor_block_assignments)
         routing.metadata["artifact_load_failures"] = dict(plan.artifact_load_failures)
+        routing.metadata["selector_method"] = self.selector_method
+        routing.metadata["requires_pseudo_candidates"] = self.requires_pseudo_candidates
         routing.shortlist = plan.shortlist
         routing.activated_candidates = tuple(
             sorted(
@@ -3712,9 +3779,7 @@ class BlockwiseFAIS:
             budget=plan.budget,
         )
         pseudo_candidates: dict[str, CandidateResult] = {}
-        if self.router is not None:
-            if plan.pseudo_batch is None:  # pragma: no cover - prepare invariant
-                raise RuntimeError("router route plan has no pseudo batch")
+        if plan.pseudo_batch is not None:
             pseudo_candidates = self.candidate_runner.run_many(
                 plan.shortlist,
                 plan.pseudo_batch,

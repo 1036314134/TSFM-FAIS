@@ -191,6 +191,62 @@ def _episode_key(row: Mapping[str, Any]) -> EpisodeKey:
     )
 
 
+_SHARED_METHOD_ROLES = frozenset({"reference", "baseline", "missing_anchor", "oracle"})
+_SHARED_ROW_FIELDS = (
+    "schema_version",
+    "episode_id",
+    "dataset_id",
+    "family_id",
+    "forecaster_id",
+    "routing_forecaster_id",
+    "mechanism",
+    "missing_rate",
+    "item_id",
+    "forecast_origin",
+    "seed",
+    "mask_protocol",
+    "mask_seed",
+    "mask_realization_id",
+    "target_missing_rate",
+    "global_missing_rate",
+    "local_missing_rate",
+    "contains_missing",
+    "mase_scale_lag",
+    "method",
+    "method_role",
+    "oracle_source",
+    "oracle_eligible",
+    "native_valid",
+    "metric_eligible",
+    "ineligibility_reason",
+    "candidate_status",
+    "mase",
+    "mae",
+    "rmse",
+    "imputation_mae",
+    "imputation_rmse",
+    "degradation_vs_clean_mase",
+    "relative_degradation_vs_clean",
+    "regret_mase",
+    "relative_regret",
+    "runtime_seconds",
+    "rss_delta_bytes",
+    "runtime_scope",
+    "forecast_seed",
+)
+
+
+def _shared_row_conflicts(
+    existing: Mapping[str, Any],
+    incoming: Mapping[str, Any],
+) -> tuple[str, ...]:
+    return tuple(
+        field
+        for field in _SHARED_ROW_FIELDS
+        if existing.get(field) != incoming.get(field)
+    )
+
+
 def _read_sources(
     inputs: Sequence[str | Path],
 ) -> tuple[
@@ -245,6 +301,7 @@ def _read_sources(
     ):
         row_count = 0
         source_forecasters: set[str] = set()
+        source_episode_methods: set[tuple[EpisodeKey, str]] = set()
         with metrics_path.open("r", encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
                 if not line.strip():
@@ -285,19 +342,36 @@ def _read_sources(
                         f"method {method!r} has conflicting roles: "
                         f"{previous_role!r} and {role!r}"
                     )
-                episode_rows = episodes.setdefault(key, {})
-                if method in episode_rows:
+                source_identity = (key, method)
+                if source_identity in source_episode_methods:
                     raise ValueError(
                         "duplicate forecaster/episode/method row: "
                         f"{key[0]}/{key[2]}/{method}"
                     )
-                episode_rows[method] = row
+                source_episode_methods.add(source_identity)
                 current_metadata = {field: row.get(field) for field in metadata_fields}
                 if key in metadata and metadata[key] != current_metadata:
                     raise ValueError(
                         f"inconsistent metadata within episode {key[0]}/{key[2]}"
                     )
                 metadata[key] = current_metadata
+                episode_rows = episodes.setdefault(key, {})
+                if method in episode_rows:
+                    existing = episode_rows[method]
+                    if role not in _SHARED_METHOD_ROLES:
+                        raise ValueError(
+                            "duplicate forecaster/episode/method row: "
+                            f"{key[0]}/{key[2]}/{method}"
+                        )
+                    conflicts = _shared_row_conflicts(existing, row)
+                    if conflicts:
+                        raise ValueError(
+                            "conflicting shared forecaster/episode/method row: "
+                            f"{key[0]}/{key[2]}/{method}; fields: "
+                            + ", ".join(conflicts)
+                        )
+                else:
+                    episode_rows[method] = row
                 row_count += 1
         if row_count == 0:
             raise ValueError(f"evaluation metrics file is empty: {metrics_path}")
@@ -376,13 +450,26 @@ def _group_prefix(
 
 
 def _method_order(method_roles: Mapping[str, str]) -> tuple[str, ...]:
+    selector_methods = sorted(
+        method
+        for method, role in method_roles.items()
+        if role == "selector_baseline"
+    )
     candidate_methods = sorted(
         method
         for method, role in method_roles.items()
         if role in {"baseline", "missing_anchor"}
         and method not in {"locf", "linear_interp"}
     )
-    ordered = ["b_fais", "clean", "locf", "linear_interp", *candidate_methods, "oracle"]
+    ordered = [
+        "b_fais",
+        *selector_methods,
+        "clean",
+        "locf",
+        "linear_interp",
+        *candidate_methods,
+        "oracle",
+    ]
     return tuple(method for method in ordered if method in method_roles)
 
 
@@ -415,7 +502,11 @@ def _episode_ranks(
         values: dict[str, float] = {}
         for method, row in rows.items():
             role = str(row["method_role"])
-            if method != "b_fais" and role not in {"baseline", "missing_anchor"}:
+            if method != "b_fais" and role not in {
+                "selector_baseline",
+                "baseline",
+                "missing_anchor",
+            }:
                 continue
             if _metric_eligible(row):
                 value = _finite_number(row.get("mase"))
@@ -987,9 +1078,9 @@ def _write_markdown(
         "- The 95% interval is a percentile paired bootstrap interval for the episode-level "
         f"mean delta ({bootstrap_replicates} resamples, seed {bootstrap_seed}). An interval "
         "is unavailable when fewer than two pairs exist.",
-        "- MASE average rank uses midranks among B-FAIS and all natively valid evaluated "
-        "single-imputer candidates in each episode. Clean and oracle are excluded from that "
-        "ranking universe.",
+        "- MASE average rank uses midranks among B-FAIS, selector baselines, and all "
+        "natively valid evaluated single-imputer candidates in each episode. Clean and "
+        "oracle are excluded from that ranking universe.",
         "- Oracle is the valid single imputer selected by minimum MASE in each episode. Its "
         "MAE and RMSE are copied from that MASE-selected method and are not metric-specific "
         "oracles. It is also not an imputation-error oracle.",
@@ -999,8 +1090,8 @@ def _write_markdown(
         "reweighted to give every model or data family equal mass.",
         "- Episode bootstrap intervals do not adjust for dependence among episodes that "
         "share an item, forecast origin, data family, or imputed context.",
-        "- Runtime is end-to-end imputation for B-FAIS and one imputer invocation for a "
-        "candidate, so the scopes differ.",
+        "- Runtime is end-to-end imputation for B-FAIS and selector baselines, and one "
+        "imputer invocation for a candidate, so the scopes differ.",
         f"- `{small_count}` comparison strata contain fewer than "
         f"{SMALL_SAMPLE_THRESHOLD} paired episodes and are marked as small samples.",
         "",
@@ -1318,6 +1409,11 @@ def summarize_multi_forecaster(
             for method, role in method_roles.items()
             if role in {"baseline", "missing_anchor"}
         ),
+        "evaluated_selector_ids": sorted(
+            method
+            for method, role in method_roles.items()
+            if role == "selector_baseline"
+        ),
         "scopes": [scope for scope, _ in SUMMARY_SCOPES],
         "bootstrap": {
             "unit": "forecaster/dataset/episode",
@@ -1346,8 +1442,8 @@ def summarize_multi_forecaster(
                 "an absent method counts as unavailable"
             ),
             "average_rank_mase": (
-                "episode midrank among B-FAIS and natively valid single-imputer "
-                "candidates; clean and oracle are excluded"
+                "episode midrank among B-FAIS, selector baselines, and natively valid "
+                "single-imputer candidates; clean and oracle are excluded"
             ),
             "oracle": (
                 "the valid single imputer with minimum MASE in each episode; its MAE "
@@ -1362,7 +1458,8 @@ def summarize_multi_forecaster(
             ),
             "regret_mase": "method MASE minus the per-episode MASE oracle",
             "runtime_seconds": (
-                "end-to-end imputation for B-FAIS and one invocation for a candidate"
+                "end-to-end imputation for B-FAIS and selector baselines, and one "
+                "invocation for a candidate"
             ),
             "small_sample": f"fewer than {SMALL_SAMPLE_THRESHOLD} valid episodes or pairs",
             "overall_weighting": (

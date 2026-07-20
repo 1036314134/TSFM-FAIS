@@ -72,6 +72,48 @@ def _evaluation(root: Path, forecaster_id: str, family_id: str) -> Path:
     return evaluation
 
 
+def _selector_evaluation(
+    root: Path,
+    source: Path,
+    method: str,
+    mase: float,
+) -> Path:
+    evaluation = root / method
+    evaluation.mkdir(parents=True)
+    source_rows = [
+        json.loads(line)
+        for line in (source / "episode_metrics.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+    ]
+    rows = [dict(row) for row in source_rows if row["method"] != "b_fais"]
+    for b_fais in (row for row in source_rows if row["method"] == "b_fais"):
+        selector = dict(b_fais)
+        selector.update(
+            {
+                "method": method,
+                "method_role": "selector_baseline",
+                "mase": mase,
+                "mae": 10.0 * mase,
+                "rmse": 100.0 * mase,
+                "imputation_mae": mase,
+                "imputation_rmse": 2.0 * mase,
+                "regret_mase": mase - 1.5,
+                "degradation_vs_clean_mase": mase - 1.0,
+                "runtime_seconds": 1.0,
+            }
+        )
+        rows.append(selector)
+    (evaluation / "episode_metrics.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+    (evaluation / "evaluation_manifest.json").write_text(
+        json.dumps({"schema_version": 1, "status": "completed"}) + "\n",
+        encoding="utf-8",
+    )
+    return evaluation
+
+
 def test_multi_forecaster_summary_is_paired_grouped_and_reproducible(
     tmp_path: Path,
 ) -> None:
@@ -196,6 +238,66 @@ def test_multi_forecaster_summary_rejects_duplicate_episode_method_rows(
     with pytest.raises(ValueError, match="duplicate forecaster/episode/method"):
         summarize_multi_forecaster(
             evaluation_inputs=(source, duplicate),
+            output_dir=tmp_path / "summary",
+            bootstrap_replicates=10,
+        )
+
+
+def test_selector_evaluations_merge_with_b_fais_and_enter_comparisons(
+    tmp_path: Path,
+) -> None:
+    b_fais = _evaluation(tmp_path, "forecast-a", "family-a")
+    metaod = _selector_evaluation(tmp_path, b_fais, "metaod", 2.5)
+    hybrid = _selector_evaluation(tmp_path, b_fais, "hybrid_lstm", 1.75)
+
+    result = summarize_multi_forecaster(
+        evaluation_inputs=(metaod, b_fais, hybrid),
+        output_dir=tmp_path / "summary",
+        bootstrap_replicates=10,
+        bootstrap_seed=7,
+    )
+    payload = json.loads(
+        Path(result["main_summary_json"]).read_text(encoding="utf-8")
+    )
+
+    assert payload["episode_count"] == 2
+    assert payload["evaluated_selector_ids"] == ["hybrid_lstm", "metaod"]
+    overall_methods = {
+        row["method"]: row
+        for row in payload["method_summary"]
+        if row["scope"] == "overall"
+    }
+    assert overall_methods["metaod"]["method_role"] == "selector_baseline"
+    assert overall_methods["metaod"]["recorded_count"] == 2
+    comparisons = {
+        row["comparator"]: row
+        for row in payload["comparison_summary"]
+        if row["scope"] == "overall"
+    }
+    assert comparisons["metaod"]["comparator_role"] == "selector_baseline"
+    assert comparisons["metaod"]["pair_count"] == 2
+    assert comparisons["metaod"]["mase_mean_delta"] == -0.5
+    assert comparisons["hybrid_lstm"]["mase_mean_delta"] == 0.25
+
+
+def test_selector_merge_rejects_conflicting_shared_rows(tmp_path: Path) -> None:
+    b_fais = _evaluation(tmp_path, "forecast-a", "family-a")
+    metaod = _selector_evaluation(tmp_path, b_fais, "metaod", 2.5)
+    metrics_path = metaod / "episode_metrics.jsonl"
+    rows = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines()]
+    conflicting = next(
+        row
+        for row in rows
+        if row["episode_id"] == "episode-0" and row["method"] == "locf"
+    )
+    conflicting["mase"] = float(conflicting["mase"]) + 0.1
+    metrics_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+
+    with pytest.raises(ValueError, match=r"conflicting shared .* fields: mase"):
+        summarize_multi_forecaster(
+            evaluation_inputs=(b_fais, metaod),
             output_dir=tmp_path / "summary",
             bootstrap_replicates=10,
         )

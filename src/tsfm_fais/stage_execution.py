@@ -12,7 +12,7 @@ import hashlib
 import json
 import os
 from collections import Counter, OrderedDict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from dataclasses import field as dataclass_field
 from functools import partial
@@ -76,7 +76,7 @@ from tsfm_fais.routing.features import (
     pair_features,
     proxy_features,
 )
-from tsfm_fais.routing.models import RouterBundle, RouterTrainer
+from tsfm_fais.routing.models import PairwiseRiskModel, RouterBundle, RouterTrainer
 from tsfm_fais.routing.teacher import (
     CoherenceAdjustedTarget,
     TeacherBuilder,
@@ -3653,7 +3653,7 @@ def _augment_label_context_features(
 
 
 def _router_ranker_targets(
-    rows: list[Mapping[str, Any]],
+    rows: Sequence[Mapping[str, Any]],
     target_field: str = "auto",
 ) -> tuple[np.ndarray, str]:
     """Resolve an explicit ranker label field, with ``auto`` for legacy callers."""
@@ -3661,7 +3661,12 @@ def _router_ranker_targets(
     has_routing_target = tuple("routing_target" in row for row in rows)
     if any(has_routing_target) and not all(has_routing_target):
         raise ValueError("router labels mix incompatible routing target protocols")
-    if target_field not in {"auto", "routing_target", "full_candidate_loss"}:
+    if target_field not in {
+        "auto",
+        "forecast_loss",
+        "routing_target",
+        "full_candidate_loss",
+    }:
         raise ValueError(f"unknown router ranker target {target_field!r}")
     field = (
         ("routing_target" if all(has_routing_target) else "full_candidate_loss")
@@ -3670,11 +3675,11 @@ def _router_ranker_targets(
     )
     if field == "routing_target" and not all(has_routing_target):
         raise ValueError("router labels lack the configured routing_target field")
-    protocol = (
-        "coherence_adjusted_marginal_v1"
-        if field == "routing_target"
-        else "full_candidate_forecast_loss_v2"
-    )
+    protocol = {
+        "forecast_loss": "single_block_counterfactual_forecast_loss_v1",
+        "routing_target": "coherence_adjusted_marginal_v1",
+        "full_candidate_loss": "full_candidate_forecast_loss_v2",
+    }[field]
     try:
         targets = np.asarray([float(row[field]) for row in rows], dtype=float)
     except (KeyError, TypeError, ValueError) as error:
@@ -3689,18 +3694,41 @@ def _fit_router_bundle(
     pair_rows: list[dict[str, Any]],
     output: Path,
     metadata: Mapping[str, Any],
+    *,
+    selector_method: str = "block_fais",
+    selector_params: Mapping[str, Any] | None = None,
+    seed: int = 20260710,
 ) -> RouterBundle:
-    if not rows or not pair_rows:
-        raise ValueError("router fitting requires non-empty unary and pair rows")
+    from tsfm_fais.routing.baselines import (
+        BASELINE_SELECTOR_METHODS,
+        fit_baseline_selector,
+    )
+
+    supported_methods = {"block_fais", *BASELINE_SELECTOR_METHODS}
+    if selector_method not in supported_methods:
+        raise ValueError(f"unsupported selector method {selector_method!r}")
+    if not rows:
+        raise ValueError("router fitting requires non-empty unary rows")
+    if selector_method == "block_fais" and not pair_rows:
+        raise ValueError("block_fais fitting requires non-empty pair rows")
+    selector_params = dict(selector_params or {})
     rows = _augment_label_context_features(rows)
     source_unary_rows = len(rows)
+    ranker_target = str(metadata.get("ranker_target", "full_candidate_loss"))
+    eligible_target = (
+        "routing_target"
+        if ranker_target == "auto" and all("routing_target" in row for row in rows)
+        else "full_candidate_loss"
+        if ranker_target == "auto"
+        else ranker_target
+    )
     forecast_eligible_rows: list[dict[str, Any]] = []
     for row in rows:
         try:
-            full_candidate_loss = float(row["full_candidate_loss"])
+            target = float(row[eligible_target])
         except (KeyError, TypeError, ValueError):
             continue
-        if not np.isfinite(full_candidate_loss):
+        if not np.isfinite(target):
             continue
         forecast_eligible_rows.append(row)
     grouped: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
@@ -3711,7 +3739,7 @@ def _fit_router_bundle(
     )
     ordered_rows = [row for group in grouped.values() for row in group]
     if not ordered_rows:
-        raise ValueError("router fitting has no valid full-candidate ranking groups")
+        raise ValueError(f"router fitting has no valid {eligible_target} ranking groups")
     candidates = tuple(sorted({str(row["candidate_id"]) for row in ordered_rows}))
     runtime_samples: dict[str, list[float]] = {candidate_id: [] for candidate_id in candidates}
     memory_samples: dict[str, list[float]] = {candidate_id: [] for candidate_id in candidates}
@@ -3738,23 +3766,42 @@ def _fit_router_bundle(
         unary_features["runtime_seconds"] = candidate_runtime_seconds[candidate_id]
         unary_features["peak_memory_mb"] = candidate_peak_memory_mb[candidate_id]
         stabilized_rows.append({**row, "unary_features": unary_features})
+    feature_field = "unary_features" if selector_method == "block_fais" else "prior_features"
     feature_names = tuple(
-        sorted(set().union(*(set(row["unary_features"]) for row in stabilized_rows)))
+        sorted(set().union(*(set(row[feature_field]) for row in stabilized_rows)))
     )
     prior = _matrix(stabilized_rows, "prior_features", feature_names)
-    unary = _matrix(stabilized_rows, "unary_features", feature_names)
-    if not all("full_candidate_loss" in row for row in ordered_rows):
+    unary = (
+        _matrix(stabilized_rows, "unary_features", feature_names)
+        if selector_method == "block_fais"
+        else prior
+    )
+    if selector_method == "block_fais" and not all(
+        "full_candidate_loss" in row for row in ordered_rows
+    ):
         raise ValueError("forecast-aware router fitting requires full_candidate_loss labels")
     labels, ranker_target_protocol = _router_ranker_targets(
         ordered_rows,
-        str(metadata.get("ranker_target", "full_candidate_loss")),
+        ranker_target,
     )
     routing_target_protocol = ranker_target_protocol
     groups = tuple(len(group) for group in grouped.values())
 
-    pair_feature_names = tuple(sorted(set().union(*(set(row["features"]) for row in pair_rows))))
-    pair_matrix = _matrix(pair_rows, "features", pair_feature_names)
-    pair_labels = np.asarray([row["interaction"] for row in pair_rows], dtype=float)
+    pair_feature_names = (
+        tuple(sorted(set().union(*(set(row["features"]) for row in pair_rows))))
+        if selector_method == "block_fais"
+        else ()
+    )
+    pair_matrix = (
+        _matrix(pair_rows, "features", pair_feature_names)
+        if selector_method == "block_fais"
+        else np.empty((0, 0), dtype=float)
+    )
+    pair_labels = (
+        np.asarray([row["interaction"] for row in pair_rows], dtype=float)
+        if selector_method == "block_fais"
+        else np.empty(0, dtype=float)
+    )
     runtime_floor = min(
         (max(value, 1e-6) for value in candidate_runtime_seconds.values()),
         default=1e-6,
@@ -3789,17 +3836,65 @@ def _fit_router_bundle(
     # only the two configured safety candidates as unconditional entries.
     shortlist_anchor_candidates: tuple[str, ...] = ()
     candidate_anchor_calibrations: dict[str, Any] = {}
-    bundle = RouterTrainer().fit(
-        prior,
-        unary,
-        labels,
-        groups,
-        pair_matrix,
-        pair_labels,
-        feature_names,
-        candidates,
-        pair_feature_names,
+    if selector_method == "block_fais":
+        bundle = RouterTrainer().fit(
+            prior,
+            unary,
+            labels,
+            groups,
+            pair_matrix,
+            pair_labels,
+            feature_names,
+            candidates,
+            pair_feature_names,
+        )
+    else:
+        selector_model = fit_baseline_selector(
+            method=selector_method,
+            features=prior,
+            losses=labels,
+            groups=groups,
+            feature_names=feature_names,
+            candidate_ids=candidates,
+            rows=stabilized_rows,
+            params=selector_params,
+            seed=seed,
+        )
+        centered_losses = np.abs(labels - np.median(labels))
+        risk_scale = max(float(np.quantile(centered_losses, 0.75)), 1e-6)
+        bundle = RouterBundle(
+            prior=selector_model,
+            unary=selector_model,
+            pairwise=PairwiseRiskModel(),
+            feature_names=feature_names,
+            candidate_ids=candidates,
+            pair_feature_names=(),
+            categorical_maps={
+                "candidate_id": {
+                    candidate_id: index
+                    for index, candidate_id in enumerate(candidates)
+                }
+            },
+            metadata={
+                "unary_risk_scale": risk_scale,
+                "pair_risk_scale": 1.0,
+            },
+        )
+    candidate_support = dict(
+        sorted(Counter(str(row["candidate_id"]) for row in ordered_rows).items())
     )
+    effective_metadata = dict(metadata)
+    if selector_method != "block_fais":
+        effective_metadata.update(
+            {
+                "beta": 0.0,
+                "cost_weight": 0.0,
+                "candidate_switch_penalty": 0.0,
+                "evidence_blend": {},
+                "forecast_consensus": {"mode": "disabled", "candidates": []},
+                "requires_pseudo_candidates": False,
+            }
+        )
     bundle.metadata.update(
         {
             "created_at": utc_now(),
@@ -3807,7 +3902,8 @@ def _fit_router_bundle(
             "unary_rows": len(ordered_rows),
             "source_unary_rows": source_unary_rows,
             "excluded_unary_rows": source_unary_rows - len(ordered_rows),
-            "pair_rows": len(pair_rows),
+            "pair_rows": len(pair_rows) if selector_method == "block_fais" else 0,
+            "source_pair_rows": len(pair_rows),
             "candidate_runtime_seconds": candidate_runtime_seconds,
             "candidate_peak_memory_mb": candidate_peak_memory_mb,
             "candidate_operational_feature_protocol": "training_median_v1",
@@ -3842,7 +3938,17 @@ def _fit_router_bundle(
             "candidate_switch_penalty": 0.0,
             "proxy_outlier_protocol": "within_shortlist_robust_mae_v1",
             "proxy_outlier_multiplier": 5.0,
-            **dict(metadata),
+            "selector_method": "b_fais" if selector_method == "block_fais" else selector_method,
+            "selector_implementation": selector_method,
+            "selector_params": selector_params,
+            "selector_seed": int(seed),
+            "selector_feature_source": feature_field,
+            "selector_training_target": eligible_target,
+            "selector_training_rows": len(ordered_rows),
+            "selector_training_groups": len(groups),
+            "selector_candidate_support": candidate_support,
+            "requires_pseudo_candidates": selector_method == "block_fais",
+            **effective_metadata,
         }
     )
     bundle.save(output)
@@ -3949,10 +4055,15 @@ def execute_train_router(
     rows = _read_jsonl(inputs.labels_artifact)
     if not rows:
         raise ValueError("teacher label file is empty")
+    from tsfm_fais.config import load_yaml
+    from tsfm_fais.registry_configs import RouterConfig
+
+    router_config = RouterConfig.model_validate(load_yaml(config.registries.router_config))
+    selector_methods = router_config.selector_methods
     pair_path = inputs.labels_artifact.with_name("pair_labels.jsonl")
-    pair_rows = _read_jsonl(pair_path)
-    if not pair_rows:
-        raise ValueError("pair label file is empty")
+    pair_rows = _read_jsonl(pair_path) if pair_path.is_file() else []
+    if "block_fais" in selector_methods and not pair_rows:
+        raise ValueError("block_fais training requires a non-empty pair label file")
 
     lineage: dict[str, Any] = dict(label_protocol)
     labels_manifest = inputs.labels_artifact.with_name("labels_manifest.json")
@@ -3964,10 +4075,6 @@ def execute_train_router(
         forecasters = label_metadata.get("forecasters")
         if isinstance(forecasters, list):
             lineage["teacher_forecasters"] = list(map(str, forecasters))
-    from tsfm_fais.config import load_yaml
-    from tsfm_fais.registry_configs import RouterConfig
-
-    router_config = RouterConfig.model_validate(load_yaml(config.registries.router_config))
     lineage.update(
         {
             "beta": router_config.beta,
@@ -3990,45 +4097,145 @@ def execute_train_router(
         }
     )
 
+    def method_params(method: str) -> dict[str, Any]:
+        return dict(router_config.selector_params.get(method, {}))
+
+    def method_seed(method: str) -> int:
+        return int(stable_seed(config.seed, "selector", method))
+
+    def fit_method(
+        method: str,
+        training_rows: list[dict[str, Any]],
+        training_pairs: list[dict[str, Any]],
+        output: Path,
+        method_metadata: Mapping[str, Any],
+    ) -> RouterBundle:
+        return _fit_router_bundle(
+            training_rows,
+            training_pairs,
+            output,
+            method_metadata,
+            selector_method=method,
+            selector_params=method_params(method),
+            seed=method_seed(method),
+        )
+
     split = config.experiment.split
+    legacy_single = selector_methods == ("block_fais",)
     if split == "rolling_origin":
-        output = preparation.store.root / "router"
-        _fit_router_bundle(rows, pair_rows, output, {"split": split, **lineage})
-        return {"router_artifact": str(output), "split": split}
+        if legacy_single:
+            output = preparation.store.root / "router"
+            fit_method("block_fais", rows, pair_rows, output, {"split": split, **lineage})
+            return {"router_artifact": str(output), "split": split}
+
+        suite_root = preparation.store.root / "routers"
+        artifacts: dict[str, str] = {}
+        suite_entries: dict[str, dict[str, Any]] = {}
+        for method in selector_methods:
+            output = suite_root / method
+            fit_method(method, rows, pair_rows, output, {"split": split, **lineage})
+            artifacts[method] = str(output)
+            suite_entries[method] = {
+                "path": method,
+                "selector_method": "b_fais" if method == "block_fais" else method,
+                "selector_seed": method_seed(method),
+                "selector_params": method_params(method),
+            }
+        suite_manifest = _write_json(
+            suite_root / "suite_manifest.json",
+            {
+                "schema_version": 1,
+                "artifact_type": "selector_router_suite",
+                "split": split,
+                "selector_methods": list(selector_methods),
+                "routers": suite_entries,
+            },
+        )
+        return {
+            "router_artifacts": artifacts,
+            "suite_manifest": str(suite_manifest),
+            "selector_methods": list(selector_methods),
+            "split": split,
+        }
 
     field = "family_id" if split == "leave_family_out" else "forecaster_id"
     held_out_values = tuple(sorted({str(row[field]) for row in rows}))
     if len(held_out_values) < 2:
         raise ValueError(f"{split} requires labels from at least two distinct {field} values")
     root = preparation.store.root / "router_folds"
-    folds: dict[str, str] = {}
-    fold_index: dict[str, str] = {}
-    for held_out in held_out_values:
-        training_rows = [row for row in rows if str(row[field]) != held_out]
-        training_pairs = [row for row in pair_rows if str(row[field]) != held_out]
-        safe_name = "".join(
-            character if character.isalnum() or character in "._-" else "_"
-            for character in held_out
-        )
-        output = root / safe_name
-        _fit_router_bundle(
-            training_rows,
-            training_pairs,
-            output,
+
+    def fit_folds(method: str, method_root: Path) -> tuple[dict[str, str], Path]:
+        folds: dict[str, str] = {}
+        fold_index: dict[str, str] = {}
+        for held_out in held_out_values:
+            training_rows = [row for row in rows if str(row[field]) != held_out]
+            training_pairs = [row for row in pair_rows if str(row[field]) != held_out]
+            safe_name = "".join(
+                character if character.isalnum() or character in "._-" else "_"
+                for character in held_out
+            )
+            output = method_root / safe_name
+            fit_method(
+                method,
+                training_rows,
+                training_pairs,
+                output,
+                {
+                    "split": split,
+                    "held_out": held_out,
+                    "held_out_field": field,
+                    **lineage,
+                },
+            )
+            folds[held_out] = str(output)
+            fold_index[held_out] = safe_name
+        manifest = _write_json(
+            method_root / "folds.json",
             {
+                "schema_version": 1,
                 "split": split,
-                "held_out": held_out,
-                "held_out_field": field,
-                **lineage,
+                "selector_method": "b_fais" if method == "block_fais" else method,
+                "folds": fold_index,
             },
         )
-        folds[held_out] = str(output)
-        fold_index[held_out] = safe_name
-    manifest = _write_json(
-        root / "folds.json",
-        {"schema_version": 1, "split": split, "folds": fold_index},
+        return folds, manifest
+
+    if legacy_single:
+        folds, manifest = fit_folds("block_fais", root)
+        return {"router_folds": folds, "manifest": str(manifest), "split": split}
+
+    suite_folds: dict[str, dict[str, str]] = {}
+    suite_manifests: dict[str, str] = {}
+    fold_suite_entries: dict[str, dict[str, Any]] = {}
+    for method in selector_methods:
+        method_root = root / method
+        folds, manifest = fit_folds(method, method_root)
+        suite_folds[method] = folds
+        suite_manifests[method] = str(manifest)
+        fold_suite_entries[method] = {
+            "path": method,
+            "fold_manifest": str(manifest.relative_to(root)),
+            "selector_method": "b_fais" if method == "block_fais" else method,
+            "selector_seed": method_seed(method),
+            "selector_params": method_params(method),
+        }
+    suite_manifest = _write_json(
+        root / "suite_manifest.json",
+        {
+            "schema_version": 1,
+            "artifact_type": "selector_router_suite",
+            "split": split,
+            "selector_methods": list(selector_methods),
+            "routers": fold_suite_entries,
+        },
     )
-    return {"router_folds": folds, "manifest": str(manifest), "split": split}
+    return {
+        "router_folds": suite_folds,
+        "fold_manifests": suite_manifests,
+        "suite_manifest": str(suite_manifest),
+        "selector_methods": list(selector_methods),
+        "split": split,
+    }
 
 
 def _context_item(item: TimeSeriesItem, episode: Any) -> TimeSeriesItem:
@@ -4191,6 +4398,16 @@ def _npz_scalar(archive: Any, key: str) -> Any:
     return values[0].item() if hasattr(values[0], "item") else values[0]
 
 
+def _normalize_assembled_method_id(value: Any) -> str:
+    method = str(value).strip()
+    if not method:
+        raise ValueError("selector method must be non-empty")
+    normalized = "b_fais" if method in {"block_fais", "b_fais"} else method
+    if normalized in {"clean", "oracle"}:
+        raise ValueError(f"assembled method ID is reserved: {normalized!r}")
+    return normalized
+
+
 def _validate_resumable_imputation(
     entry: Mapping[str, Any],
     *,
@@ -4209,6 +4426,7 @@ def _validate_resumable_imputation(
     mase_scale: np.ndarray,
     mase_scale_lag: int,
     allowed_candidate_ids: frozenset[str],
+    assembled_method_id: str = "b_fais",
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
     expected_identity = {
         "index": expected_index,
@@ -4253,6 +4471,17 @@ def _validate_resumable_imputation(
             return False, f"assignment identity mismatch: {assignment_field}", None
     if assignment.get("schema_version") != _IMPUTATION_SCHEMA_VERSION:
         return False, "assignment schema mismatch", None
+    try:
+        progress_method = _normalize_assembled_method_id(
+            entry.get("assembled_method_id", "b_fais")
+        )
+        assignment_method = _normalize_assembled_method_id(
+            assignment.get("assembled_method_id", "b_fais")
+        )
+    except ValueError as error:
+        return False, f"assembled method ID is invalid: {error}", None
+    if progress_method != assembled_method_id or assignment_method != assembled_method_id:
+        return False, "assembled method ID differs from the router", None
     assignment_mask_identity = {
         "mask_protocol": "sequence_mask_v2",
         "mask_seed": int(episode.mask_seed),
@@ -4350,6 +4579,16 @@ def _validate_resumable_imputation(
             for field, expected in scalar_expectations.items():
                 if _npz_scalar(archive, field) != expected:
                     return False, f"imputation NPZ identity mismatch: {field}", None
+            try:
+                archive_method = _normalize_assembled_method_id(
+                    _npz_scalar(archive, "assembled_method_id")
+                    if "assembled_method_id" in archive
+                    else "b_fais"
+                )
+            except ValueError as error:
+                return False, f"imputation NPZ assembled method ID is invalid: {error}", None
+            if archive_method != assembled_method_id:
+                return False, "imputation NPZ assembled method ID differs from the router", None
             for field, expected in (
                 ("target_missing_rate", episode.target_missing_rate),
                 ("global_missing_rate", episode.global_missing_rate),
@@ -5193,6 +5432,9 @@ def _commit_imputation_output(
     pipeline_rss_after: int,
     pipeline_rss_delta: int,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    assembled_method_id = _normalize_assembled_method_id(
+        result.routing.metadata.get("selector_method", "b_fais")
+    )
     candidate_ids = tuple(
         candidate_id for candidate_id in registry.ids if candidate_id in result.candidates
     )
@@ -5217,6 +5459,7 @@ def _commit_imputation_output(
         family_id=np.asarray([dataset.family_id], dtype=str),
         item_id=np.asarray([work.episode.item_id], dtype=str),
         forecaster_id=np.asarray([model_id], dtype=str),
+        assembled_method_id=np.asarray([assembled_method_id], dtype=str),
         forecast_mode=np.asarray([work.spec.mode], dtype=str),
         values=result.values,
         observed_mask=result.observed_mask,
@@ -5259,6 +5502,7 @@ def _commit_imputation_output(
         "dataset_id": dataset.dataset_id,
         "family_id": dataset.family_id,
         "forecaster_id": model_id,
+        "assembled_method_id": assembled_method_id,
         "forecast_mode": work.spec.mode,
         "item_id": work.episode.item_id,
         "forecast_origin": work.episode.forecast_origin,
@@ -5302,6 +5546,7 @@ def _commit_imputation_output(
         "family_id": dataset.family_id,
         "item_id": work.episode.item_id,
         "forecaster_id": model_id,
+        "assembled_method_id": assembled_method_id,
         "forecast_mode": work.spec.mode,
         "file": str(work.relative),
         "assignment_file": str(work.relative_assignment),
@@ -5481,6 +5726,9 @@ def execute_impute(
         router = router_for(dataset)
         if router is None:
             continue
+        assembled_method_id = _normalize_assembled_method_id(
+            router.metadata.get("selector_method", "b_fais")
+        )
         consensus_required = (
             runtime_consensus_mode in {"medoid", "historical_backtest"}
             or runtime_consensus.anchor_period_exceeded_mode == "medoid"
@@ -5531,6 +5779,7 @@ def execute_impute(
                     mase_scale=mase_scale,
                     mase_scale_lag=mase_scale_lag,
                     allowed_candidate_ids=frozenset(imputer_registry.ids),
+                    assembled_method_id=assembled_method_id,
                 )
                 if valid:
                     assert recovered is not None
@@ -5749,6 +5998,17 @@ def execute_impute(
     if len(assignment_records_by_index) != count:
         raise ValueError("cannot finalize impute: assignment count is inconsistent")
     assignment_records = [assignment_records_by_index[index] for index in range(count)]
+    assembled_method_ids = sorted(
+        {
+            str(record.get("assembled_method_id", "b_fais"))
+            for record in assignment_records
+        }
+    )
+    if len(assembled_method_ids) != 1:
+        raise ValueError(
+            "cannot finalize impute with multiple assembled method IDs: "
+            + ", ".join(assembled_method_ids)
+        )
     sampling_manifest = _episode_sampling_manifest(
         "eval",
         config.experiment.max_eval_episodes_per_dataset,
@@ -5771,6 +6031,7 @@ def execute_impute(
         "max_eval_episodes_per_dataset": (config.experiment.max_eval_episodes_per_dataset),
         "episode_sampling": sampling_manifest,
         "forecaster_id": model_id,
+        "assembled_method_id": assembled_method_ids[0],
         "selected_candidates": list(selected_candidate_ids),
         "save_all_candidate_outputs": (config.experiment.save_all_candidate_outputs),
         "csdi_num_samples": config.experiment.csdi_num_samples,

@@ -86,6 +86,12 @@ class _FakePipeline:
         self.shortlist_size = 2
         self.fallback_internal = ("linear_interp", "locf", "train_median")
         self.fallback_tail = ("locf", "train_median")
+        router = kwargs.get("router")
+        self.selector_method = (
+            "b_fais"
+            if router is None
+            else str(router.metadata.get("selector_method", "b_fais"))
+        )
         self._pipeline = RealBlockwiseFAIS(
             imputer_registry=imputer_registry,
             imputer_artifacts={},
@@ -99,7 +105,9 @@ class _FakePipeline:
 
     def finish_route(self, *args, **kwargs):
         type(self).calls += 1
-        return self._pipeline.finish_route(*args, **kwargs)
+        result = self._pipeline.finish_route(*args, **kwargs)
+        result.routing.metadata["selector_method"] = self.selector_method
+        return result
 
 
 class _Clock:
@@ -418,6 +426,39 @@ def test_impute_resume_revalidates_candidate_ids_after_hash_match(tmp_path, monk
     assert _FakePipeline.calls == 1
     repaired_progress = json.loads(progress_path.read_text(encoding="utf-8"))
     assert "candidate IDs differ" in repaired_progress["entries"]["00000000"][
+        "repaired_reason"
+    ]
+
+
+def test_impute_resume_repairs_assembled_method_mismatch(tmp_path, monkeypatch):
+    config_path, config, inputs = _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        stage_execution.RouterBundle,
+        "load",
+        lambda _path: SimpleNamespace(
+            metadata={"split": "rolling_origin", "selector_method": "metaod"}
+        ),
+    )
+    _, root = _run(config_path, config, inputs, resume=False)
+    progress_path = root / "imputation_progress.json"
+    progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    entry = progress["entries"]["00000000"]
+    assignment_path = root / entry["assignment_file"]
+    assignment = json.loads(assignment_path.read_text(encoding="utf-8"))
+    assignment["assembled_method_id"] = "b_fais"
+    assignment_path.write_text(json.dumps(assignment), encoding="utf-8")
+    entry["assembled_method_id"] = "b_fais"
+    entry["assignment_sha256"] = stage_execution._file_sha256(assignment_path)
+    progress_path.write_text(json.dumps(progress), encoding="utf-8")
+
+    _FakePipeline.calls = 0
+    resumed, _ = _run(config_path, config, inputs, resume=True)
+
+    assert resumed["episodes_executed"] == 1
+    assert resumed["episodes_reused"] == 1
+    assert _FakePipeline.calls == 1
+    repaired_progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert "assembled method ID differs" in repaired_progress["entries"]["00000000"][
         "repaired_reason"
     ]
 

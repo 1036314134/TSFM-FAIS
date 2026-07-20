@@ -1,5 +1,15 @@
 """Block-wise imputer routing."""
 
+from .baselines import (
+    BASELINE_SELECTOR_METHODS,
+    ALORSSelector,
+    DSelectOneSelector,
+    HybridLSTMSelector,
+    MetaODSelector,
+    NeuralUCBSelector,
+    RandomValidBlockSelector,
+    fit_baseline_selector,
+)
 from .blocks import (
     assemble_routed_values,
     block_mask,
@@ -57,17 +67,24 @@ from .teacher import (
 )
 
 __all__ = [
+    "ALORSSelector",
+    "BASELINE_SELECTOR_METHODS",
     "BeamSearchSolver",
     "BlockEdge",
     "BlockGraph",
     "CandidateShortlister",
     "CoherenceAdjustedTarget",
+    "DSelectOneSelector",
     "ExhaustiveSolver",
     "InferenceRouterBundle",
+    "HybridLSTMSelector",
     "LazyLightGBMRegressor",
     "LightGBMUnaryModel",
+    "MetaODSelector",
+    "NeuralUCBSelector",
     "PairwiseRiskModel",
     "RankerModel",
+    "RandomValidBlockSelector",
     "RouterBundle",
     "RoutingFeatureExtractor",
     "RoutingFeatureTable",
@@ -92,6 +109,7 @@ __all__ = [
     "exhaustive_search",
     "extract_missing_blocks",
     "forecast_degradation",
+    "fit_baseline_selector",
     "masked_mae",
     "masked_mse",
     "masked_rmse",

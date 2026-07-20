@@ -1,0 +1,33 @@
+schema_version: 1
+selector_methods:
+  - metaod
+  - dselect1
+  - neuralucb
+  - alors
+  - hybrid_lstm
+  - random_valid_block
+selector_params:
+  metaod: {}
+  dselect1: {}
+  neuralucb: {}
+  alors: {}
+  hybrid_lstm: {}
+  random_valid_block: {}
+shortlist_size: 19
+forced_candidates: [locf, linear_interp]
+pseudo_blocks: 8
+beam_width: 32
+beta: 0.0
+cost_weight: 0.0
+beta_grid: [0.0]
+cost_weight_grid: [0.0]
+prior_model: lightgbm_lambdarank
+unary_model: lightgbm_lambdarank
+pairwise_model: lightgbm_huber
+ranker_target: forecast_loss
+candidate_switch_penalty: 0.0
+forecast_consensus:
+  mode: disabled
+fallback:
+  internal: [linear_interp, locf, train_median]
+  tail: [locf, train_median]

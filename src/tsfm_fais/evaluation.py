@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import math
 import random
@@ -102,6 +103,40 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> Path:
     )
     temporary.replace(path)
     return path
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _impute_content_signature(root: Path, assignments: Path) -> dict[str, Any]:
+    """Identify mutable routing metadata that affects evaluation row identity."""
+
+    manifest_path = root / "imputation_manifest.json"
+    manifest_method: str | None = None
+    manifest_sha256: str | None = None
+    if manifest_path.is_file():
+        manifest_sha256 = _file_sha256(manifest_path)
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise ValueError("cannot read the imputation manifest") from error
+        raw_method = manifest.get("assembled_method_id")
+        if raw_method is not None:
+            manifest_method = str(raw_method).strip()
+            if not manifest_method:
+                raise ValueError(
+                    "imputation manifest assembled_method_id must be non-empty"
+                )
+    return {
+        "routing_assignments_sha256": _file_sha256(assignments),
+        "imputation_manifest_sha256": manifest_sha256,
+        "assembled_method_id": manifest_method,
+    }
 
 
 def parse_ids(value: str | Sequence[str]) -> tuple[str, ...]:
@@ -485,6 +520,34 @@ def _validate_resume_signature(
         )
 
 
+def _assembled_method_id(
+    record: Mapping[str, Any],
+    archive: Mapping[str, Any],
+) -> str:
+    """Resolve the assembled selector identity from new or legacy artifacts."""
+
+    record_value = record.get("assembled_method_id")
+    archive_value = (
+        np.asarray(archive["assembled_method_id"]).reshape(-1)[0]
+        if "assembled_method_id" in archive
+        else None
+    )
+    resolved: list[str] = []
+    for source, value in (("record", record_value), ("archive", archive_value)):
+        if value is None:
+            continue
+        method_id = str(value).strip()
+        if not method_id:
+            raise ValueError(f"{source} assembled_method_id must be non-empty")
+        resolved.append(method_id)
+    if len(set(resolved)) > 1:
+        raise ValueError("record and archive assembled_method_id values differ")
+    method_id = resolved[0] if resolved else "b_fais"
+    if method_id in {"clean", "oracle"}:
+        raise ValueError(f"assembled_method_id is reserved: {method_id!r}")
+    return method_id
+
+
 def _evaluate_episode(
     record: Mapping[str, Any],
     archive: Mapping[str, Any],
@@ -514,7 +577,7 @@ def _evaluate_episode(
             "imputation artifact is not evaluation-ready; missing: "
             + ", ".join(missing_fields)
         )
-    b_fais = np.asarray(archive["values"], dtype=float)
+    assembled = np.asarray(archive["values"], dtype=float)
     observed_mask = np.asarray(archive["observed_mask"], dtype=bool)
     clean_context = np.asarray(archive["clean_context"], dtype=float)
     clean_future = np.asarray(archive["clean_future"], dtype=float)
@@ -524,13 +587,13 @@ def _evaluate_episode(
         raise ValueError("imputation artifact does not use sequence_mask_v2 schema 3")
     mase_scale = np.asarray(archive["mase_scale"], dtype=float).reshape(-1)
     if not (
-        b_fais.shape == observed_mask.shape == clean_context.shape
+        assembled.shape == observed_mask.shape == clean_context.shape
         and clean_future.ndim == 2
         and clean_future.shape[1] == clean_context.shape[1]
     ):
         raise ValueError("imputation artifact contains incompatible episode shapes")
     if (
-        not np.isfinite(b_fais).all()
+        not np.isfinite(assembled).all()
         or not np.isfinite(clean_context).all()
         or not np.isfinite(clean_future).all()
     ):
@@ -551,17 +614,23 @@ def _evaluate_episode(
             candidate_metadata["native_valid"] = False
             candidate_metadata["ineligibility_reason"] = "missing_period"
     candidate_ids = tuple(sorted(candidates))
-    method_ids = ("clean", "b_fais", *candidate_ids)
+    assembled_method_id = _assembled_method_id(record, archive)
+    if assembled_method_id in candidates:
+        raise ValueError(
+            "assembled_method_id collides with a saved candidate ID: "
+            f"{assembled_method_id!r}"
+        )
+    method_ids = ("clean", assembled_method_id, *candidate_ids)
     valid_candidate_ids = tuple(
         candidate_id
         for candidate_id in candidate_ids
         if candidates[candidate_id]["native_valid"]
     )
-    forecast_method_ids = ("clean", "b_fais", *valid_candidate_ids)
+    forecast_method_ids = ("clean", assembled_method_id, *valid_candidate_ids)
     contexts = np.stack(
         (
             clean_context,
-            b_fais,
+            assembled,
             *(candidates[key]["values"] for key in valid_candidate_ids),
         )
     )
@@ -628,8 +697,10 @@ def _evaluate_episode(
         if method_id == "clean":
             method_role = "reference"
             candidate_status = "reference"
-        elif method_id == "b_fais":
-            method_role = "method"
+        elif method_id == assembled_method_id:
+            method_role = (
+                "method" if assembled_method_id == "b_fais" else "selector_baseline"
+            )
             candidate_status = "assembled"
         else:
             if candidate is None:  # pragma: no cover - method_ids construction guard
@@ -640,7 +711,7 @@ def _evaluate_episode(
             runtime_seconds = 0.0
             rss_delta_bytes = 0
             runtime_scope = "reference"
-        elif method_id == "b_fais":
+        elif method_id == assembled_method_id:
             runtime_seconds = pipeline_runtime
             rss_delta_bytes = pipeline_rss_delta
             runtime_scope = "end_to_end_imputation"
@@ -659,8 +730,8 @@ def _evaluate_episode(
             context = (
                 clean_context
                 if method_id == "clean"
-                else b_fais
-                if method_id == "b_fais"
+                else assembled
+                if method_id == assembled_method_id
                 else candidates[method_id]["values"]
             )
             imputation_mae, imputation_rmse = _imputation_metrics(
@@ -791,8 +862,9 @@ def evaluate_imputations(
         else list(config.experiment.target_indices)
     )
     evaluation_signature = {
-        "schema_version": 1,
+        "schema_version": 2,
         "impute_artifact": str(root),
+        "impute_content": _impute_content_signature(root, assignments),
         "forecaster_id": forecaster_id,
         "forecaster_artifact": (
             None
@@ -848,7 +920,8 @@ def evaluate_imputations(
             ),
             "relative_regret": "(method_mase - oracle_mase) / max(abs(oracle_mase), 1e-8)",
             "runtime_seconds": (
-                "end-to-end imputation for b_fais; one imputer call for candidates"
+                "end-to-end imputation for the assembled method; one imputer call "
+                "for candidates"
             ),
             "rss_delta_bytes": (
                 "non-negative process RSS after-minus-before delta; not peak memory"
@@ -898,6 +971,7 @@ def evaluate_imputations(
                     raise ValueError(f"unsafe imputation artifact path: {relative}")
                 artifact_path = imputations / relative
                 with np.load(artifact_path, allow_pickle=False) as archive:
+                    assembled_method_id = _assembled_method_id(record, archive)
                     saved_ids = (
                         tuple(
                             str(value)
@@ -908,7 +982,7 @@ def evaluate_imputations(
                     )
                     expected_methods = {
                         "clean",
-                        "b_fais",
+                        assembled_method_id,
                         "oracle",
                         *saved_ids,
                         *baseline_tuple,

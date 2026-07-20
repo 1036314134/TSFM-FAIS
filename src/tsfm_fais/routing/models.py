@@ -70,7 +70,14 @@ def _robust_scale(values: np.ndarray) -> float:
 
 def _dependency_versions() -> dict[str, str]:
     versions: dict[str, str] = {}
-    for package in ("tsfm-fais", "numpy", "lightgbm", "scikit-learn", "joblib"):
+    for package in (
+        "tsfm-fais",
+        "numpy",
+        "lightgbm",
+        "scikit-learn",
+        "joblib",
+        "torch",
+    ):
         try:
             versions[package] = package_metadata.version(package)
         except package_metadata.PackageNotFoundError:
@@ -147,9 +154,9 @@ class PairwiseRiskModel:
 
 @dataclass
 class RouterBundle:
-    prior: RankerModel
-    unary: RankerModel
-    pairwise: PairwiseRiskModel
+    prior: Any
+    unary: Any
+    pairwise: Any
     feature_names: tuple[str, ...]
     candidate_ids: tuple[str, ...]
     pair_feature_names: tuple[str, ...] = ()
@@ -162,6 +169,7 @@ class RouterBundle:
         joblib.dump(self, target / "router_bundle.joblib")
         manifest = {
             "schema_version": 1,
+            "selector_method": self.metadata.get("selector_method", "b_fais"),
             "feature_names": list(self.feature_names),
             "pair_feature_names": list(self.pair_feature_names),
             "candidate_ids": list(self.candidate_ids),

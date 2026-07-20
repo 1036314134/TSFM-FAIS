@@ -135,6 +135,45 @@ TimesFM 2.5 使用目标变量级 forecast medoid、伪缺失风险相对优势�
 
 这些操作始终以缺失块为单位，并检查候选的原生有效掩码。不同块可以使用不同候选或候选组合；回退生成的安全值不会被标记为候选成功。最终 Chronos-2 条件 fallback 覆盖 40,764 个块，额外运行时间相对前一固定收缩版本增加约 7.46 秒（900 episode 上约 0.27%）。
 
+## 填补选择对比基线
+
+仓库提供 `MetaOD + DSelect-1 + NeuralUCB + ALORS + HybridLSTM + Random-Valid-Block` 六个块级选择基线。实现将论文中的核心选择机制映射到本仓库统一的“块—候选逐行评分”接口；任务特征、监督信号和候选集合均按 TSFM-FAIS 协议重新定义，因此这些实现属于面向本任务的可复现实验适配，不表示逐行复刻作者代码或复现原论文数值。
+
+| 配置 ID | 方法来源 | 仓库实现 |
+|---|---|---|
+| `metaod` | [MetaOD，NeurIPS 2021](https://proceedings.neurips.cc/paper_files/paper/2021/hash/23c894276a2c5a16470e6a31f4618d73-Abstract.html) | 原文以 smooth-DCG 优化潜在性能；本任务适配改用成对 logistic 排序损失分解稀疏的块—候选效用，再以随机森林把新块的上下文特征映射到潜在空间。 |
+| `dselect1` | [DSelect-k，NeurIPS 2021](https://proceedings.neurips.cc/paper_files/paper/2021/hash/f5ac21cd0ef1b88e9848571aeb53551a-Abstract.html) | 取 `k=1`，使用二进制编码和 smooth-step 构造可微稀疏门，在每个训练组的可用候选上最小化掩码化期望损失，并按论文补充材料惩罚非 2 次幂候选产生的空码概率。 |
+| `neuralucb` | [NeuralUCB，ICML 2020](https://proceedings.mlr.press/v119/zhou20a.html) | MLP 估计上下文—候选回报，参数梯度的对角精度近似产生 UCB；按训练组顺序离线回放，每组只揭示被选候选的反馈。 |
+| `alors` | [ALORS，Artificial Intelligence 2017](https://www.sciencedirect.com/science/article/pii/S0004370216301436) | 原文使用 CoFiRank/NDCG 学习排序；本任务适配对稀疏块—候选效用矩阵执行掩码 ALS，以随机森林完成新块潜在因子的冷启动预测。 |
+| `hybrid_lstm` | [HybridLSTM，Applied Soft Computing 2025](https://www.sciencedirect.com/science/article/pii/S1568494625001565) | 将块静态分支与按 `start_ratio → channel_ratio → block_id` 排序的 LSTM 分支拼接，联合优化最优候选多分类损失和近最优候选多标签损失。 |
+| `random_valid_block` | 随机对照 | 根据训练种子、运行种子、块 ID 和候选 ID 生成稳定的 SHA-256 均匀分数；路由器先排除原生无效候选，再选择随机分数最高者。 |
+
+五个学习型基线统一使用 `prior_features` 和 `forecast_loss` 教师目标；随机对照不读取教师损失。基线运行关闭伪缺失候选、块对交互、预测共识、证据混合、显式候选成本惩罚和切换惩罚，其中 `prior_features` 内的 `candidate_cost` 特征仍保留供学习型方法使用。短名单上限设为 19，使 Random-Valid-Block 在完整原生有效候选集合内随机选择。候选失败、尾部能力、原生有效掩码和安全回退仍由公共推理流程处理。训练产物保存在 `routers/<method>/router_bundle.joblib`，填补 NPZ、分配 JSON 和评估行分别记录动态方法 ID；旧 B-FAIS 产物继续默认使用 `b_fais`。
+
+神经选择器训练需要独立的 PyTorch extra。主实验与 ETT 复现入口分别为 `configs/main_rolling_{train,eval}_baselines.yaml` 和 `configs/ett_rolling_{train,eval}_baselines.yaml`：
+
+```powershell
+pip install -e ".[dev,selector-baselines]"
+python -m tsfm_fais config validate --config configs/main_rolling_train_baselines.yaml
+python -m tsfm_fais run --config configs/main_rolling_train_baselines.yaml --stage train-router --run-id router-baselines --labels-artifact artifacts/labels-merged/teacher_labels.jsonl --execute
+```
+
+训练命令一次生成六个路由器。推理和评估时按方法选择对应子目录；如已有完整候选源，可通过 `--candidate-source-impute-artifact` 复用经过身份校验的候选张量：
+
+```powershell
+$method = "metaod"
+python -m tsfm_fais run --config configs/main_rolling_eval_baselines.yaml --stage impute --run-id "impute-$method" --audit-artifact artifacts/data-audit.json --imputer-artifacts artifacts/fit/imputer_artifacts --router-artifact "artifacts/router-baselines/routers/$method" --candidate-source-impute-artifact artifacts/impute-candidate-source --forecaster-id chronos2 --execute
+python -m tsfm_fais evaluate --config configs/main_rolling_eval_baselines.yaml --impute-artifact "artifacts/impute-$method" --forecaster-id chronos2 --forecaster-artifact <local-checkpoint> --output-dir "artifacts/eval-$method"
+```
+
+正式对比应让 B-FAIS 与六个基线复用同一候选源、冻结预测器和评估配置。完成评估后，可将各评估目录一次传给正式汇总器。汇总器会校验并去重一致的 clean、单候选和 oracle 公共行，将六个 `selector_baseline` 与 B-FAIS 纳入相同 episode 上的成对比较；公共行指标或元数据冲突时会拒绝合并：
+
+```powershell
+python -m tsfm_fais summarize-main --input artifacts/eval-b-fais artifacts/eval-metaod artifacts/eval-dselect1 artifacts/eval-neuralucb artifacts/eval-alors artifacts/eval-hybrid_lstm artifacts/eval-random_valid_block --output-dir artifacts/selector-comparison
+```
+
+2026-07-20 的实现验收使用仓库已有 ETT 全候选标签完成了 7,300 行、410 个块组、19 个候选的六模型训练和 joblib 重载，对应使用 ETT 专用配置的 `artifacts/dev-ett-selector-baselines-repro-v3/`。六个模型随后在同一真实 ETT episode 的 100 个缺失块上分别完成 100 个合法分配，组装值均有限且全部观测位置保持不变。另一个 `artifacts/dev-ett-metaod-impute-repro-v1/` 使用早先的 v2 MetaOD 路由器完成了四个 ETT 数据版本共 120 个 episode 的 CLI 填补；v2 同样由该 ETT 标签文件训练，但其 resolved config 记录的是主数据配置，因此该产物仅用于功能与续跑修复验收，不表示来自 v3 的完整产物来源。续跑校验识别并修复了 7 个旧方法标识记录，最终产物为 120/120 且方法 ID 一致。这里报告的是功能复现与工程验收，尚未报告六个基线相对 B-FAIS 的正式性能结论。
+
 ## TSFM 预测模式
 
 | ID | 模式 | 输入与输出 |
@@ -201,20 +240,24 @@ TimesFM 2.5 使用目标变量级 forecast medoid、伪缺失风险相对优势�
 - Chronos-2：[严格汇总](artifacts/main-seq96-opt115-eval-chronos2-seasonal090-linear075-b128-v100/strict_aggregate.json)、[逐数据版本结果](artifacts/main-seq96-opt115-eval-chronos2-seasonal090-linear075-b128-v100/strict_dataset_summary.csv)、[完整指标](artifacts/main-seq96-opt115-eval-chronos2-seasonal090-linear075-b128-v100/episode_metrics.csv)。
 - Chronos-2 ETT 冻结验证：[严格汇总](artifacts/dev-ett-seq96-opt114-eval-chronos2-seasonal090-linear075-b128-v99/strict_aggregate.json)。
 
-`artifacts/` 被 `.gitignore` 排除，上述链接面向完成本地实验的工作区。仓库不会提交数据、checkpoint 或大体积预测结果。2026-07-19 已清理 pilot、失败运行、pytest 临时目录和被否决的调参产物；本地仅保留 15 个能够解释或复用最终结果的实验目录、1 份最终数据审计，共约 4.48 GiB。
+`artifacts/` 被 `.gitignore` 排除，上述链接面向完成本地实验的工作区。仓库不会提交数据、checkpoint 或大体积预测结果。2026-07-19 已清理 pilot、失败运行和被否决的调参产物，并保留能够解释或复用最终结果的主实验集合；2026-07-20 另行生成了本节记录的基线验收产物。
 
 ## 配置与阶段
 
-清理后保留 33 个 YAML 配置。它们分为数据/模型注册表、正式训练与评估配置、最终产物的上游复现配置，以及仍被配置 schema 回归测试读取的最小变体。主要入口如下：
+当前保留 38 个 YAML 配置。它们分为数据/模型注册表、正式训练与评估配置、最终产物的上游复现配置，以及仍被配置 schema 回归测试读取的最小变体。主要入口如下：
 
 | 配置 | 用途 |
 |---|---|
 | `configs/main.yaml` | 冻结填补器拟合配置，也是现有填补器 artifact 的来源配置 |
 | `configs/main_rolling_train.yaml` | 训练起点教师标签与模型条件路由器，96×96 |
 | `configs/main_rolling_eval.yaml` | 主实验候选源的基础滚动评估配置 |
+| `configs/main_rolling_train_baselines.yaml` | 六个对比选择器的主数据训练配置 |
+| `configs/main_rolling_eval_baselines.yaml` | 六个对比选择器的主数据填补与评估配置 |
 | `configs/main_rolling_eval_consensus_times_targetwise_proxy050_margin005_seasonal010.yaml` | TimesFM 2.5 冻结主评估配置 |
 | `configs/main_rolling_eval_consensus_chronos_top2_seasonal090_linear075.yaml` | Chronos-2 冻结主评估配置 |
 | `configs/ett_rolling_train_full_candidates.yaml` | ETT 全候选教师标签复现配置 |
+| `configs/ett_rolling_train_baselines.yaml` | ETT 全候选标签上的六基线训练配置 |
+| `configs/ett_rolling_eval_baselines.yaml` | ETT 六基线填补与评估配置 |
 | `configs/ett_rolling_eval_consensus_chronos_top2_seasonal090_linear075.yaml` | Chronos-2 ETT 冻结验证配置 |
 | `configs/pilot.yaml` | 单数据版本、低预算的真实数据预检查 |
 | `configs/smoke.yaml` | 无网络、无真实 checkpoint 的合成工程验证 |
@@ -256,6 +299,8 @@ python -m tsfm_fais evaluate --config <frozen-eval-config> --impute-artifact art
 | ETT Chronos-2 路由器 | `artifacts/dev-ett-seq96-opt34-router-consensus-model-prior-correlated8-b128-v20/` |
 | ETT Chronos-2 最终填补 | `artifacts/dev-ett-seq96-opt114-impute-chronos2-seasonal090-linear075-b128-v99/` |
 | ETT Chronos-2 最终评估 | `artifacts/dev-ett-seq96-opt114-eval-chronos2-seasonal090-linear075-b128-v99/` |
+| ETT 六基线路由器验收 | `artifacts/dev-ett-selector-baselines-repro-v3/` |
+| ETT MetaOD 填补验收 | `artifacts/dev-ett-metaod-impute-repro-v1/` |
 
 ## 安装与验证
 
@@ -263,6 +308,7 @@ python -m tsfm_fais evaluate --config <frozen-eval-config> --impute-artifact art
 
 ```powershell
 pip install -e .[dev]
+pip install -e .[selector-baselines]
 pip install -e .[deep-imputers]
 pip install -e .[forecast-chronos]
 pip install -e .[forecast-timesfm]
@@ -275,16 +321,16 @@ src/tsfm_fais/
   data/            # 加载、审计、整段缺失与 episode
   imputers/        # 候选适配器、注册表与统一 runner
   forecasting/     # 联合多变量和独立单变量 TSFM 适配
-  routing/         # 块、特征、排序器、交互模型与求解器
+  routing/         # 块、特征、B-FAIS、六个选择基线与求解器
   pipeline.py      # B-FAIS 推理编排与块组装
-configs/           # 33 个数据、模型、训练、最终评估与回归测试配置
+configs/           # 38 个数据、模型、训练、最终评估与回归测试配置
 scripts/           # 8 个只读参数选择与结果诊断工具，不参与运行时导入
 tests/             # 单元与集成 smoke 测试
 checkpoints/       # 本地 TSFM checkpoint 路径映射；被 git 忽略
-artifacts/         # 15 个保留实验目录与最终审计；被 git 忽略
+artifacts/         # 本地实验产物与审计；被 git 忽略
 ```
 
-2026-07-18 的最终验收命令为：
+2026-07-20 的最终验收命令为：
 
 ```powershell
 python -m compileall src tests
@@ -292,7 +338,7 @@ python -m pytest -q -m "not slow and not gpu and not network" -p no:cacheprovide
 python -m tsfm_fais smoke --config configs/smoke.yaml
 ```
 
-结果为 `296 passed`（1 条 MICE 未提前收敛警告），smoke 输出 `SMOKE PASS`。覆盖内容包括整段掩码种子不含预测起点、重叠窗口共享掩码、未来值隔离、0.4 缺失率、96×96 episode、候选失败与原生有效性、模型条件路由、条件式候选 fallback、预算与 beam search、单变量展开/重组以及新旧 artifact 不兼容检查。
+结果为 `324 passed`（1 条 MICE 未提前收敛警告），smoke 输出 `SMOKE PASS`。覆盖内容包括整段掩码种子不含预测起点、重叠窗口共享掩码、未来值隔离、0.4 缺失率、96×96 episode、候选失败与原生有效性、六个对比选择器的训练和序列化、随机选择可复现性、动态方法 ID 与续跑签名、B-FAIS/基线评估合并、无缺失块方法标识、模型条件路由、条件式候选 fallback、预算与 beam search、单变量展开/重组以及新旧 artifact 不兼容检查。
 
 ## 当前状态
 
@@ -300,8 +346,8 @@ python -m tsfm_fais smoke --config configs/smoke.yaml
 - 20 个标准候选已注册；TRMF 因冻结 artifact 协议不兼容而禁用，19 个候选参与本轮拟合与评估。
 - TimesFM 2.5 和 Chronos-2 主实验均达到 16/30 严格胜出，非 ETT 确认集均为 12/26。
 - 两个最终填补运行均为 900/900 episode、0 修复；耗时分别为 2776.73 秒和 2766.14 秒。
-- 代码验收为 296 项非慢速测试通过，合成 smoke 通过。
-- 本地实验目录已从 415 个清理为 15 个，保留内容均在上方产物索引中；测试临时文件不再写入 `artifacts/`。
+- 代码验收为 324 项非慢速测试通过，合成 smoke 通过。
+- 2026-07-19 清理后保留的主实验产物均在上方索引中；2026-07-20 新增六基线路由器和 MetaOD 填补验收产物，测试临时文件不写入 `artifacts/`。
 
 当前限制包括：只完成了 TimesFM 2.5 与 Chronos-2 的真实 checkpoint 实验；Chronos-Bolt、Sundial 和 TiREx 仍只有适配接口；严格胜出数量尚未配套报告置信区间或多重检验；Chronos-2 在 Azure 上存在显著失利，导致其跨数据版本宏平均差值为正；本地数据、模型权重与大体积结果未随仓库发布。后续研究应优先分析高维/尺度异常数据上的稳健路由，并在新的独立数据族上验证泛化。
 
@@ -317,3 +363,8 @@ python -m tsfm_fais smoke --config configs/smoke.yaml
 - [NX-AI TiRex](https://github.com/NX-AI/tirex)
 - [ETDataset](https://github.com/zhouhaoyi/ETDataset)
 - [Monash Forecasting Repository](https://forecastingdata.org/)
+- [MetaOD：Automatic Unsupervised Outlier Model Selection](https://proceedings.neurips.cc/paper_files/paper/2021/hash/23c894276a2c5a16470e6a31f4618d73-Abstract.html)
+- [DSelect-k：Differentiable Selection in the Mixture of Experts](https://proceedings.neurips.cc/paper_files/paper/2021/hash/f5ac21cd0ef1b88e9848571aeb53551a-Abstract.html)
+- [NeuralUCB：Neural Contextual Bandits with UCB-based Exploration](https://proceedings.mlr.press/v119/zhou20a.html)
+- [ALORS：An Algorithm Recommender System](https://www.sciencedirect.com/science/article/pii/S0004370216301436)
+- [HybridLSTM：A Meta-Learning Based Neural Network and LSTM for Univariate Time Series Missing Data Imputation](https://www.sciencedirect.com/science/article/pii/S1568494625001565)
