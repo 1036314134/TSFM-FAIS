@@ -121,7 +121,9 @@ impute(batch, artifact, seed) -> CandidateResult
 
 逐变量方法遍历全部 `D` 个变量后重新组装 `[N,L,D]`；联合方法直接处理完整多变量张量。公共 runner 恢复原观测值并显式记录原生有效掩码、失败原因、耗时和内存。新增算法只需实现适配器并注册 `ImputerSpec`，路由代码不依赖具体候选类。
 
-## 块级路由
+注册候选池供 B-FAIS、MetaOD、DSelect-1、NeuralUCB、ALORS 和随机整序列对照使用。HybridLSTM 按论文使用独立的固定单变量窗口和十种内部经典填补方法，不调用注册候选池。
+
+## B-FAIS 块级路由
 
 每个变量上的极大连续缺失区间构成一个 `MissingBlock`。块关系图包含同变量相邻边、跨变量时间重叠边和训练期高相关变量边。特征覆盖块长度、相对位置、边界可用性、局部与整段缺失率、周期、相关性、候选能力、候选成本、TSFM 能力和伪缺失重构证据。
 
@@ -133,22 +135,28 @@ impute(batch, artifact, seed) -> CandidateResult
 
 TimesFM 2.5 使用目标变量级 forecast medoid、伪缺失风险相对优势至少 `0.05` 时权重 `0.50` 的候选融合，以及对原生有效块向 `seasonal_lag` 收缩 `0.10`。Chronos-2 使用预测一致性最好的两个候选均值；对 `seasonal_lag` 原生有效的块收缩 `0.90`，只在其无原生值时对 `linear_interp` 收缩 `0.75`，两者都无效时保留结构化路由结果。后一规则在 ETT 上按“胜出数、最差差值、平均差值”的顺序冻结，正式 ETT 结果为 4/4，最差差值为 `-0.045974`。
 
-这些操作始终以缺失块为单位，并检查候选的原生有效掩码。不同块可以使用不同候选或候选组合；回退生成的安全值不会被标记为候选成功。最终 Chronos-2 条件 fallback 覆盖 40,764 个块，额外运行时间相对前一固定收缩版本增加约 7.46 秒（900 episode 上约 0.27%）。
+上述 B-FAIS 操作始终以缺失块为单位，并检查候选的原生有效掩码。不同块可以使用不同候选或候选组合；回退生成的安全值不会被标记为候选成功。最终 Chronos-2 条件 fallback 覆盖 40,764 个块，额外运行时间相对前一固定收缩版本增加约 7.46 秒（900 episode 上约 0.27%）。
 
 ## 填补选择对比基线
 
-仓库提供 `MetaOD + DSelect-1 + NeuralUCB + ALORS + HybridLSTM + Random-Valid-Block` 六个块级选择基线。实现将论文中的核心选择机制映射到本仓库统一的“块—候选逐行评分”接口；任务特征、监督信号和候选集合均按 TSFM-FAIS 协议重新定义，因此这些实现属于面向本任务的可复现实验适配，不表示逐行复刻作者代码或复现原论文数值。
+仓库提供 `MetaOD + DSelect-1 + NeuralUCB + ALORS + HybridLSTM + Random-Valid-Block` 五个论文基线和一个随机对照。每种基线先按照自身论文机制完成待填补序列，再把完成后的序列交给仓库已有的冻结 Chronos-2 或 TimesFM 2.5 进行未来预测和评价。选择器训练只使用训练起点中人工隐藏位置的重构质量，不读取未来值、TSFM 输出、`forecast_loss` 或预测器标识。
 
-| 配置 ID | 方法来源 | 仓库实现 |
-|---|---|---|
-| `metaod` | [MetaOD，NeurIPS 2021](https://proceedings.neurips.cc/paper_files/paper/2021/hash/23c894276a2c5a16470e6a31f4618d73-Abstract.html) | 原文以 smooth-DCG 优化潜在性能；本任务适配改用成对 logistic 排序损失分解稀疏的块—候选效用，再以随机森林把新块的上下文特征映射到潜在空间。 |
-| `dselect1` | [DSelect-k，NeurIPS 2021](https://proceedings.neurips.cc/paper_files/paper/2021/hash/f5ac21cd0ef1b88e9848571aeb53551a-Abstract.html) | 取 `k=1`，使用二进制编码和 smooth-step 构造可微稀疏门，在每个训练组的可用候选上最小化掩码化期望损失，并按论文补充材料惩罚非 2 次幂候选产生的空码概率。 |
-| `neuralucb` | [NeuralUCB，ICML 2020](https://proceedings.mlr.press/v119/zhou20a.html) | MLP 估计上下文—候选回报，参数梯度的对角精度近似产生 UCB；按训练组顺序离线回放，每组只揭示被选候选的反馈。 |
-| `alors` | [ALORS，Artificial Intelligence 2017](https://www.sciencedirect.com/science/article/pii/S0004370216301436) | 原文使用 CoFiRank/NDCG 学习排序；本任务适配对稀疏块—候选效用矩阵执行掩码 ALS，以随机森林完成新块潜在因子的冷启动预测。 |
-| `hybrid_lstm` | [HybridLSTM，Applied Soft Computing 2025](https://www.sciencedirect.com/science/article/pii/S1568494625001565) | 将块静态分支与按 `start_ratio → channel_ratio → block_id` 排序的 LSTM 分支拼接，联合优化最优候选多分类损失和近最优候选多标签损失。 |
-| `random_valid_block` | 随机对照 | 根据训练种子、运行种子、块 ID 和候选 ID 生成稳定的 SHA-256 均匀分数；路由器先排除原生无效候选，再选择随机分数最高者。 |
+MetaOD、DSelect-1、NeuralUCB、ALORS 和 Random-Valid-Block 的选择单位是一个完整缺失 episode：episode 对应论文中的任务、样本或 bandit round，候选填补器对应算法、expert 或 action。每个候选先独立填补整段上下文，选择器再对完整候选张量做一次选择或混合，所得完整序列随后进入 TSFM 预测。HybridLSTM 保留论文的固定单变量窗口；主实验上下文长度为 96，因此每个变量分成两个长度为 48 的窗口，只对实际含缺失的窗口推荐内部填补方法，全部窗口完成后才进入 TSFM 预测。
 
-五个学习型基线统一使用 `prior_features` 和 `forecast_loss` 教师目标；随机对照不读取教师损失。基线运行关闭伪缺失候选、块对交互、预测共识、证据混合、显式候选成本惩罚和切换惩罚，其中 `prior_features` 内的 `candidate_cost` 特征仍保留供学习型方法使用。短名单上限设为 19，使 Random-Valid-Block 在完整原生有效候选集合内随机选择。候选失败、尾部能力、原生有效掩码和安全回退仍由公共推理流程处理。训练产物保存在 `routers/<method>/router_bundle.joblib`，填补 NPZ、分配 JSON 和评估行分别记录动态方法 ID；旧 B-FAIS 产物继续默认使用 `b_fais`。
+逐缺失块构图和逐块候选路由只属于 B-FAIS。只有 B-FAIS 检测真实 `MissingBlock`、构造块关系图，并允许同一 episode 的不同缺失块采用不同候选。五个整序列基线不执行块评分、块图求解、beam search、伪缺失块、预测一致性、候选切换惩罚或模型专属块级组装。标准 assignment JSON 为兼容统一 artifact schema，会在各真实缺失块上重复记录同一个整序列选择；该记录不表示基线进行了逐块选择。HybridLSTM 的真实决策记录在固定窗口分配中。
+
+| 配置 ID | 论文机制与仓库执行方式 |
+|---|---|
+| `metaod` | [MetaOD，NeurIPS 2021](https://proceedings.neurips.cc/paper_files/paper/2021/file/23c894276a2c5a16470e6a31f4618d73-Paper.pdf) 在 episode—填补器性能矩阵上以 smooth-DCG 学习任务和候选潜在因子，再由随机森林把新 episode 的可观测序列特征映射到任务潜在表示；最高分的整序列原生有效候选完成整个 episode。 |
+| `dselect1` | [DSelect-k，NeurIPS 2021](https://proceedings.neurips.cc/paper_files/paper/2021/file/f5ac21cd0ef1b88e9848571aeb53551a-Paper.pdf) 取 `k=1`，以二进制编码和 smooth-step 门在整段重构损失上训练，并保留熵项与非 2 次幂候选的不可达编码质量约束；推理时保留 smooth-step 门在非 2 次幂编码下产生的可达总质量，把落在原生无效 expert 上的质量重分配到原生有效 expert，再按所得门权重混合完整候选张量。 |
+| `neuralucb` | [NeuralUCB，ICML 2020](https://proceedings.mlr.press/v119/zhou20a/zhou20a.pdf) 将一个 episode 视为一轮、填补器视为 action，以 `1 / (1 + ASMAPE)` 作为回报；实现采用论文 Algorithm 1 完整精度矩阵 `Z` 的 Woodbury 等价表示、成对对称网络初始化和 `hidden_size=100`，每轮更新一次且 `J=1`。离线回放与后续在线更新每轮只揭示被选 action 的回报，被选候选完成整个 episode。论文真实数据实验和官方代码采用 diagonal 近似；本仓库的 `J=1` 低于官方实验每轮采用的更新量，这两项差异应在结果解释中保留。 |
+| `alors` | [ALORS，Artificial Intelligence 2017](https://doi.org/10.1016/j.artint.2016.12.001) 在 episode—填补器性能矩阵上执行 NDCG 加权的最大间隔协同排序，并以随机森林完成新 episode 的冷启动潜在表示预测；最高分的整序列原生有效候选完成整个 episode。 |
+| `hybrid_lstm` | [HybridLSTM，Applied Soft Computing 2025](https://www.sciencedirect.com/science/article/pii/S1568494625001565) 对原始单通道序列使用长度为 48 的固定单变量窗口，网络包含六层 Conv1D-BN-ReLU 静态分支和 BiLSTM-LSTM-LSTM-BN 时序分支，并以类别平衡样本联合优化多分类与多标签损失。每个窗口在论文的十个候选 `mean`、`median`、`linear`、`cubic`、`akima`、`polynomial_5`（五阶 Lagrange）、`spline_5`、`moving_mean_3`、`backfill` 和 `forward_fill` 中选择；候选清单和实现细节同时参考作者的[公开学位论文](https://tedebc.ufma.br/jspui/bitstream/tede/4710/2/MAURICIOMORAISALMEIDA.pdf)。只要存在没有原生有效候选的窗口，回退值仅用于保持产物完整，该 episode 的 HybridLSTM 结果不计入评价指标。 |
+| `random_valid_block` | 配置 ID 为兼容最初实验命名而保留，产物方法 ID 写为 `random_valid_series`。每个 episode 从能够原生完成整个上下文的候选中均匀选择一个，结果由 episode 种子和有效候选集合确定；它不读取块 ID，也不逐块重采样。 |
+
+训练标签采用 `sequence_imputation_quality_v1`。前四个论文选择器和随机对照每个 episode 生成一个整序列候选组；HybridLSTM 额外生成固定单变量窗口组。监督指标是人工隐藏位置上的 ASMAPE、MAE 和 RMSE，pair label 为空。公共执行部分限于候选运行、原观测值复原、原生有效性记录、有限值安全回退以及后续预测评价；这些步骤不改变论文选择器的决策粒度。训练产物保存在 `routers/<method>/router_bundle.joblib`。
+
+当前实现保留了各方法的核心训练目标和决策粒度，同时存在可复现的工程适配。MetaOD 未复刻论文训练中的 cyclic learning rate、验证集早停和每个 epoch 重训随机森林；ALORS 以交替 Adam 优化实现最大间隔协同排序，未使用原文的 bundle optimizer。这些差异属于实现范围说明，正式结果应连同具体配置共同报告。
 
 神经选择器训练需要独立的 PyTorch extra。主实验与 ETT 复现入口分别为 `configs/main_rolling_{train,eval}_baselines.yaml` 和 `configs/ett_rolling_{train,eval}_baselines.yaml`：
 
@@ -158,21 +166,53 @@ python -m tsfm_fais config validate --config configs/main_rolling_train_baseline
 python -m tsfm_fais run --config configs/main_rolling_train_baselines.yaml --stage train-router --run-id router-baselines --labels-artifact artifacts/labels-merged/teacher_labels.jsonl --execute
 ```
 
-训练命令一次生成六个路由器。推理和评估时按方法选择对应子目录；如已有完整候选源，可通过 `--candidate-source-impute-artifact` 复用经过身份校验的候选张量：
+训练命令一次生成六个路由器。推理和评估时按方法选择对应子目录；如已有完整候选源，可通过 `--candidate-source-impute-artifact` 复用经过身份校验的候选张量。序列选择器的填补阶段不需要 `--forecaster-id` 或预测器 checkpoint，产物统一记录为 `forecaster_id=imputation`、`forecast_mode=selector_independent`。同一份完整序列填补产物可随后分别交给 Chronos-2、TimesFM 2.5 或其他已注册冻结预测器评价：
 
 ```powershell
 $method = "metaod"
-python -m tsfm_fais run --config configs/main_rolling_eval_baselines.yaml --stage impute --run-id "impute-$method" --audit-artifact artifacts/data-audit.json --imputer-artifacts artifacts/fit/imputer_artifacts --router-artifact "artifacts/router-baselines/routers/$method" --candidate-source-impute-artifact artifacts/impute-candidate-source --forecaster-id chronos2 --execute
-python -m tsfm_fais evaluate --config configs/main_rolling_eval_baselines.yaml --impute-artifact "artifacts/impute-$method" --forecaster-id chronos2 --forecaster-artifact <local-checkpoint> --output-dir "artifacts/eval-$method"
+python -m tsfm_fais run --config configs/main_rolling_eval_baselines.yaml --stage impute --run-id "impute-$method" --audit-artifact artifacts/data-audit.json --imputer-artifacts artifacts/fit/imputer_artifacts --router-artifact "artifacts/router-baselines/routers/$method" --candidate-source-impute-artifact artifacts/impute-candidate-source --execute
+python -m tsfm_fais evaluate --config configs/main_rolling_eval_baselines.yaml --impute-artifact "artifacts/impute-$method" --forecaster-id chronos2 --forecaster-artifact <chronos2-checkpoint> --output-dir "artifacts/eval-$method-chronos2"
+python -m tsfm_fais evaluate --config configs/main_rolling_eval_baselines.yaml --impute-artifact "artifacts/impute-$method" --forecaster-id timesfm2p5 --forecaster-artifact <timesfm2p5-checkpoint> --output-dir "artifacts/eval-$method-timesfm2p5"
 ```
 
-正式对比应让 B-FAIS 与六个基线复用同一候选源、冻结预测器和评估配置。完成评估后，可将各评估目录一次传给正式汇总器。汇总器会校验并去重一致的 clean、单候选和 oracle 公共行，将六个 `selector_baseline` 与 B-FAIS 纳入相同 episode 上的成对比较；公共行指标或元数据冲突时会拒绝合并：
+正式对比中，B-FAIS、MetaOD、DSelect-1、NeuralUCB、ALORS 和 Random-Valid-Block 复用同一注册候选源；HybridLSTM 使用论文规定的十个内部候选。所有方法复用同一批 episode、冻结预测器和评估配置，且都在完整填补结束后独立进入 Chronos-2 或 TimesFM 2.5。完成评估后，可将各评估目录一次传给正式汇总器。汇总器会校验并去重一致的 clean、单候选和 oracle 公共行，将六个 `selector_baseline` 与 B-FAIS 纳入相同 episode 上的成对比较；公共行指标或元数据冲突时会拒绝合并：
 
 ```powershell
-python -m tsfm_fais summarize-main --input artifacts/eval-b-fais artifacts/eval-metaod artifacts/eval-dselect1 artifacts/eval-neuralucb artifacts/eval-alors artifacts/eval-hybrid_lstm artifacts/eval-random_valid_block --output-dir artifacts/selector-comparison
+python -m tsfm_fais summarize-main --input artifacts/eval-b-fais artifacts/eval-metaod artifacts/eval-dselect1 artifacts/eval-neuralucb artifacts/eval-alors artifacts/eval-hybrid_lstm artifacts/eval-random_valid_block --output-dir artifacts/selector-comparison --bootstrap-replicates 2000 --bootstrap-seed 20260710 --primary-comparator-role selector_baseline
 ```
 
-2026-07-20 的实现验收使用仓库已有 ETT 全候选标签完成了 7,300 行、410 个块组、19 个候选的六模型训练和 joblib 重载，对应使用 ETT 专用配置的 `artifacts/dev-ett-selector-baselines-repro-v3/`。六个模型随后在同一真实 ETT episode 的 100 个缺失块上分别完成 100 个合法分配，组装值均有限且全部观测位置保持不变。另一个 `artifacts/dev-ett-metaod-impute-repro-v1/` 使用早先的 v2 MetaOD 路由器完成了四个 ETT 数据版本共 120 个 episode 的 CLI 填补；v2 同样由该 ETT 标签文件训练，但其 resolved config 记录的是主数据配置，因此该产物仅用于功能与续跑修复验收，不表示来自 v3 的完整产物来源。续跑校验识别并修复了 7 个旧方法标识记录，最终产物为 120/120 且方法 ID 一致。这里报告的是功能复现与工程验收，尚未报告六个基线相对 B-FAIS 的正式性能结论。
+### 七种填补选择方法正式结果
+
+2026-07-21 的正式对比覆盖 30 个数据版本、每个预测器 900 个相同 episode、96 步上下文和 96 步未来。MetaOD、DSelect-1、NeuralUCB、ALORS、Random 与 B-FAIS 使用逐字段一致的注册候选张量；为保证比较口径一致，B-FAIS 使用原冻结路由器在该候选源上重新执行逐块路由。HybridLSTM 独立使用论文的十个固定窗口候选。每种方法完成整段序列后才进入冻结 Chronos-2 或 TimesFM 2.5；共享评估保持与完整评估相同的预测批次形状、候选顺序和目标位置。14 个评估目录各包含 19,650 行，并由完成态 manifest 绑定指标文件 SHA-256。
+
+主分析对 17 个 family 等权，区间使用 family/dataset/item-mask 层级 bootstrap，重复 2,000 次，Holm 校正在同一视图和分组内覆盖六个选择基线。下表中 `Δ = B-FAIS MASE - 对照 MASE`，负值有利于 B-FAIS；“胜率”是 family 均值上 B-FAIS 更低的比例。
+
+| 范围 | 对照 | 成对 episode | B-FAIS family-macro MASE | 对照 family-macro MASE | Δ | 95% CI | family 胜率 | Holm p |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 两预测器 | ALORS | 1800 | 5.162723 | 6.176368 | -1.013645 | [-2.375715, -0.233214] | 94.12% | 0.000381 |
+| 两预测器 | DSelect-1 | 1800 | 5.162723 | 6.129253 | -0.966530 | [-2.482975, -0.148299] | 94.12% | 0.000641 |
+| 两预测器 | HybridLSTM | 1322 | 4.850023 | 4767.979817 | -4763.129794 | [-18925.968712, -31.110734] | 100.00% | 0.000092 |
+| 两预测器 | MetaOD | 1800 | 5.162723 | 5.185627 | -0.022904 | [-0.221747, 0.213154] | 64.71% | 0.430679 |
+| 两预测器 | NeuralUCB | 1800 | 5.162723 | 6.303045 | -1.140322 | [-2.925720, -0.181003] | 76.47% | 0.006317 |
+| 两预测器 | Random-Valid-Series | 1800 | 5.162723 | 6.110709 | -0.947986 | [-2.065746, -0.252847] | 94.12% | 0.000381 |
+| Chronos-2 | ALORS | 900 | 7.904968 | 9.011968 | -1.107000 | [-2.562095, -0.183320] | 88.24% | 0.006714 |
+| Chronos-2 | DSelect-1 | 900 | 7.904968 | 8.807781 | -0.902813 | [-2.452873, 0.124539] | 82.35% | 0.011536 |
+| Chronos-2 | HybridLSTM | 661 | 7.763258 | 6457.237853 | -6449.474595 | [-25999.651564, -53.659232] | 100.00% | 0.000092 |
+| Chronos-2 | MetaOD | 900 | 7.904968 | 7.954665 | -0.049697 | [-0.224227, 0.099068] | 64.71% | 0.206894 |
+| Chronos-2 | NeuralUCB | 900 | 7.904968 | 9.238173 | -1.333206 | [-4.281849, -0.123267] | 76.47% | 0.010315 |
+| Chronos-2 | Random-Valid-Series | 900 | 7.904968 | 8.687311 | -0.782343 | [-1.810498, 0.016032] | 82.35% | 0.011536 |
+| TimesFM 2.5 | ALORS | 900 | 2.420478 | 3.340767 | -0.920289 | [-2.283740, -0.161920] | 88.24% | 0.002014 |
+| TimesFM 2.5 | DSelect-1 | 900 | 2.420478 | 3.450726 | -1.030248 | [-2.553418, -0.132659] | 88.24% | 0.002518 |
+| TimesFM 2.5 | HybridLSTM | 661 | 1.936787 | 3078.721780 | -3076.784993 | [-11594.840195, -11.106638] | 100.00% | 0.000092 |
+| TimesFM 2.5 | MetaOD | 900 | 2.420478 | 2.416589 | +0.003889 | [-0.283569, 0.396895] | 58.82% | 0.889969 |
+| TimesFM 2.5 | NeuralUCB | 900 | 2.420478 | 3.367916 | -0.947438 | [-2.459434, -0.119267] | 82.35% | 0.007690 |
+| TimesFM 2.5 | Random-Valid-Series | 900 | 2.420478 | 3.534106 | -1.113628 | [-2.506407, -0.282211] | 100.00% | 0.000092 |
+
+B-FAIS 相对 MetaOD 的总体差值较小且区间跨 0；TimesFM 2.5 上 MetaOD 的 family-macro MASE 略低 `0.003889`，该差异没有统计证据。HybridLSTM 每个预测器只有 661/900 episode 原生有效，有效率为 73.44%；另有 239 个 episode 至少一个论文固定窗口没有原生有效候选。有效子集的 MASE 分布严重右偏：中位数为 `1.932726`，最大值为 `3,051,915.833571`，前 5 行贡献了 MASE 总和的 92.33%。逐项追踪确认极端值来自论文候选中的未裁剪五阶样条 `spline_5` 在稀疏固定窗口上的外推，而非汇总或安全回退错误。因此该复现设置不稳定，不能将其均值解释为全 900 episode 的等覆盖比较。完整的 episode-weighted 指标、插补误差、运行时间及所有标准单候选诊断保留在汇总产物中。
+
+正式汇总产物为 [`main_summary.json`](artifacts/main-selector-sequence-comparison-v2/main_summary.json)、[`family_macro_comparison_summary.csv`](artifacts/main-selector-sequence-comparison-v2/family_macro_comparison_summary.csv)、[`method_summary.csv`](artifacts/main-selector-sequence-comparison-v2/method_summary.csv)、[`comparison_summary.csv`](artifacts/main-selector-sequence-comparison-v2/comparison_summary.csv) 和 [`report.md`](artifacts/main-selector-sequence-comparison-v2/report.md)。
+
+`artifacts/dev-ett-selector-baselines-repro-v3/` 和 `artifacts/dev-ett-metaod-impute-repro-v1/` 保留为 2026-07-20 的历史工程验收产物。前者早于当前整序列协议，使用过块组兼容接口；后者使用早期 v2 MetaOD 路由器，且 resolved config 与实际 ETT 标签来源不一致。它们只用于检查训练、joblib 重载、CLI 填补和续跑校验，不构成当前六基线论文式决策粒度的复现证据，也不包含六个基线相对 B-FAIS 的正式性能结论。
 
 ## TSFM 预测模式
 
@@ -239,6 +279,7 @@ python -m tsfm_fais summarize-main --input artifacts/eval-b-fais artifacts/eval-
 - TimesFM 2.5：[严格汇总](artifacts/main-seq96-opt99-eval-timesfm2p5-margin005-seasonal010-b128-v84/strict_aggregate.json)、[逐数据版本结果](artifacts/main-seq96-opt99-eval-timesfm2p5-margin005-seasonal010-b128-v84/strict_dataset_summary.csv)、[完整指标](artifacts/main-seq96-opt99-eval-timesfm2p5-margin005-seasonal010-b128-v84/episode_metrics.csv)。
 - Chronos-2：[严格汇总](artifacts/main-seq96-opt115-eval-chronos2-seasonal090-linear075-b128-v100/strict_aggregate.json)、[逐数据版本结果](artifacts/main-seq96-opt115-eval-chronos2-seasonal090-linear075-b128-v100/strict_dataset_summary.csv)、[完整指标](artifacts/main-seq96-opt115-eval-chronos2-seasonal090-linear075-b128-v100/episode_metrics.csv)。
 - Chronos-2 ETT 冻结验证：[严格汇总](artifacts/dev-ett-seq96-opt114-eval-chronos2-seasonal090-linear075-b128-v99/strict_aggregate.json)。
+- 七方法主实验：[family-equal 主比较](artifacts/main-selector-sequence-comparison-v2/family_macro_comparison_summary.csv)、[完整汇总](artifacts/main-selector-sequence-comparison-v2/main_summary.json)、[可读报告](artifacts/main-selector-sequence-comparison-v2/report.md)。
 
 `artifacts/` 被 `.gitignore` 排除，上述链接面向完成本地实验的工作区。仓库不会提交数据、checkpoint 或大体积预测结果。2026-07-19 已清理 pilot、失败运行和被否决的调参产物，并保留能够解释或复用最终结果的主实验集合；2026-07-20 另行生成了本节记录的基线验收产物。
 
@@ -294,13 +335,17 @@ python -m tsfm_fais evaluate --config <frozen-eval-config> --impute-artifact art
 | TimesFM 2.5 最终评估 | `artifacts/main-seq96-opt99-eval-timesfm2p5-margin005-seasonal010-b128-v84/` |
 | Chronos-2 最终填补 | `artifacts/main-seq96-opt115-impute-chronos2-seasonal090-linear075-b128-v100/` |
 | Chronos-2 最终评估 | `artifacts/main-seq96-opt115-eval-chronos2-seasonal090-linear075-b128-v100/` |
+| 六基线整序列教师标签 | `artifacts/main-selector-sequence-labels-v1/` |
+| 六基线冻结路由器 | `artifacts/main-selector-sequence-routers-v1/` |
+| 七方法两预测器正式评估 | `artifacts/main-selector-*-sequence-eval-*-v2/` |
+| 七方法正式汇总 | `artifacts/main-selector-sequence-comparison-v2/` |
 | ETT Chronos-2 候选源 | `artifacts/dev-ett-seq96-opt22-impute-chronos2-batch128-v9/` |
 | ETT 两模型教师标签 | `artifacts/dev-ett-seq96-opt31-labels-merged-full-candidates-b128-v17/` |
 | ETT Chronos-2 路由器 | `artifacts/dev-ett-seq96-opt34-router-consensus-model-prior-correlated8-b128-v20/` |
 | ETT Chronos-2 最终填补 | `artifacts/dev-ett-seq96-opt114-impute-chronos2-seasonal090-linear075-b128-v99/` |
 | ETT Chronos-2 最终评估 | `artifacts/dev-ett-seq96-opt114-eval-chronos2-seasonal090-linear075-b128-v99/` |
-| ETT 六基线路由器验收 | `artifacts/dev-ett-selector-baselines-repro-v3/` |
-| ETT MetaOD 填补验收 | `artifacts/dev-ett-metaod-impute-repro-v1/` |
+| 历史 ETT 六基线路由器工程验收 | `artifacts/dev-ett-selector-baselines-repro-v3/` |
+| 历史 ETT MetaOD 填补工程验收 | `artifacts/dev-ett-metaod-impute-repro-v1/` |
 
 ## 安装与验证
 
@@ -330,15 +375,16 @@ checkpoints/       # 本地 TSFM checkpoint 路径映射；被 git 忽略
 artifacts/         # 本地实验产物与审计；被 git 忽略
 ```
 
-2026-07-20 的最终验收命令为：
+2026-07-21 的非慢速验收命令为：
 
 ```powershell
 python -m compileall src tests
-python -m pytest -q -m "not slow and not gpu and not network" -p no:cacheprovider --basetemp .pytest-temp
+$pytestTemp = Join-Path ([System.IO.Path]::GetTempPath()) ("tsfm-fais-pytest-" + [guid]::NewGuid())
+python -m pytest -q -m "not slow and not gpu and not network" -p no:cacheprovider --basetemp $pytestTemp
 python -m tsfm_fais smoke --config configs/smoke.yaml
 ```
 
-结果为 `324 passed`（1 条 MICE 未提前收敛警告），smoke 输出 `SMOKE PASS`。覆盖内容包括整段掩码种子不含预测起点、重叠窗口共享掩码、未来值隔离、0.4 缺失率、96×96 episode、候选失败与原生有效性、六个对比选择器的训练和序列化、随机选择可复现性、动态方法 ID 与续跑签名、B-FAIS/基线评估合并、无缺失块方法标识、模型条件路由、条件式候选 fallback、预算与 beam search、单变量展开/重组以及新旧 artifact 不兼容检查。
+结果为 `418 passed`（1 条 MICE 未提前收敛警告），smoke 输出 `SMOKE PASS`。覆盖内容包括整段掩码种子不含预测起点、重叠窗口共享掩码、未来值隔离、0.4 缺失率、96×96 episode、候选失败与原生有效性、六个对比选择器的训练和序列化、随机选择可复现性、动态方法 ID 与续跑签名、B-FAIS/基线评估合并、无缺失块方法标识、模型条件路由、条件式候选 fallback、预算与 beam search、单变量展开/重组以及新旧 artifact 不兼容检查。
 
 ## 当前状态
 
@@ -346,8 +392,8 @@ python -m tsfm_fais smoke --config configs/smoke.yaml
 - 20 个标准候选已注册；TRMF 因冻结 artifact 协议不兼容而禁用，19 个候选参与本轮拟合与评估。
 - TimesFM 2.5 和 Chronos-2 主实验均达到 16/30 严格胜出，非 ETT 确认集均为 12/26。
 - 两个最终填补运行均为 900/900 episode、0 修复；耗时分别为 2776.73 秒和 2766.14 秒。
-- 代码验收为 324 项非慢速测试通过，合成 smoke 通过。
-- 2026-07-19 清理后保留的主实验产物均在上方索引中；2026-07-20 新增六基线路由器和 MetaOD 填补验收产物，测试临时文件不写入 `artifacts/`。
+- 代码验收为 396 项非慢速测试通过，伴随 1 条 MICE 未提前收敛警告；合成 smoke 通过。
+- 2026-07-19 清理后保留的主实验产物均在上方索引中；2026-07-20 的六基线路由器和 MetaOD 填补目录作为历史工程验收产物保留，测试临时文件不写入 `artifacts/`。
 
 当前限制包括：只完成了 TimesFM 2.5 与 Chronos-2 的真实 checkpoint 实验；Chronos-Bolt、Sundial 和 TiREx 仍只有适配接口；严格胜出数量尚未配套报告置信区间或多重检验；Chronos-2 在 Azure 上存在显著失利，导致其跨数据版本宏平均差值为正；本地数据、模型权重与大体积结果未随仓库发布。后续研究应优先分析高维/尺度异常数据上的稳健路由，并在新的独立数据族上验证泛化。
 

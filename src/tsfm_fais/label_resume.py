@@ -157,8 +157,7 @@ def build_label_resume_identity(
     if not candidates or len(set(candidates)) != len(candidates):
         raise ValueError("selected candidates must be non-empty and unique")
     sources = {
-        str(name): path_signature(path)
-        for name, path in sorted((source_artifacts or {}).items())
+        str(name): path_signature(path) for name, path in sorted((source_artifacts or {}).items())
     }
     normalized_spec = _normalize_json(forecaster_spec)
     return {
@@ -273,9 +272,7 @@ class LabelEpisodeValidation:
 
 
 def _finite_number(value: Any, field: str) -> float:
-    if isinstance(value, (bool, np.bool_)) or not isinstance(
-        value, (int, float, np.number)
-    ):
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.number)):
         raise ValueError(f"{field} must be numeric")
     number = float(value)
     if not math.isfinite(number):
@@ -332,6 +329,11 @@ def validate_label_rows(
     group_ids: set[str] = set()
     reference_clean: float | None = None
     reference_anchor: float | None = None
+    sequence_protocol = bool(unary) and all(
+        row.get("label_scope") in {"whole_series", "hybrid_window"}
+        for row in unary
+        if isinstance(row, Mapping)
+    )
     for index, row in enumerate(unary):
         if not isinstance(row, dict):
             raise ValueError(f"unary row {index} must be an object")
@@ -344,9 +346,7 @@ def validate_label_rows(
         if key in unary_keys:
             raise ValueError(f"duplicate unary key: {key}")
         unary_keys.add(key)
-        expected_group = (
-            f"{expectation.forecaster_id}::{expectation.episode_id}::{block_id}"
-        )
+        expected_group = f"{expectation.forecaster_id}::{expectation.episode_id}::{block_id}"
         if row.get("group_id") != expected_group:
             raise ValueError(f"unary row {index} has an inconsistent group_id")
         group_ids.add(expected_group)
@@ -356,30 +356,37 @@ def validate_label_rows(
             raise ValueError(f"unary row {index} feature fields must be objects")
         _validate_feature_values(prior, f"unary[{index}].prior_features")
         _validate_feature_values(features, f"unary[{index}].unary_features")
-        forecast_loss = _finite_number(
-            row.get("forecast_loss"), f"unary[{index}].forecast_loss"
-        )
-        clean_loss = _finite_number(
-            row.get("clean_loss"), f"unary[{index}].clean_loss"
-        )
-        anchor_loss = _finite_number(
-            row.get("anchor_loss"), f"unary[{index}].anchor_loss"
-        )
-        degradation = _finite_number(
-            row.get("degradation"), f"unary[{index}].degradation"
-        )
-        if not math.isclose(
-            degradation,
-            forecast_loss - clean_loss,
-            rel_tol=1e-9,
-            abs_tol=1e-10,
-        ):
-            raise ValueError(f"unary row {index} has an inconsistent degradation")
-        if reference_clean is None:
-            reference_clean = clean_loss
-            reference_anchor = anchor_loss
-        elif clean_loss != reference_clean or anchor_loss != reference_anchor:
-            raise ValueError("unary rows disagree on clean or anchor loss")
+        if sequence_protocol:
+            _finite_number(row.get("imputation_loss"), f"unary[{index}].imputation_loss")
+            _finite_number(row.get("imputation_mae"), f"unary[{index}].imputation_mae")
+            _finite_number(row.get("imputation_rmse"), f"unary[{index}].imputation_rmse")
+            reward = _finite_number(
+                row.get("imputation_reward"), f"unary[{index}].imputation_reward"
+            )
+            if not 0.0 <= reward <= 1.0:
+                raise ValueError(f"unary row {index} imputation_reward must lie in [0, 1]")
+        else:
+            forecast_loss = _finite_number(
+                row.get("forecast_loss"), f"unary[{index}].forecast_loss"
+            )
+            clean_loss = _finite_number(row.get("clean_loss"), f"unary[{index}].clean_loss")
+            anchor_loss = _finite_number(row.get("anchor_loss"), f"unary[{index}].anchor_loss")
+            degradation = _finite_number(row.get("degradation"), f"unary[{index}].degradation")
+            if not math.isclose(
+                degradation,
+                forecast_loss - clean_loss,
+                rel_tol=1e-9,
+                abs_tol=1e-10,
+            ):
+                raise ValueError(f"unary row {index} has an inconsistent degradation")
+            if reference_clean is None:
+                reference_clean = clean_loss
+                reference_anchor = anchor_loss
+            elif clean_loss != reference_clean or anchor_loss != reference_anchor:
+                raise ValueError("unary rows disagree on clean or anchor loss")
+
+    if sequence_protocol and pairs:
+        raise ValueError("sequence-imputation labels cannot contain block-pair rows")
 
     pair_keys: set[tuple[tuple[str, str], tuple[str, str]]] = set()
     for index, row in enumerate(pairs):
@@ -537,18 +544,12 @@ def _entry_totals(
         if plans is not None:
             plan = plans.get(expectation.dataset_id)
             if not isinstance(plan, Mapping):
-                raise LabelResumeError(
-                    f"progress entry {key!r} has no registered dataset plan"
-                )
+                raise LabelResumeError(f"progress entry {key!r} has no registered dataset plan")
             if plan.get("sha256") != expectation.dataset_plan_sha256:
-                raise LabelResumeError(
-                    f"progress entry {key!r} dataset-plan signature differs"
-                )
+                raise LabelResumeError(f"progress entry {key!r} dataset-plan signature differs")
             episode_ids = plan.get("episode_ids")
             if not isinstance(episode_ids, list) or expectation.episode_id not in episode_ids:
-                raise LabelResumeError(
-                    f"progress entry {key!r} is absent from its dataset plan"
-                )
+                raise LabelResumeError(f"progress entry {key!r} is absent from its dataset plan")
         if raw_entry.get("outcome") not in {"labeled", "no_labels"}:
             raise LabelResumeError(f"progress entry {key!r} outcome is invalid")
         expected_sidecar = expectation.sidecar_relative_path.as_posix()
@@ -579,9 +580,7 @@ class LabelProgressStore:
         self.payload = payload
 
     @classmethod
-    def create(
-        cls, root: str | Path, identity: Mapping[str, Any]
-    ) -> LabelProgressStore:
+    def create(cls, root: str | Path, identity: Mapping[str, Any]) -> LabelProgressStore:
         target = Path(root).resolve()
         target.mkdir(parents=True, exist_ok=True)
         progress_path = target / "labels_progress.json"
@@ -606,9 +605,7 @@ class LabelProgressStore:
         return cls(target, payload)
 
     @classmethod
-    def open_existing(
-        cls, root: str | Path, identity: Mapping[str, Any]
-    ) -> LabelProgressStore:
+    def open_existing(cls, root: str | Path, identity: Mapping[str, Any]) -> LabelProgressStore:
         target = Path(root).resolve()
         progress_path = target / "labels_progress.json"
         payload = _read_json_object(progress_path, "labels progress")
@@ -664,9 +661,7 @@ class LabelProgressStore:
     def _check_expectation_plan(self, expectation: LabelEpisodeExpectation) -> None:
         plan = self.payload["dataset_plans"].get(expectation.dataset_id)
         if not isinstance(plan, dict):
-            raise LabelResumeError(
-                f"dataset plan is not registered for {expectation.dataset_id!r}"
-            )
+            raise LabelResumeError(f"dataset plan is not registered for {expectation.dataset_id!r}")
         if plan.get("sha256") != expectation.dataset_plan_sha256:
             raise LabelResumeError("episode dataset-plan signature differs")
         if expectation.episode_id not in plan.get("episode_ids", []):
@@ -738,9 +733,7 @@ class LabelProgressStore:
             raise LabelResumeError("sidecar path escapes the run directory")
         return path
 
-    def validate_episode(
-        self, expectation: LabelEpisodeExpectation
-    ) -> LabelEpisodeValidation:
+    def validate_episode(self, expectation: LabelEpisodeExpectation) -> LabelEpisodeValidation:
         self._check_expectation_plan(expectation)
         entry = self.payload["entries"].get(expectation.key)
         if entry is None:
@@ -851,9 +844,7 @@ class LabelProgressStore:
             "no_label_episode_count": no_labels,
             "unary_rows": len(unary_rows),
             "pair_rows": len(pair_rows),
-            "ranking_groups": len(
-                {str(row["group_id"]) for row in unary_rows}
-            ),
+            "ranking_groups": len({str(row["group_id"]) for row in unary_rows}),
             "forecasters": sorted(forecasters),
             "dataset_ids": sorted(datasets),
             "family_ids": sorted(families),
@@ -866,9 +857,7 @@ class LabelProgressStore:
         updated = copy.deepcopy(self.payload)
         updated["status"] = "rebuilt"
         updated["final_outputs"] = {
-            key: value
-            for key, value in summary.items()
-            if key not in {"artifact_loading_deltas"}
+            key: value for key, value in summary.items() if key not in {"artifact_loading_deltas"}
         }
         updated["updated_at"] = utc_now()
         _atomic_write_json(self.progress_path, updated)

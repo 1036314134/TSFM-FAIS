@@ -33,6 +33,21 @@ SUMMARY_SCOPES: tuple[tuple[str, tuple[str, ...]], ...] = (
 DEFAULT_BOOTSTRAP_REPLICATES = 2_000
 DEFAULT_BOOTSTRAP_SEED = 20260710
 SMALL_SAMPLE_THRESHOLD = 30
+_STUDY_SIGNATURE_FIELDS: tuple[str, ...] = (
+    "context_length",
+    "horizon",
+    "target_indices",
+    "forecast_num_samples",
+    "forecast_batch_size",
+    "seed",
+    "mask_protocol",
+    "forecast_call_protocol",
+)
+_DEFAULT_PRIMARY_COMPARATOR_ROLES: tuple[str, ...] = (
+    "baseline",
+    "missing_anchor",
+    "selector_baseline",
+)
 
 
 EpisodeKey = tuple[str, str, str]
@@ -53,9 +68,7 @@ class _Source:
             "metrics_path": str(self.metrics_path),
             "sha256": self.sha256,
             "row_count": self.row_count,
-            "manifest_path": (
-                None if self.manifest_path is None else str(self.manifest_path)
-            ),
+            "manifest_path": (None if self.manifest_path is None else str(self.manifest_path)),
             "manifest_status": self.manifest_status,
             "manifest_forecaster_id": self.manifest_forecaster_id,
             "study_signature": (
@@ -102,29 +115,43 @@ def _resolve_source(
     value: str | Path,
 ) -> tuple[
     Path,
-    Path | None,
-    str | None,
+    Path,
+    str,
     str | None,
     int | None,
-    dict[str, Any] | None,
+    dict[str, Any],
+    str,
 ]:
     source = Path(value).resolve()
-    root = source if source.is_dir() else source.parent
-    metrics = source / "episode_metrics.jsonl" if source.is_dir() else source
+    if source.is_dir():
+        root = source
+        metrics = source / "episode_metrics.jsonl"
+    else:
+        if source.name != "episode_metrics.jsonl":
+            raise ValueError(
+                "summarize-main only accepts evaluation directories or their "
+                "episode_metrics.jsonl files"
+            )
+        root = source.parent
+        metrics = source
     if not metrics.is_file():
         raise FileNotFoundError(f"evaluation metrics do not exist: {metrics}")
     manifest_path = root / "evaluation_manifest.json"
     if not manifest_path.is_file():
-        return metrics, None, None, None, None, None
+        raise ValueError(
+            "summarize-main requires a completed evaluation_manifest.json beside "
+            f"the metrics file: {metrics}"
+        )
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
         raise ValueError(f"cannot read evaluation manifest: {manifest_path}") from error
+    if not isinstance(manifest, Mapping):
+        raise ValueError(f"evaluation manifest must be an object: {manifest_path}")
     status = str(manifest.get("status", ""))
     if status != "completed":
         raise ValueError(
-            f"evaluation manifest is not completed ({status or 'missing status'}): "
-            f"{manifest_path}"
+            f"evaluation manifest is not completed ({status or 'missing status'}): {manifest_path}"
         )
     forecaster_id = manifest.get("forecaster_id")
     total_rows = manifest.get("total_rows")
@@ -136,22 +163,47 @@ def _resolve_source(
                 f"evaluation manifest has an invalid total_rows: {manifest_path}"
             ) from error
         if total_rows < 0:
-            raise ValueError(
-                f"evaluation manifest has a negative total_rows: {manifest_path}"
-            )
+            raise ValueError(f"evaluation manifest has a negative total_rows: {manifest_path}")
     signature = manifest.get("evaluation_signature")
-    study_signature = None
-    if isinstance(signature, Mapping):
-        signature_fields = (
-            "context_length",
-            "horizon",
-            "target_indices",
-            "forecast_num_samples",
-            "forecast_batch_size",
-            "seed",
-            "mask_protocol",
+    if not isinstance(signature, Mapping):
+        raise ValueError(
+            f"completed evaluation manifest has no evaluation_signature: {manifest_path}"
         )
-        study_signature = {field: signature.get(field) for field in signature_fields}
+    missing_signature_fields = sorted(
+        {"forecaster_id", *_STUDY_SIGNATURE_FIELDS} - signature.keys()
+    )
+    if missing_signature_fields:
+        raise ValueError(
+            f"evaluation_signature is incomplete at {manifest_path}: "
+            + ", ".join(missing_signature_fields)
+        )
+    if forecaster_id is None or str(signature["forecaster_id"]) != str(forecaster_id):
+        raise ValueError(
+            f"evaluation manifest and signature forecaster IDs differ: {manifest_path}"
+        )
+    study_signature = {field: signature[field] for field in _STUDY_SIGNATURE_FIELDS}
+
+    recorded_sha256 = manifest.get("episode_metrics_jsonl_sha256")
+    if not isinstance(recorded_sha256, str):
+        raise ValueError(f"completed evaluation manifest has no metrics SHA-256: {manifest_path}")
+    normalized_sha256 = recorded_sha256.strip().lower()
+    if len(normalized_sha256) != 64 or any(
+        character not in "0123456789abcdef" for character in normalized_sha256
+    ):
+        raise ValueError(f"evaluation manifest has an invalid metrics SHA-256: {manifest_path}")
+    actual_sha256 = _sha256(metrics)
+    if actual_sha256 != normalized_sha256:
+        raise ValueError(f"evaluation metrics SHA-256 does not match its manifest: {metrics}")
+    recorded_size = manifest.get("episode_metrics_jsonl_size_bytes")
+    if recorded_size is not None:
+        try:
+            expected_size = int(recorded_size)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                f"evaluation manifest has an invalid metrics size: {manifest_path}"
+            ) from error
+        if expected_size < 0 or metrics.stat().st_size != expected_size:
+            raise ValueError(f"evaluation metrics size does not match its manifest: {metrics}")
     return (
         metrics,
         manifest_path,
@@ -159,6 +211,7 @@ def _resolve_source(
         None if forecaster_id is None else str(forecaster_id),
         total_rows,
         study_signature,
+        actual_sha256,
     )
 
 
@@ -174,7 +227,9 @@ def _finite_number(value: Any) -> float | None:
 
 def _metric_eligible(row: Mapping[str, Any]) -> bool:
     eligible = bool(row.get("metric_eligible", row.get("native_valid", True)))
-    return eligible and all(_finite_number(row.get(metric)) is not None for metric in FORECAST_METRICS)
+    return eligible and all(
+        _finite_number(row.get(metric)) is not None for metric in FORECAST_METRICS
+    )
 
 
 def _metric_available(row: Mapping[str, Any], metric: str) -> bool:
@@ -199,6 +254,7 @@ _SHARED_ROW_FIELDS = (
     "family_id",
     "forecaster_id",
     "routing_forecaster_id",
+    "routing_artifact_forecaster_id",
     "mechanism",
     "missing_rate",
     "item_id",
@@ -241,9 +297,7 @@ def _shared_row_conflicts(
     incoming: Mapping[str, Any],
 ) -> tuple[str, ...]:
     return tuple(
-        field
-        for field in _SHARED_ROW_FIELDS
-        if existing.get(field) != incoming.get(field)
+        field for field in _SHARED_ROW_FIELDS if existing.get(field) != incoming.get(field)
     )
 
 
@@ -296,9 +350,8 @@ def _read_sources(
         manifest_forecaster_id,
         manifest_total_rows,
         study_signature,
-    ) in sorted(
-        resolved, key=lambda entry: str(entry[0]).casefold()
-    ):
+        manifest_metrics_sha256,
+    ) in sorted(resolved, key=lambda entry: str(entry[0]).casefold()):
         row_count = 0
         source_forecasters: set[str] = set()
         source_episode_methods: set[tuple[EpisodeKey, str]] = set()
@@ -309,66 +362,52 @@ def _read_sources(
                 try:
                     raw = json.loads(line)
                 except json.JSONDecodeError as error:
-                    raise ValueError(
-                        f"invalid JSON at {metrics_path}:{line_number}"
-                    ) from error
+                    raise ValueError(f"invalid JSON at {metrics_path}:{line_number}") from error
                 missing = sorted(required - raw.keys())
                 if missing:
                     raise ValueError(
-                        f"missing fields at {metrics_path}:{line_number}: "
-                        + ", ".join(missing)
+                        f"missing fields at {metrics_path}:{line_number}: " + ", ".join(missing)
                     )
                 row = dict(raw)
                 if row.get("mask_protocol") != "sequence_mask_v2":
                     raise ValueError(
-                        f"row does not use sequence_mask_v2 at "
-                        f"{metrics_path}:{line_number}"
+                        f"row does not use sequence_mask_v2 at {metrics_path}:{line_number}"
                     )
                 key = _episode_key(row)
                 if not all(key):
-                    raise ValueError(
-                        f"empty episode identity at {metrics_path}:{line_number}"
-                    )
+                    raise ValueError(f"empty episode identity at {metrics_path}:{line_number}")
                 method = str(row["method"])
                 source_forecasters.add(key[0])
                 role = str(row["method_role"])
                 if not method or not role:
-                    raise ValueError(
-                        f"empty method identity at {metrics_path}:{line_number}"
-                    )
+                    raise ValueError(f"empty method identity at {metrics_path}:{line_number}")
                 previous_role = method_roles.setdefault(method, role)
                 if previous_role != role:
                     raise ValueError(
-                        f"method {method!r} has conflicting roles: "
-                        f"{previous_role!r} and {role!r}"
+                        f"method {method!r} has conflicting roles: {previous_role!r} and {role!r}"
                     )
                 source_identity = (key, method)
                 if source_identity in source_episode_methods:
                     raise ValueError(
-                        "duplicate forecaster/episode/method row: "
-                        f"{key[0]}/{key[2]}/{method}"
+                        f"duplicate forecaster/episode/method row: {key[0]}/{key[2]}/{method}"
                     )
                 source_episode_methods.add(source_identity)
                 current_metadata = {field: row.get(field) for field in metadata_fields}
                 if key in metadata and metadata[key] != current_metadata:
-                    raise ValueError(
-                        f"inconsistent metadata within episode {key[0]}/{key[2]}"
-                    )
+                    raise ValueError(f"inconsistent metadata within episode {key[0]}/{key[2]}")
                 metadata[key] = current_metadata
                 episode_rows = episodes.setdefault(key, {})
                 if method in episode_rows:
                     existing = episode_rows[method]
                     if role not in _SHARED_METHOD_ROLES:
                         raise ValueError(
-                            "duplicate forecaster/episode/method row: "
-                            f"{key[0]}/{key[2]}/{method}"
+                            f"duplicate forecaster/episode/method row: {key[0]}/{key[2]}/{method}"
                         )
                     conflicts = _shared_row_conflicts(existing, row)
                     if conflicts:
                         raise ValueError(
                             "conflicting shared forecaster/episode/method row: "
-                            f"{key[0]}/{key[2]}/{method}; fields: "
-                            + ", ".join(conflicts)
+                            f"{key[0]}/{key[2]}/{method}; fields: " + ", ".join(conflicts)
                         )
                 else:
                     episode_rows[method] = row
@@ -380,9 +419,7 @@ def _read_sources(
                 f"evaluation row count does not match its manifest at {metrics_path}: "
                 f"{row_count} != {manifest_total_rows}"
             )
-        if manifest_forecaster_id is not None and source_forecasters != {
-            manifest_forecaster_id
-        }:
+        if manifest_forecaster_id is not None and source_forecasters != {manifest_forecaster_id}:
             raise ValueError(
                 f"evaluation forecaster rows do not match the manifest at {metrics_path}"
             )
@@ -392,12 +429,17 @@ def _read_sources(
             elif study_signature != reference_signature:
                 raise ValueError(
                     "evaluation study signatures differ in context, horizon, targets, "
-                    "sampling, or seed"
+                    "sampling, seed, or forecast-call protocol"
                 )
+        final_metrics_sha256 = _sha256(metrics_path)
+        if final_metrics_sha256 != manifest_metrics_sha256:
+            raise ValueError(
+                f"evaluation metrics changed while summarize-main was reading: {metrics_path}"
+            )
         sources.append(
             _Source(
                 metrics_path=metrics_path,
-                sha256=_sha256(metrics_path),
+                sha256=final_metrics_sha256,
                 row_count=row_count,
                 manifest_path=manifest_path,
                 manifest_status=manifest_status,
@@ -410,8 +452,7 @@ def _read_sources(
         absent = sorted({"clean", "b_fais", "oracle"} - rows.keys())
         if absent:
             raise ValueError(
-                f"episode {key[0]}/{key[2]} is incomplete; missing: "
-                + ", ".join(absent)
+                f"episode {key[0]}/{key[2]} is incomplete; missing: " + ", ".join(absent)
             )
         for method in ("clean", "b_fais", "oracle"):
             if not _metric_eligible(rows[method]):
@@ -436,9 +477,7 @@ def _scope_groups(
             yield scope, fields, group_key, partitions[group_key]
 
 
-def _group_prefix(
-    scope: str, fields: Sequence[str], values: Sequence[Any]
-) -> dict[str, Any]:
+def _group_prefix(scope: str, fields: Sequence[str], values: Sequence[Any]) -> dict[str, Any]:
     result: dict[str, Any] = {
         "scope": scope,
         "group_value": "all" if not fields else " | ".join(map(str, values)),
@@ -451,15 +490,12 @@ def _group_prefix(
 
 def _method_order(method_roles: Mapping[str, str]) -> tuple[str, ...]:
     selector_methods = sorted(
-        method
-        for method, role in method_roles.items()
-        if role == "selector_baseline"
+        method for method, role in method_roles.items() if role == "selector_baseline"
     )
     candidate_methods = sorted(
         method
         for method, role in method_roles.items()
-        if role in {"baseline", "missing_anchor"}
-        and method not in {"locf", "linear_interp"}
+        if role in {"baseline", "missing_anchor"} and method not in {"locf", "linear_interp"}
     )
     ordered = [
         "b_fais",
@@ -543,12 +579,8 @@ def _method_summaries(
         for method in methods:
             recorded = [episodes[key].get(method) for key in group]
             valid = [row for row in recorded if row is not None and _metric_eligible(row)]
-            rank_values = [
-                ranks[key][method] for key in group if method in ranks[key]
-            ]
-            rank_pool_values = [
-                float(pool_sizes[key]) for key in group if method in ranks[key]
-            ]
+            rank_values = [ranks[key][method] for key in group if method in ranks[key]]
+            rank_pool_values = [float(pool_sizes[key]) for key in group if method in ranks[key]]
             result: dict[str, Any] = {
                 **_group_prefix(scope, fields, values),
                 "method": method,
@@ -559,13 +591,9 @@ def _method_summaries(
                 "valid_rate": len(valid) / len(group),
                 "small_sample": len(valid) < SMALL_SAMPLE_THRESHOLD,
                 "rank_count": len(rank_values),
-                "average_rank_mase": (
-                    None if not rank_values else float(np.mean(rank_values))
-                ),
+                "average_rank_mase": (None if not rank_values else float(np.mean(rank_values))),
                 "rank_pool_size_mean": (
-                    None
-                    if not rank_pool_values
-                    else float(np.mean(rank_pool_values))
+                    None if not rank_pool_values else float(np.mean(rank_pool_values))
                 ),
             }
             for metric in PAIRED_METRICS:
@@ -588,9 +616,10 @@ def _method_summaries(
             ):
                 metric_values = [
                     number
-                    for row in (valid if metric not in {"runtime_seconds", "rss_delta_bytes"} else recorded)
-                    if row is not None
-                    and (number := _finite_number(row.get(metric))) is not None
+                    for row in (
+                        valid if metric not in {"runtime_seconds", "rss_delta_bytes"} else recorded
+                    )
+                    if row is not None and (number := _finite_number(row.get(metric))) is not None
                 ]
                 count, mean, median, standard_deviation = _summary(metric_values)
                 result[f"{metric}_count"] = count
@@ -675,24 +704,15 @@ def _hierarchical_family_interval(
         for family in sampled_family_names:
             datasets = hierarchy[str(family)]
             dataset_names = tuple(sorted(datasets))
-            sampled_dataset_names = rng.choice(
-                dataset_names, size=len(dataset_names), replace=True
-            )
+            sampled_dataset_names = rng.choice(dataset_names, size=len(dataset_names), replace=True)
             sampled_dataset_values: list[float] = []
             for dataset in sampled_dataset_names:
                 clusters = datasets[str(dataset)]
                 cluster_names = tuple(sorted(clusters))
-                sampled_clusters = rng.choice(
-                    cluster_names, size=len(cluster_names), replace=True
-                )
+                sampled_clusters = rng.choice(cluster_names, size=len(cluster_names), replace=True)
                 sampled_dataset_values.append(
                     float(
-                        np.mean(
-                            [
-                                np.mean(clusters[str(cluster)])
-                                for cluster in sampled_clusters
-                            ]
-                        )
+                        np.mean([np.mean(clusters[str(cluster)]) for cluster in sampled_clusters])
                     )
                 )
             sampled_family_values.append(float(np.mean(sampled_dataset_values)))
@@ -708,11 +728,17 @@ def _family_macro_primary(
     *,
     bootstrap_replicates: int,
     bootstrap_seed: int,
+    comparator_roles: Sequence[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Build the primary family-equal MASE comparison table."""
 
     primary_scopes = SUMMARY_SCOPES[:4]
-    comparators = _comparator_order(method_roles)
+    allowed_roles = None if comparator_roles is None else frozenset(comparator_roles)
+    comparators = tuple(
+        comparator
+        for comparator in _comparator_order(method_roles)
+        if allowed_roles is None or method_roles[comparator] in allowed_roles
+    )
     results: list[dict[str, Any]] = []
     all_keys = sorted(episodes)
     for view, view_keys in (
@@ -726,9 +752,7 @@ def _family_macro_primary(
             partitions: dict[tuple[Any, ...], list[EpisodeKey]] = defaultdict(list)
             for key in view_keys:
                 partitions[tuple(metadata[key].get(field) for field in fields)].append(key)
-            for group_values in sorted(
-                partitions, key=lambda values: tuple(map(str, values))
-            ):
+            for group_values in sorted(partitions, key=lambda values: tuple(map(str, values))):
                 group = partitions[group_values]
                 for comparator in comparators:
                     pair_keys = [
@@ -740,18 +764,11 @@ def _family_macro_primary(
                     ]
                     if not pair_keys:
                         continue
-                    b_values = {
-                        key: float(episodes[key]["b_fais"]["mase"])
-                        for key in pair_keys
-                    }
+                    b_values = {key: float(episodes[key]["b_fais"]["mase"]) for key in pair_keys}
                     comparator_values = {
-                        key: float(episodes[key][comparator]["mase"])
-                        for key in pair_keys
+                        key: float(episodes[key][comparator]["mase"]) for key in pair_keys
                     }
-                    deltas = {
-                        key: b_values[key] - comparator_values[key]
-                        for key in pair_keys
-                    }
+                    deltas = {key: b_values[key] - comparator_values[key] for key in pair_keys}
                     families: dict[str, list[EpisodeKey]] = defaultdict(list)
                     for key in pair_keys:
                         families[str(metadata[key]["family_id"])].append(key)
@@ -760,9 +777,7 @@ def _family_macro_primary(
                         for family, keys in families.items()
                     }
                     family_comparator = {
-                        family: float(
-                            np.mean([comparator_values[key] for key in keys])
-                        )
+                        family: float(np.mean([comparator_values[key] for key in keys]))
                         for family, keys in families.items()
                     }
                     family_delta = np.asarray(
@@ -915,8 +930,7 @@ def _comparison_summaries(
             mase_pairs = paired[(comparator, "mase")]["keys"]
             comparator_recorded = sum(comparator in episodes[key] for key in group)
             comparator_valid = sum(
-                comparator in episodes[key]
-                and _metric_eligible(episodes[key][comparator])
+                comparator in episodes[key] and _metric_eligible(episodes[key][comparator])
                 for key in group
             )
             b_valid = sum(_metric_eligible(episodes[key]["b_fais"]) for key in group)
@@ -933,9 +947,7 @@ def _comparison_summaries(
                 "pair_count": len(mase_pairs),
                 "paired_valid_rate": len(mase_pairs) / len(group),
                 "small_sample": len(mase_pairs) < SMALL_SAMPLE_THRESHOLD,
-                "bootstrap_replicates": (
-                    bootstrap_replicates if len(mase_pairs) >= 2 else 0
-                ),
+                "bootstrap_replicates": (bootstrap_replicates if len(mase_pairs) >= 2 else 0),
             }
             for metric in PAIRED_METRICS:
                 metric_pair = paired[(comparator, metric)]
@@ -947,9 +959,7 @@ def _comparison_summaries(
                     b_mean = comparator_mean = mean_delta = win_rate = tie_rate = None
                     ci_low = ci_high = None
                 else:
-                    tied = np.isclose(
-                        b_values, comparator_values, rtol=1e-12, atol=1e-12
-                    )
+                    tied = np.isclose(b_values, comparator_values, rtol=1e-12, atol=1e-12)
                     b_mean = float(np.mean(b_values))
                     comparator_mean = float(np.mean(comparator_values))
                     mean_delta = float(np.mean(delta))
@@ -960,9 +970,7 @@ def _comparison_summaries(
                     ci_high = None if np.isnan(interval[1]) else float(interval[1])
                 result[f"{metric}_pair_count"] = len(pair_keys)
                 result[f"{metric}_paired_valid_rate"] = len(pair_keys) / len(group)
-                result[f"{metric}_small_sample"] = (
-                    len(pair_keys) < SMALL_SAMPLE_THRESHOLD
-                )
+                result[f"{metric}_small_sample"] = len(pair_keys) < SMALL_SAMPLE_THRESHOLD
                 result[f"{metric}_bootstrap_replicates"] = (
                     bootstrap_replicates if len(pair_keys) >= 2 else 0
                 )
@@ -975,9 +983,7 @@ def _comparison_summaries(
                 result[f"{metric}_tie_rate"] = tie_rate
 
             rank_pairs = [
-                key
-                for key in mase_pairs
-                if "b_fais" in ranks[key] and comparator in ranks[key]
+                key for key in mase_pairs if "b_fais" in ranks[key] and comparator in ranks[key]
             ]
             result["rank_pair_count"] = len(rank_pairs)
             result["b_fais_average_rank_mase"] = (
@@ -994,16 +1000,12 @@ def _comparison_summaries(
                 b_numbers = [
                     number
                     for key in mase_pairs
-                    if (number := _finite_number(episodes[key]["b_fais"].get(metric)))
-                    is not None
+                    if (number := _finite_number(episodes[key]["b_fais"].get(metric))) is not None
                 ]
                 comparator_numbers = [
                     number
                     for key in mase_pairs
-                    if (
-                        number := _finite_number(episodes[key][comparator].get(metric))
-                    )
-                    is not None
+                    if (number := _finite_number(episodes[key][comparator].get(metric))) is not None
                 ]
                 result[f"b_fais_{metric}_mean"] = (
                     None if not b_numbers else float(np.mean(b_numbers))
@@ -1042,13 +1044,9 @@ def _write_markdown(
     bootstrap_seed: int,
 ) -> Path:
     overall_methods = [row for row in method_rows if row["scope"] == "overall"]
-    overall_comparisons = [
-        row for row in comparison_rows if row["scope"] == "overall"
-    ]
+    overall_comparisons = [row for row in comparison_rows if row["scope"] == "overall"]
     breakdown = [
-        row
-        for row in method_rows
-        if row["method"] == "b_fais" and row["scope"] != "overall"
+        row for row in method_rows if row["method"] == "b_fais" and row["scope"] != "overall"
     ]
     key_breakdown = [
         row
@@ -1058,9 +1056,7 @@ def _write_markdown(
     ]
     small_count = sum(bool(row["small_sample"]) for row in comparison_rows)
     primary_overall = [
-        row
-        for row in primary_rows
-        if row["scope"] == "overall" and row["view"] == "all_windows"
+        row for row in primary_rows if row["scope"] == "overall" and row["view"] == "all_windows"
     ]
     lines = [
         "# TSFM-FAIS multi-forecaster summary",
@@ -1073,8 +1069,7 @@ def _write_markdown(
         "- Every paired comparison uses the same forecaster/episode on both sides. "
         "Losses are lower-is-better.",
         "- `mean delta` is B-FAIS minus the comparator. Negative values favor B-FAIS.",
-        "- `win rate` is the strict fraction with lower B-FAIS loss; ties are reported "
-        "separately.",
+        "- `win rate` is the strict fraction with lower B-FAIS loss; ties are reported separately.",
         "- The 95% interval is a percentile paired bootstrap interval for the episode-level "
         f"mean delta ({bootstrap_replicates} resamples, seed {bootstrap_seed}). An interval "
         "is unavailable when fewer than two pairs exist.",
@@ -1361,6 +1356,7 @@ def summarize_multi_forecaster(
     output_dir: str | Path,
     bootstrap_replicates: int = DEFAULT_BOOTSTRAP_REPLICATES,
     bootstrap_seed: int = DEFAULT_BOOTSTRAP_SEED,
+    primary_comparator_roles: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Aggregate evaluation directories into paired, grouped main-result tables."""
 
@@ -1368,11 +1364,22 @@ def summarize_multi_forecaster(
         raise ValueError("bootstrap_replicates must be positive")
     if bootstrap_seed < 0:
         raise ValueError("bootstrap_seed must be non-negative")
+    normalized_primary_roles = (
+        _DEFAULT_PRIMARY_COMPARATOR_ROLES
+        if primary_comparator_roles is None
+        else tuple(dict.fromkeys(str(role) for role in primary_comparator_roles))
+    )
+    valid_primary_roles = set(_DEFAULT_PRIMARY_COMPARATOR_ROLES)
+    if not normalized_primary_roles:
+        raise ValueError("primary_comparator_roles must not be empty")
+    unknown_roles = set(normalized_primary_roles) - valid_primary_roles
+    if unknown_roles:
+        raise ValueError(
+            "unsupported primary comparator roles: " + ", ".join(sorted(unknown_roles))
+        )
     episodes, metadata, sources, method_roles = _read_sources(evaluation_inputs)
     ranks, pool_sizes = _episode_ranks(episodes)
-    method_rows = _method_summaries(
-        episodes, metadata, method_roles, ranks, pool_sizes
-    )
+    method_rows = _method_summaries(episodes, metadata, method_roles, ranks, pool_sizes)
     comparison_rows = _comparison_summaries(
         episodes,
         metadata,
@@ -1387,6 +1394,7 @@ def summarize_multi_forecaster(
         method_roles,
         bootstrap_replicates=bootstrap_replicates,
         bootstrap_seed=bootstrap_seed,
+        comparator_roles=normalized_primary_roles,
     )
     output = Path(output_dir).resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -1396,9 +1404,7 @@ def summarize_multi_forecaster(
     primary_csv = output / "family_macro_comparison_summary.csv"
     markdown_path = output / "report.md"
     small_method_strata = sum(bool(row["small_sample"]) for row in method_rows)
-    small_comparison_strata = sum(
-        bool(row["small_sample"]) for row in comparison_rows
-    )
+    small_comparison_strata = sum(bool(row["small_sample"]) for row in comparison_rows)
     payload = {
         "schema_version": 2,
         "sources": [source.payload() for source in sources],
@@ -1410,9 +1416,7 @@ def summarize_multi_forecaster(
             if role in {"baseline", "missing_anchor"}
         ),
         "evaluated_selector_ids": sorted(
-            method
-            for method, role in method_roles.items()
-            if role == "selector_baseline"
+            method for method, role in method_roles.items() if role == "selector_baseline"
         ),
         "scopes": [scope for scope, _ in SUMMARY_SCOPES],
         "bootstrap": {
@@ -1429,6 +1433,7 @@ def summarize_multi_forecaster(
             "views": ["all_windows", "windows_with_missing"],
             "interval": "family/dataset/item-mask hierarchical percentile bootstrap",
             "multiple_comparison_adjustment": "Holm within view and stratum",
+            "comparator_roles": list(normalized_primary_roles),
         },
         "definitions": {
             "loss_direction": "lower is better",
@@ -1478,25 +1483,16 @@ def summarize_multi_forecaster(
         "warnings": {
             "small_method_strata": small_method_strata,
             "small_method_strata_by_metric": {
-                metric: sum(
-                    bool(row[f"{metric}_small_sample"]) for row in method_rows
-                )
+                metric: sum(bool(row[f"{metric}_small_sample"]) for row in method_rows)
                 for metric in PAIRED_METRICS
             },
             "small_comparison_strata": small_comparison_strata,
             "small_comparison_strata_by_metric": {
-                metric: sum(
-                    bool(row[f"{metric}_small_sample"])
-                    for row in comparison_rows
-                )
+                metric: sum(bool(row[f"{metric}_small_sample"]) for row in comparison_rows)
                 for metric in PAIRED_METRICS
             },
-            "missing_manifests": sum(
-                source.manifest_path is None for source in sources
-            ),
-            "missing_study_signatures": sum(
-                source.study_signature is None for source in sources
-            ),
+            "missing_manifests": sum(source.manifest_path is None for source in sources),
+            "missing_study_signatures": sum(source.study_signature is None for source in sources),
         },
         "method_summary": method_rows,
         "comparison_summary": comparison_rows,

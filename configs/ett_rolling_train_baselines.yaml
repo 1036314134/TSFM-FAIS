@@ -35,7 +35,7 @@ experiment:
   max_train_episodes_per_dataset: 30
   max_eval_episodes_per_dataset: 30
   max_teacher_blocks_per_episode: 2
-  max_teacher_candidates_per_episode: 19
+  max_teacher_candidates_per_episode: 20
   max_pair_labels_per_episode: 1
   forecast_num_samples: 5
   forecast_batch_size: 128

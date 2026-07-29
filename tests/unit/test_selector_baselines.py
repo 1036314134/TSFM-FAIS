@@ -88,8 +88,6 @@ def _fit(method: str):
             "latent_dim": 2,
             "n_estimators": 8,
             "max_depth": 4,
-            "batch_size": 8,
-            "torch_threads": 1,
         },
         "alors": {
             "epochs": 3,
@@ -99,12 +97,9 @@ def _fit(method: str):
         },
         "dselect1": {"epochs": 3, "batch_size": 8, "torch_threads": 1},
         "neuralucb": {
-            "epochs": 3,
             "hidden_size": 4,
-            "batch_size": 8,
-            "torch_threads": 1,
             "retrain_interval": 2,
-            "update_epochs": 1,
+            "training_steps": 3,
         },
         "hybrid_lstm": {
             "epochs": 3,

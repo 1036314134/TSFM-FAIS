@@ -90,11 +90,19 @@ def test_baseline_suite_configuration_is_strict_and_backward_compatible() -> Non
     assert legacy.selector_methods == ("block_fais",)
     assert legacy.selector_params == {}
     assert suite.selector_methods == BASELINE_SELECTOR_METHODS
-    assert suite.ranker_target == "forecast_loss"
-    assert suite.shortlist_size == 19
+    assert suite.ranker_target == "imputation_loss"
+    assert suite.shortlist_size == 20
 
     with pytest.raises(ValueError, match="unsupported selector"):
         RouterConfig.model_validate({**suite_payload, "selector_methods": ["unknown"]})
+    with pytest.raises(ValueError, match="cannot be mixed"):
+        RouterConfig.model_validate(
+            {
+                **suite_payload,
+                "selector_methods": ["block_fais", "metaod"],
+                "selector_params": {"metaod": {}},
+            }
+        )
     with pytest.raises(ValueError, match="unselected methods"):
         RouterConfig.model_validate(
             {
@@ -117,6 +125,53 @@ def test_baseline_suite_configuration_is_strict_and_backward_compatible() -> Non
                 **suite_payload,
                 "selector_methods": ["metaod"],
                 "selector_params": {"metaod": {"epohs": 2}},
+            }
+        )
+    with pytest.raises(ValueError, match="disabled forecast_consensus"):
+        RouterConfig.model_validate(
+            {
+                **suite_payload,
+                "selector_methods": ["metaod"],
+                "selector_params": {"metaod": {}},
+                "forecast_consensus": {
+                    "mode": "medoid",
+                    "candidates": ["locf", "linear_interp"],
+                },
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("method", "supported_params", "removed_param"),
+    (
+        ("metaod", {"min_samples_split": 2}, "temperature"),
+        ("dselect1", {"reachable_mass_weight": 0.5}, "max_depth"),
+        ("neuralucb", {"nu": 0.25}, "alpha"),
+        ("alors", {"ndcg_cutoff": 10}, "margin"),
+        ("hybrid_lstm", {"multilabel_threshold": 0.02}, "near_optimal_tolerance"),
+        ("random_valid_block", {}, "seed"),
+    ),
+)
+def test_selector_parameter_whitelists_match_sequence_implementations(
+    method: str,
+    supported_params: dict[str, float],
+    removed_param: str,
+) -> None:
+    suite_payload = load_yaml("configs/router/baseline_selector_suite.yaml")
+    selected_payload = {
+        **suite_payload,
+        "selector_methods": [method],
+        "selector_params": {method: supported_params},
+    }
+
+    config = RouterConfig.model_validate(selected_payload)
+
+    assert config.selector_params[method] == supported_params
+    with pytest.raises(ValueError, match="unsupported parameters"):
+        RouterConfig.model_validate(
+            {
+                **selected_payload,
+                "selector_params": {method: {removed_param: 1}},
             }
         )
 

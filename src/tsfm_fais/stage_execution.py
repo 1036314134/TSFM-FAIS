@@ -13,7 +13,7 @@ import json
 import os
 from collections import Counter, OrderedDict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from dataclasses import field as dataclass_field
 from functools import partial
 from pathlib import Path
@@ -65,6 +65,7 @@ from tsfm_fais.label_resume import (
     LabelProgressStore,
     LabelResumeError,
     build_label_resume_identity,
+    validate_label_rows,
 )
 from tsfm_fais.pipeline import BlockwiseFAIS, FAISResult, RoutePlan
 from tsfm_fais.routing.blocks import build_block_graph
@@ -77,6 +78,13 @@ from tsfm_fais.routing.features import (
     proxy_features,
 )
 from tsfm_fais.routing.models import PairwiseRiskModel, RouterBundle, RouterTrainer
+from tsfm_fais.routing.sequence_protocol import (
+    SELECTOR_INDEPENDENT_FORECAST_MODE,
+    SELECTOR_INDEPENDENT_FORECASTER_ID,
+    is_independent_sequence_router_metadata,
+    is_independent_sequence_routing_metadata,
+    normalize_configured_selector_method,
+)
 from tsfm_fais.routing.teacher import (
     CoherenceAdjustedTarget,
     TeacherBuilder,
@@ -543,11 +551,95 @@ def _router_content_signature(path: Path) -> dict[str, Any]:
     }
 
 
+def _content_signature(path: Path) -> dict[str, Any]:
+    resolved = path.resolve()
+    if not resolved.is_file():
+        raise FileNotFoundError(f"required content file does not exist: {resolved}")
+    return {
+        "size_bytes": resolved.stat().st_size,
+        "sha256": _file_sha256(resolved),
+    }
+
+
+def _candidate_generation_identity(
+    config: AppConfig,
+    inputs: StageInputs,
+    registry: ImputerRegistry,
+) -> dict[str, Any]:
+    """Identify every input that can change saved imputer candidate tensors."""
+
+    if inputs.audit_artifact is None or inputs.imputer_artifacts is None:
+        raise ValueError("candidate generation identity requires audit and imputer artifacts")
+    imputer_manifest = inputs.imputer_artifacts.resolve() / "manifest.json"
+    package_root = Path(__file__).resolve().parent
+    source_files = (
+        package_root / "contracts.py",
+        package_root / "pipeline.py",
+        package_root / "stage_execution.py",
+        package_root / "imputers" / "base.py",
+        package_root / "imputers" / "classical.py",
+        package_root / "imputers" / "pypots.py",
+        package_root / "imputers" / "registry.py",
+        package_root / "imputers" / "runner.py",
+        package_root / "imputers" / "structured.py",
+    )
+    raw_candidate_specs = {
+        spec.imputer_id: {
+            "spec": asdict(spec),
+            "execution_params": _pypots_params(config, spec) or {},
+        }
+        for spec in registry.specs()
+    }
+    candidate_specs = json.loads(
+        json.dumps(raw_candidate_specs, ensure_ascii=False, sort_keys=True, default=str)
+    )
+    experiment = config.experiment
+    episode_protocol = {
+        name: getattr(experiment, name)
+        for name in (
+            "context_length",
+            "horizon",
+            "forecast_stride",
+            "fit_prefix_fraction",
+            "max_eval_episodes_per_dataset",
+            "max_eval_origins_per_item",
+            "max_items_per_dataset",
+            "missing_block_lengths",
+            "missing_mechanisms",
+            "missing_rates",
+            "seeds",
+            "target_indices",
+        )
+    }
+    normalized_episode_protocol = json.loads(
+        json.dumps(episode_protocol, ensure_ascii=False, sort_keys=True, default=str)
+    )
+    return {
+        "schema_version": 1,
+        "root_seed": int(config.seed),
+        "torch_device": _torch_device(config),
+        "audit_artifact": _content_signature(inputs.audit_artifact),
+        "imputer_artifact_manifest": _content_signature(imputer_manifest),
+        "imputer_registry": _content_signature(config.registries.imputer_registry),
+        "candidate_ids": list(registry.ids),
+        "candidate_specs_sha256": _canonical_sha256(candidate_specs),
+        "candidate_specs": candidate_specs,
+        "episode_protocol": normalized_episode_protocol,
+        "source_files": {
+            str(path.relative_to(package_root)).replace("\\", "/"): _content_signature(path)
+            for path in source_files
+        },
+    }
+
+
 def _impute_resume_identity(
     config: AppConfig,
     inputs: StageInputs,
     registry: ImputerRegistry,
     model_id: str,
+    forecast_mode: str,
+    *,
+    forecaster_independent_selection: bool,
 ) -> dict[str, Any]:
     if inputs.audit_artifact is None or inputs.imputer_artifacts is None:
         raise ValueError("impute resume identity requires audit and imputer artifacts")
@@ -556,8 +648,25 @@ def _impute_resume_identity(
     imputer_manifest = inputs.imputer_artifacts.resolve() / "manifest.json"
     if not imputer_manifest.is_file():
         raise FileNotFoundError(f"imputer artifact manifest does not exist: {imputer_manifest}")
-    forecast_registry = default_forecast_registry()
-    forecast_adapter = forecast_registry.get(model_id)
+    if forecaster_independent_selection:
+        if (
+            model_id != SELECTOR_INDEPENDENT_FORECASTER_ID
+            or forecast_mode != SELECTOR_INDEPENDENT_FORECAST_MODE
+        ):
+            raise ValueError("independent selector identity is inconsistent")
+        forecaster_spec = {
+            "id": SELECTOR_INDEPENDENT_FORECASTER_ID,
+            "mode": SELECTOR_INDEPENDENT_FORECAST_MODE,
+            "protocol": "sequence_imputation_quality_v1",
+        }
+    else:
+        forecast_adapter = default_forecast_registry().get(model_id)
+        if forecast_adapter.mode != forecast_mode:
+            raise ValueError("forecaster identity mode is inconsistent")
+        raw_forecaster_spec = asdict(forecast_adapter)
+        forecaster_spec = json.loads(
+            json.dumps(raw_forecaster_spec, ensure_ascii=False, sort_keys=True, default=str)
+        )
     registry_files = {
         name: _file_signature(getattr(config.registries, name))
         for name in (
@@ -567,10 +676,6 @@ def _impute_resume_identity(
             "router_config",
         )
     }
-    raw_forecaster_spec = asdict(forecast_adapter)
-    forecaster_spec = json.loads(
-        json.dumps(raw_forecaster_spec, ensure_ascii=False, sort_keys=True, default=str)
-    )
     candidate_source: dict[str, Any] | None = None
     if inputs.candidate_source_impute_artifact is not None:
         source_root = inputs.candidate_source_impute_artifact.resolve()
@@ -605,11 +710,17 @@ def _impute_resume_identity(
         "registries": registry_files,
         "forecaster": {
             "id": model_id,
-            "mode": forecast_adapter.mode,
+            "mode": forecast_mode,
+            "forecaster_independent_selection": forecaster_independent_selection,
             "spec_sha256": _canonical_sha256(forecaster_spec),
             "spec": forecaster_spec,
         },
         "selected_candidates": list(registry.ids),
+        "candidate_generation_identity": _candidate_generation_identity(
+            config,
+            inputs,
+            registry,
+        ),
         "candidate_source_impute_artifact": candidate_source,
         "forecast_consensus_artifact": forecast_consensus_artifact,
     }
@@ -2135,6 +2246,26 @@ def _forecast_spec(config: AppConfig, model_id: str, dimensions: int) -> Forecas
     )
 
 
+def _selector_independent_spec(config: AppConfig, dimensions: int) -> ForecastSpec:
+    """Build the inert RoutePlan spec used by forecaster-independent selectors."""
+
+    targets = (
+        tuple(range(dimensions))
+        if config.experiment.target_indices == "all"
+        else tuple(config.experiment.target_indices)
+    )
+    return ForecastSpec(
+        model_id=SELECTOR_INDEPENDENT_FORECASTER_ID,
+        # ForecastSpec represents executable forecasters and has no independent
+        # sentinel mode. Sequence selectors never inspect or execute this spec.
+        mode="independent_univariate",
+        horizon=config.experiment.horizon,
+        context_length=config.experiment.context_length,
+        target_indices=targets,
+        num_samples=config.experiment.forecast_num_samples,
+    )
+
+
 def _candidate_is_eligible(
     block: Any,
     candidate_id: str,
@@ -2575,6 +2706,538 @@ def _build_label_episode_rows(
     finally:
         candidates.clear()
         pseudo_candidates.clear()
+
+
+def _configured_selector_methods(config: AppConfig) -> tuple[str, ...]:
+    """Load the selector IDs without importing any optional selector runtime."""
+
+    from tsfm_fais.config import load_yaml
+    from tsfm_fais.registry_configs import RouterConfig
+
+    return RouterConfig.model_validate(load_yaml(config.registries.router_config)).selector_methods
+
+
+def _uses_sequence_imputation_labels(config: AppConfig) -> bool:
+    methods = _configured_selector_methods(config)
+    return bool(methods) and "block_fais" not in methods
+
+
+def _run_sequence_label_candidates(
+    manager: _LabelArtifactManager,
+    runner: CandidateRunner,
+    candidate_ids: tuple[str, ...],
+    batch: SeriesBatch,
+    *,
+    seed: int,
+    params: Mapping[str, Mapping[str, Any]],
+    budget: BudgetSpec,
+) -> dict[str, CandidateResult]:
+    """Complete one corrupted episode with every portfolio member in isolation."""
+
+    results: dict[str, CandidateResult] = {}
+    for candidate_id in candidate_ids:
+        artifacts, artifact_failures, ephemeral = manager.acquire((candidate_id,))
+        try:
+            results.update(
+                runner.run_many(
+                    (candidate_id,),
+                    batch,
+                    artifacts,
+                    seed=seed,
+                    params=params,
+                    artifact_failures=artifact_failures,
+                    budget=budget,
+                )
+            )
+        finally:
+            manager.release(artifacts, ephemeral)
+            artifact_failures.clear()
+    return {candidate_id: results[candidate_id] for candidate_id in candidate_ids}
+
+
+def _sequence_imputation_metrics(
+    truth: np.ndarray,
+    result: CandidateResult,
+    missing_mask: np.ndarray,
+) -> tuple[float, float, float, float, bool]:
+    """Return bounded reconstruction loss, MAE, RMSE, reward, and native validity."""
+
+    selected = np.asarray(missing_mask, dtype=bool)
+    target = np.asarray(truth, dtype=float)
+    prediction = np.asarray(result.values, dtype=float)
+    native = np.asarray(result.native_valid_mask, dtype=bool)
+    if target.shape != prediction.shape or selected.shape != target.shape:
+        raise ValueError("sequence reconstruction arrays must have identical shapes")
+    valid = (
+        result.status not in {CandidateStatus.FAILED, CandidateStatus.UNAVAILABLE}
+        and bool(selected.any())
+        and bool(native[selected].all())
+        and bool(np.isfinite(prediction[selected]).all())
+    )
+
+    if valid:
+        actual = target[selected]
+        estimate = prediction[selected]
+        error = estimate - actual
+        mae = float(np.mean(np.abs(error)))
+        rmse = float(np.sqrt(np.mean(error**2)))
+        denominator = np.abs(actual) + np.abs(estimate)
+        terms = np.zeros_like(denominator, dtype=float)
+        nonzero = denominator > 0.0
+        terms[nonzero] = np.abs(error[nonzero]) / denominator[nonzero]
+        loss = float(np.clip(np.mean(terms), 0.0, 1.0))
+        reward = float(1.0 / (1.0 + loss))
+        return loss, mae, rmse, reward, True
+
+    finite_truth = target[selected & np.isfinite(target)]
+    scale = float(np.mean(np.abs(finite_truth))) if finite_truth.size else 1.0
+    penalty = max(2.0 * scale, 1.0)
+    return 1.0, penalty, penalty, 0.0, False
+
+
+def _build_sequence_label_episode_rows(
+    config: AppConfig,
+    dataset: Any,
+    episode_id: str,
+    episode: Any,
+    selector_methods: tuple[str, ...],
+    candidate_pool: tuple[str, ...],
+    artifact_manager: _LabelArtifactManager,
+    candidate_runner: CandidateRunner,
+    allowed_devices: tuple[str, ...],
+) -> _LabelEpisodeRows:
+    """Build one performance-matrix row per episode and portfolio imputer."""
+
+    from tsfm_fais.routing.sequence_features import sequence_meta_features
+
+    candidate_ids = tuple(candidate_pool)
+    missing = ~np.asarray(episode.context.observed_mask, dtype=bool)
+    if not candidate_ids or not missing.any():
+        return _LabelEpisodeRows(candidate_ids, ("__sequence__",), (), ())
+    params = {
+        candidate_id: candidate_params
+        for candidate_id in candidate_ids
+        if (
+            candidate_params := _pypots_params(
+                config,
+                artifact_manager.registry.get_spec(candidate_id),
+            )
+        )
+        is not None
+    }
+    candidates = _run_sequence_label_candidates(
+        artifact_manager,
+        candidate_runner,
+        candidate_ids,
+        episode.context,
+        seed=episode.seed,
+        params=params,
+        budget=BudgetSpec(
+            max_candidates=len(candidate_ids),
+            allowed_devices=allowed_devices,
+        ),
+    )
+    try:
+        features = sequence_meta_features(episode.context, period=dataset.period)
+        group_id = f"imputation::{episode_id}::__sequence__"
+        rows: list[Mapping[str, Any]] = []
+        truth = np.asarray(episode.clean_context, dtype=float)[None, ...]
+        dselect_targets = (
+            np.asarray(truth[missing], dtype=float).tolist()
+            if "dselect1" in selector_methods
+            else None
+        )
+        for candidate_id in candidate_ids:
+            loss, mae, rmse, reward, native_valid = _sequence_imputation_metrics(
+                truth,
+                candidates[candidate_id],
+                missing,
+            )
+            row: dict[str, Any] = {
+                "episode_id": episode_id,
+                "dataset_id": dataset.dataset_id,
+                "family_id": dataset.family_id,
+                "item_id": episode.item_id,
+                "forecast_origin": episode.forecast_origin,
+                "forecaster_id": "imputation",
+                "group_id": group_id,
+                "block_id": "__sequence__",
+                "candidate_id": candidate_id,
+                "label_scope": "whole_series",
+                "prior_features": (dict(features) if candidate_id == candidate_ids[0] else {}),
+                "unary_features": {},
+                "imputation_loss": loss,
+                "imputation_mae": mae,
+                "imputation_rmse": rmse,
+                "imputation_reward": reward,
+                "native_valid": native_valid,
+                "candidate_status": candidates[candidate_id].status.value,
+            }
+            if dselect_targets is not None:
+                row["dselect_expert_values"] = np.asarray(
+                    candidates[candidate_id].values[missing],
+                    dtype=float,
+                ).tolist()
+                if candidate_id == candidate_ids[0]:
+                    row["dselect_target_values"] = dselect_targets
+            rows.append(row)
+
+        block_ids: list[str] = ["__sequence__"]
+        all_candidate_ids: list[str] = list(candidate_ids)
+        if "hybrid_lstm" in selector_methods:
+            from tsfm_fais.routing.hybrid_lstm_sequence import (
+                HYBRID_LSTM_PAPER_CANDIDATES,
+                hybrid_window_label_rows,
+            )
+
+            hybrid_rows = hybrid_window_label_rows(
+                episode.context,
+                episode.clean_context,
+                episode_id=episode_id,
+                dataset_id=dataset.dataset_id,
+                family_id=dataset.family_id,
+                item_id=episode.item_id,
+                forecast_origin=episode.forecast_origin,
+                period=dataset.period,
+            )
+            rows.extend(hybrid_rows)
+            block_ids.extend(dict.fromkeys(str(row["block_id"]) for row in hybrid_rows))
+            all_candidate_ids.extend(HYBRID_LSTM_PAPER_CANDIDATES)
+        return _LabelEpisodeRows(
+            tuple(dict.fromkeys(all_candidate_ids)),
+            tuple(block_ids),
+            tuple(rows),
+            (),
+        )
+    finally:
+        candidates.clear()
+
+
+def _execute_sequence_labels(
+    preparation: StagePreparation,
+    config: AppConfig,
+    inputs: StageInputs,
+) -> Mapping[str, Any]:
+    """Generate forecaster-independent, whole-sequence reconstruction labels."""
+
+    if inputs.audit_artifact is None or inputs.imputer_artifacts is None:
+        raise ValueError("sequence labels require audit and imputer artifacts")
+    selector_methods = _configured_selector_methods(config)
+    imputer_registry = _selected_imputer_registry(config)
+    candidate_runner = CandidateRunner(imputer_registry)
+    allowed_devices = _allowed_devices(config)
+    imputer_manifest = inputs.imputer_artifacts.resolve() / "manifest.json"
+    if not imputer_manifest.is_file():
+        raise FileNotFoundError(f"imputer artifact manifest does not exist: {imputer_manifest}")
+    progress_path = preparation.store.root / "labels_progress.json"
+    sidecar_root = preparation.store.root / "label_episode_records"
+    identity = {
+        "schema_version": 1,
+        "routing_target_protocol": "sequence_imputation_quality_v1",
+        "resolved_config_sha256": _canonical_sha256(config.model_dump(mode="json")),
+        "audit_artifact": _file_signature(inputs.audit_artifact),
+        "imputer_manifest": _file_signature(imputer_manifest),
+        "router_config": _file_signature(config.registries.router_config),
+        "selector_methods": list(selector_methods),
+        "selected_candidates": list(imputer_registry.ids),
+    }
+    if preparation.resuming and progress_path.is_file():
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        if not isinstance(progress, dict) or progress.get("schema_version") != 1:
+            raise LabelResumeError("sequence labels progress is invalid")
+        if progress.get("identity") != identity:
+            raise LabelResumeError(
+                "sequence labels resume identity differs from the current inputs"
+            )
+        if not isinstance(progress.get("dataset_plans"), dict) or not isinstance(
+            progress.get("entries"), dict
+        ):
+            raise LabelResumeError("sequence labels progress plans or entries are invalid")
+        progress["status"] = "running"
+        progress["resume_count"] = int(progress.get("resume_count", 0)) + 1
+    else:
+        if preparation.resuming:
+            residual = (
+                sidecar_root.exists() and sidecar_root.is_dir() and any(sidecar_root.iterdir())
+            )
+            if residual:
+                raise LabelResumeError("cannot resume sequence labels without labels_progress.json")
+        progress = {
+            "schema_version": 1,
+            "status": "running",
+            "identity": identity,
+            "dataset_plans": {},
+            "entries": {},
+            "completed_count": 0,
+            "resume_count": 0,
+            "repair_count": 0,
+            "created_at": utc_now(),
+        }
+    progress["updated_at"] = utc_now()
+    sidecar_root.mkdir(parents=True, exist_ok=True)
+    _write_json(progress_path, progress)
+    unary_rows: list[Mapping[str, Any]] = []
+    episode_sampling: dict[str, dict[str, Any]] = {}
+    artifact_loading_records: dict[str, dict[str, dict[str, Any]]] = {}
+    progress_plans: dict[str, Any] = progress["dataset_plans"]
+    progress_entries: dict[str, Any] = progress["entries"]
+    episode_count = 0
+    labeled_episode_count = 0
+    executed_episode_count = 0
+    reused_episode_count = 0
+    for dataset, items in _datasets(config, inputs.audit_artifact):
+        artifact_store = DatasetImputerArtifactStore(
+            inputs.imputer_artifacts,
+            dataset.dataset_id,
+            imputer_registry,
+        )
+        artifact_manager = _LabelArtifactManager(
+            artifact_store,
+            imputer_registry,
+            config,
+        )
+        candidate_pool = artifact_manager.candidate_pool(allowed_devices)
+        dataset_sampling: dict[str, Any] = {}
+        try:
+            episodes = tuple(
+                _episode_iter(
+                    config,
+                    dataset,
+                    items,
+                    partition="train",
+                    selection_summary=dataset_sampling,
+                )
+            )
+            episode_ids = [episode_id for episode_id, _ in episodes]
+            unsigned_plan = {
+                "dataset_id": dataset.dataset_id,
+                "selection_summary": dataset_sampling,
+                "episode_ids": episode_ids,
+            }
+            plan_sha256 = _canonical_sha256(unsigned_plan)
+            dataset_plan = {
+                **unsigned_plan,
+                "sha256": plan_sha256,
+            }
+            previous_plan = progress_plans.get(dataset.dataset_id)
+            if previous_plan is not None and previous_plan != dataset_plan:
+                raise LabelResumeError(
+                    f"sequence label dataset plan changed for {dataset.dataset_id!r}"
+                )
+            progress_plans[dataset.dataset_id] = dataset_plan
+            progress["updated_at"] = utc_now()
+            _write_json(progress_path, progress)
+            for episode_id, episode in episodes:
+                key = f"{episode_count:08d}"
+                basic_expectation = {
+                    "artifact_index": episode_count,
+                    "forecaster_id": "imputation",
+                    "episode_id": episode_id,
+                    "dataset_id": dataset.dataset_id,
+                    "family_id": dataset.family_id,
+                    "item_id": episode.item_id,
+                    "forecast_origin": episode.forecast_origin,
+                    "sampling_cell": _label_sampling_cell(episode_id, episode),
+                    "dataset_plan_sha256": plan_sha256,
+                }
+                existing = progress_entries.get(key)
+                recovered_rows: tuple[Mapping[str, Any], ...] | None = None
+                recovered_outcome: Literal["labeled", "no_labels"] | None = None
+                if isinstance(existing, Mapping):
+                    stored_expectation = existing.get("expectation")
+                    if not isinstance(stored_expectation, Mapping) or any(
+                        stored_expectation.get(field) != value
+                        for field, value in basic_expectation.items()
+                    ):
+                        raise LabelResumeError(f"sequence label episode identity changed at {key}")
+                    try:
+                        relative = Path(str(existing["sidecar_file"]))
+                        expected_relative = Path("label_episode_records") / f"{key}.json"
+                        if relative != expected_relative:
+                            raise ValueError("unexpected sidecar path")
+                        sidecar_path = preparation.store.root / relative
+                        if _file_sha256(sidecar_path) != existing.get("sidecar_sha256"):
+                            raise ValueError("sidecar hash mismatch")
+                        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+                        if not isinstance(sidecar, Mapping):
+                            raise ValueError("sidecar must be an object")
+                        expectation = LabelEpisodeExpectation.from_payload(sidecar["expectation"])
+                        if expectation.to_payload() != dict(stored_expectation):
+                            raise ValueError("sidecar expectation differs")
+                        raw_rows = sidecar.get("unary_rows")
+                        raw_pairs = sidecar.get("pair_rows")
+                        outcome_value = sidecar.get("outcome")
+                        if not isinstance(raw_rows, list) or raw_pairs != []:
+                            raise ValueError("sidecar rows are invalid")
+                        if outcome_value not in {"labeled", "no_labels"}:
+                            raise ValueError("sidecar outcome is invalid")
+                        validated = validate_label_rows(
+                            expectation,
+                            raw_rows,
+                            (),
+                            outcome=outcome_value,
+                        )
+                        recovered_rows = tuple(validated["unary_rows"])
+                        recovered_outcome = outcome_value
+                    except (KeyError, OSError, TypeError, ValueError, LabelResumeError):
+                        recovered_rows = None
+                if recovered_rows is None:
+                    built = _build_sequence_label_episode_rows(
+                        config,
+                        dataset,
+                        episode_id,
+                        episode,
+                        selector_methods,
+                        candidate_pool,
+                        artifact_manager,
+                        candidate_runner,
+                        allowed_devices,
+                    )
+                    expectation = LabelEpisodeExpectation(
+                        **basic_expectation,
+                        candidate_ids=built.candidate_ids,
+                        block_ids=built.block_ids,
+                    )
+                    validated = validate_label_rows(
+                        expectation,
+                        built.unary_rows,
+                        (),
+                        outcome=built.outcome,
+                    )
+                    recovered_rows = tuple(validated["unary_rows"])
+                    recovered_outcome = built.outcome
+                    sidecar_relative = Path("label_episode_records") / f"{key}.json"
+                    sidecar_path = preparation.store.root / sidecar_relative
+                    _write_json(
+                        sidecar_path,
+                        {
+                            "schema_version": 1,
+                            "expectation": expectation.to_payload(),
+                            "outcome": recovered_outcome,
+                            "unary_rows": list(recovered_rows),
+                            "pair_rows": [],
+                            "created_at": utc_now(),
+                        },
+                    )
+                    if existing is not None:
+                        progress["repair_count"] = int(progress.get("repair_count", 0)) + 1
+                    progress_entries[key] = {
+                        "artifact_index": episode_count,
+                        "expectation": expectation.to_payload(),
+                        "outcome": recovered_outcome,
+                        "sidecar_file": sidecar_relative.as_posix(),
+                        "sidecar_sha256": _file_sha256(sidecar_path),
+                        "unary_rows": len(recovered_rows),
+                        "pair_rows": 0,
+                        "ranking_groups": len({str(row["group_id"]) for row in recovered_rows}),
+                        "completed_at": utc_now(),
+                    }
+                    progress["completed_count"] = len(progress_entries)
+                    progress["updated_at"] = utc_now()
+                    _write_json(progress_path, progress)
+                    executed_episode_count += 1
+                else:
+                    reused_episode_count += 1
+                unary_rows.extend(recovered_rows)
+                labeled_episode_count += recovered_outcome == "labeled"
+                episode_count += 1
+        finally:
+            artifact_manager.close()
+        _record_episode_sampling(
+            episode_sampling,
+            dataset.dataset_id,
+            dataset_sampling,
+        )
+        artifact_loading_records.setdefault(dataset.dataset_id, {})["imputation"] = (
+            artifact_manager.audit()
+        )
+    if not unary_rows:
+        raise ValueError("no sequence-imputation label rows were generated")
+    expected_keys = {f"{index:08d}" for index in range(episode_count)}
+    extra_entries = set(progress_entries).difference(expected_keys)
+    missing_entries = expected_keys.difference(progress_entries)
+    if extra_entries or missing_entries:
+        raise LabelResumeError(
+            "sequence labels progress does not match the deterministic episode plan"
+        )
+    labels_path = preparation.store.root / "teacher_labels.jsonl"
+    pairs_path = preparation.store.root / "pair_labels.jsonl"
+    _write_jsonl_atomic(labels_path, unary_rows)
+    _write_jsonl_atomic(pairs_path, ())
+    progress.update(
+        {
+            "status": "rebuilt",
+            "episode_count": episode_count,
+            "completed_count": episode_count,
+            "updated_at": utc_now(),
+        }
+    )
+    _write_json(progress_path, progress)
+    sampling_manifest = _episode_sampling_manifest(
+        "train",
+        config.experiment.max_train_episodes_per_dataset,
+        episode_sampling,
+        episode_count,
+    )
+    ranking_groups = len({str(row["group_id"]) for row in unary_rows})
+    summary = {
+        "teacher_labels": str(labels_path),
+        "pair_labels": str(pairs_path),
+        "teacher_labels_sha256": _file_sha256(labels_path),
+        "pair_labels_sha256": _file_sha256(pairs_path),
+        "forecasters": ["imputation"],
+        "imputer_artifacts": str(inputs.imputer_artifacts.resolve()),
+        "split": config.experiment.split,
+        "origin_partition": "train",
+        "episode_count": episode_count,
+        "expected_episode_count": episode_count,
+        "labeled_episode_count": labeled_episode_count,
+        "no_label_episode_count": episode_count - labeled_episode_count,
+        "episodes_executed_last_invocation": executed_episode_count,
+        "episodes_reused_last_invocation": reused_episode_count,
+        "resume_count": int(progress.get("resume_count", 0)),
+        "repair_count": int(progress.get("repair_count", 0)),
+        "unique_episode_count": sampling_manifest["selected_episode_count"],
+        "max_train_episodes_per_dataset": config.experiment.max_train_episodes_per_dataset,
+        "episode_sampling": sampling_manifest,
+        "artifact_loading": _artifact_loading_manifest(artifact_loading_records),
+        "ranking_groups": ranking_groups,
+        "unary_rows": len(unary_rows),
+        "pair_rows": 0,
+        "progress": str(progress_path),
+        "routing_target_protocol": "sequence_imputation_quality_v1",
+        "selection_unit": (
+            "method_specific" if "hybrid_lstm" in selector_methods else "whole_corrupted_episode"
+        ),
+        "selection_units_by_method": {
+            method: (
+                "paper_fixed_window" if method == "hybrid_lstm" else "whole_corrupted_episode"
+            )
+            for method in selector_methods
+        },
+        "selection_target": "masked_context_reconstruction",
+        "selector_methods": list(selector_methods),
+        "selected_candidates": list(
+            dict.fromkeys(
+                (
+                    *imputer_registry.ids,
+                    *(
+                        tuple(
+                            str(row["candidate_id"])
+                            for row in unary_rows
+                            if row.get("label_scope") == "hybrid_window"
+                        )
+                        if "hybrid_lstm" in selector_methods
+                        else ()
+                    ),
+                )
+            )
+        ),
+        "max_teacher_candidates_per_episode": len(imputer_registry.ids),
+        "forecasters_loaded_sequentially": False,
+    }
+    _write_json(preparation.store.root / "labels_manifest.json", summary)
+    return summary
 
 
 def _execute_labels_legacy(
@@ -3271,6 +3934,8 @@ def execute_labels(
     config: AppConfig,
     inputs: StageInputs,
 ) -> Mapping[str, Any]:
+    if _uses_sequence_imputation_labels(config):
+        return _execute_sequence_labels(preparation, config, inputs)
     if None in (
         inputs.audit_artifact,
         inputs.imputer_artifacts,
@@ -3396,8 +4061,8 @@ def _candidate_dataset_prior_statistics(
         for forecaster_id, dataset_id, origin, _episode_id, _candidate_id in episode_values:
             if origin is not None:
                 origins.setdefault((forecaster_id, dataset_id), set()).add(origin)
-        for group, values in origins.items():
-            ordered = sorted(values)
+        for group, origin_values in origins.items():
+            ordered = sorted(origin_values)
             recent_count = max(1, int(np.ceil(len(ordered) * recent_origin_fraction)))
             recent_origins[group] = set(ordered[-recent_count:])
 
@@ -3408,19 +4073,19 @@ def _candidate_dataset_prior_statistics(
         origin,
         _episode_id,
         candidate_id,
-    ), values in episode_values.items():
+    ), episode_losses in episode_values.items():
         allowed_origins = recent_origins.get((forecaster_id, dataset_id))
         if allowed_origins is not None and origin not in allowed_origins:
             continue
         samples.setdefault((forecaster_id, dataset_id, candidate_id), []).append(
-            float(np.median(values))
+            float(np.median(episode_losses))
         )
 
     priors: dict[str, dict[str, dict[str, float]]] = {}
     support: dict[str, dict[str, dict[str, int]]] = {}
-    for (forecaster_id, dataset_id, candidate_id), values in sorted(samples.items()):
-        count = len(values)
-        raw_prior = float(np.median(values))
+    for (forecaster_id, dataset_id, candidate_id), candidate_losses in sorted(samples.items()):
+        count = len(candidate_losses)
+        raw_prior = float(np.median(candidate_losses))
         parent_prior = float(global_priors.get(forecaster_id, {}).get(candidate_id, 0.0))
         prior = (count * raw_prior + float(shrinkage) * parent_prior) / (count + float(shrinkage))
         priors.setdefault(forecaster_id, {}).setdefault(dataset_id, {})[candidate_id] = prior
@@ -3433,6 +4098,8 @@ def _row_forecast_origin(row: Mapping[str, Any]) -> int | None:
     if raw_origin is None:
         parts = str(row.get("episode_id", "")).split("__")
         raw_origin = parts[-4] if len(parts) >= 4 else None
+    if raw_origin is None:
+        return None
     try:
         origin = int(raw_origin)
     except (TypeError, ValueError):
@@ -3689,6 +4356,296 @@ def _router_ranker_targets(
     return targets, protocol
 
 
+def _sequence_training_matrices(
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    label_scope: str,
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    tuple[str, ...],
+    tuple[str, ...],
+    list[dict[str, Any]],
+]:
+    selected_rows = [dict(row) for row in rows if str(row.get("label_scope", "")) == label_scope]
+    if not selected_rows:
+        raise ValueError(f"selector training has no {label_scope!r} label rows")
+    grouped: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
+    for row in selected_rows:
+        grouped.setdefault(str(row["group_id"]), []).append(row)
+    candidates = tuple(sorted({str(row["candidate_id"]) for row in selected_rows}))
+    if len(candidates) < 2:
+        raise ValueError("sequence selector training requires at least two candidates")
+    feature_names = tuple(
+        sorted(set().union(*(set(row["prior_features"]) for row in selected_rows)))
+    )
+    contexts: list[list[float]] = []
+    losses: list[list[float]] = []
+    native_validity: list[list[bool]] = []
+    rows_by_group: list[list[dict[str, Any]]] = []
+    for group_id, group in grouped.items():
+        by_candidate: dict[str, dict[str, Any]] = {}
+        for row in group:
+            candidate_id = str(row["candidate_id"])
+            if candidate_id in by_candidate:
+                raise ValueError(
+                    f"duplicate candidate {candidate_id!r} in sequence group {group_id!r}"
+                )
+            by_candidate[candidate_id] = row
+        feature_mappings: list[Mapping[str, Any]] = []
+        for candidate_row in group:
+            candidate_features = candidate_row.get("prior_features")
+            if isinstance(candidate_features, Mapping):
+                feature_mappings.append(candidate_features)
+        if not feature_mappings:
+            raise ValueError(f"sequence group {group_id!r} lacks prior_features")
+        reference_features = max(feature_mappings, key=len)
+        contexts.append([float(reference_features.get(name, 0.0)) for name in feature_names])
+        row_losses: list[float] = []
+        row_validity: list[bool] = []
+        for candidate_id in candidates:
+            matched_row = by_candidate.get(candidate_id)
+            if matched_row is None:
+                row_losses.append(float("nan"))
+                row_validity.append(False)
+                continue
+            try:
+                loss = float(matched_row["imputation_loss"])
+            except (KeyError, TypeError, ValueError) as error:
+                raise ValueError("sequence labels contain invalid imputation_loss") from error
+            finite_loss = bool(np.isfinite(loss))
+            row_losses.append(loss if finite_loss else float("nan"))
+            row_validity.append(bool(matched_row.get("native_valid", True)) and finite_loss)
+        losses.append(row_losses)
+        native_validity.append(row_validity)
+        rows_by_group.append(group)
+    context_matrix = np.asarray(contexts, dtype=float)
+    loss_matrix = np.asarray(losses, dtype=float)
+    validity_matrix = np.asarray(native_validity, dtype=bool)
+    if not np.isfinite(context_matrix).all():
+        raise ValueError("sequence selector context features must be finite")
+    if np.isinf(loss_matrix).any():
+        raise ValueError("sequence selector losses cannot contain infinity")
+    useful = (np.count_nonzero(np.isfinite(loss_matrix), axis=1) >= 2) & (
+        np.count_nonzero(validity_matrix, axis=1) >= 1
+    )
+    if not useful.any():
+        raise ValueError("sequence selector labels contain no comparable candidate group")
+    ordered_rows = [
+        row
+        for group_index, group in enumerate(rows_by_group)
+        if useful[group_index]
+        for row in group
+    ]
+    return (
+        context_matrix[useful],
+        loss_matrix[useful],
+        validity_matrix[useful],
+        candidates,
+        feature_names,
+        ordered_rows,
+    )
+
+
+def _prepare_dselect_training_rows(
+    rows: Sequence[Mapping[str, Any]],
+    candidate_ids: Sequence[str],
+) -> list[dict[str, Any]]:
+    """Densify heterogeneous expert groups for DSelect's fixed gate domain."""
+
+    candidates = tuple(str(candidate_id) for candidate_id in candidate_ids)
+    grouped: OrderedDict[str, list[dict[str, Any]]] = OrderedDict()
+    for raw_row in rows:
+        row = dict(raw_row)
+        grouped.setdefault(str(row["group_id"]), []).append(row)
+
+    completed: list[dict[str, Any]] = []
+    for group_id, group in grouped.items():
+        by_candidate = {str(row["candidate_id"]): row for row in group}
+        if len(by_candidate) != len(group):
+            raise ValueError(f"duplicate DSelect candidate in sequence group {group_id!r}")
+        target_rows = [row for row in group if isinstance(row.get("dselect_target_values"), list)]
+        if not target_rows:
+            raise ValueError(f"DSelect group {group_id!r} lacks target values")
+        reference = target_rows[0]
+        target_values = np.asarray(reference["dselect_target_values"], dtype=float).reshape(-1)
+        if not len(target_values) or not np.isfinite(target_values).all():
+            raise ValueError(f"DSelect group {group_id!r} has invalid target values")
+        feature_mappings: list[Mapping[str, Any]] = []
+        for row in group:
+            candidate_features = row.get("prior_features")
+            if isinstance(candidate_features, Mapping):
+                feature_mappings.append(candidate_features)
+        if not feature_mappings:
+            raise ValueError(f"DSelect group {group_id!r} lacks prior_features")
+        reference_features = dict(feature_mappings[0])
+        for feature_mapping in feature_mappings[1:]:
+            if len(feature_mapping) > len(reference_features):
+                reference_features = dict(feature_mapping)
+
+        dense_group: list[dict[str, Any]] = []
+        for candidate_id in candidates:
+            candidate_row = by_candidate.get(candidate_id)
+            if candidate_row is None:
+                candidate_row = {
+                    **reference,
+                    "candidate_id": candidate_id,
+                    "prior_features": {},
+                    "unary_features": {},
+                    "imputation_loss": float("nan"),
+                    "imputation_mae": float("nan"),
+                    "imputation_rmse": float("nan"),
+                    "imputation_reward": 0.0,
+                    "native_valid": False,
+                    "candidate_status": "unavailable",
+                    "dselect_expert_values": np.zeros_like(target_values).tolist(),
+                }
+                candidate_row.pop("dselect_target_values", None)
+            else:
+                candidate_row = dict(candidate_row)
+            dense_group.append(candidate_row)
+
+        dense_group[0]["prior_features"] = reference_features
+        dense_group[0]["dselect_target_values"] = target_values.tolist()
+        completed.extend(dense_group)
+    return completed
+
+
+def _fit_sequence_router_bundle(
+    rows: list[dict[str, Any]],
+    output: Path,
+    metadata: Mapping[str, Any],
+    *,
+    selector_method: str,
+    selector_params: Mapping[str, Any],
+    seed: int,
+) -> RouterBundle:
+    label_scope = "hybrid_window" if selector_method == "hybrid_lstm" else "whole_series"
+    contexts, losses, native_validity, candidates, feature_names, ordered_rows = (
+        _sequence_training_matrices(
+            rows,
+            label_scope=label_scope,
+        )
+    )
+    model: Any = None
+    if selector_method == "metaod":
+        from tsfm_fais.routing.meta_selectors import MetaODSequenceSelector
+
+        model = MetaODSequenceSelector(params=dict(selector_params), seed=seed).fit(
+            contexts,
+            losses,
+            candidates,
+        )
+    elif selector_method == "alors":
+        from tsfm_fais.routing.meta_selectors import ALORSSequenceSelector
+
+        model = ALORSSequenceSelector(params=dict(selector_params), seed=seed).fit(
+            contexts,
+            losses,
+            candidates,
+        )
+    elif selector_method == "dselect1":
+        from tsfm_fais.routing.neural_sequence_selectors import DSelectOneSequenceSelector
+
+        model = DSelectOneSequenceSelector.fit_from_rows(
+            _prepare_dselect_training_rows(ordered_rows, candidates),
+            feature_names,
+            candidates,
+            params=dict(selector_params),
+            seed=seed,
+        )
+    elif selector_method == "neuralucb":
+        from tsfm_fais.routing.neural_sequence_selectors import NeuralUCBSequenceSelector
+
+        model = NeuralUCBSequenceSelector.offline_replay(
+            contexts,
+            np.nan_to_num(losses, nan=2.0, posinf=2.0, neginf=2.0),
+            candidates,
+            native_valid=native_validity,
+            params=dict(selector_params),
+            seed=seed,
+        )
+    elif selector_method == "hybrid_lstm":
+        from tsfm_fais.routing.hybrid_lstm_sequence import HybridLSTMSequenceSelector
+
+        model = HybridLSTMSequenceSelector.from_params(
+            selector_params,
+            seed=seed,
+        ).fit_from_rows(
+            ordered_rows,
+        )
+    elif selector_method not in {"random_valid_series", "random_valid_block"}:
+        raise ValueError(f"unsupported sequence selector method {selector_method!r}")
+
+    support = dict(sorted(Counter(str(row["candidate_id"]) for row in ordered_rows).items()))
+    canonical_method = (
+        "random_valid_series" if selector_method == "random_valid_block" else selector_method
+    )
+    bundle = RouterBundle(
+        prior=model,
+        unary=model,
+        pairwise=PairwiseRiskModel(),
+        feature_names=feature_names,
+        candidate_ids=candidates,
+        pair_feature_names=(),
+        categorical_maps={
+            "candidate_id": {candidate_id: index for index, candidate_id in enumerate(candidates)}
+        },
+        metadata={
+            "created_at": utc_now(),
+            "selector_method": canonical_method,
+            "selector_implementation": selector_method,
+            "selector_params": dict(selector_params),
+            "selector_seed": int(seed),
+            "selector_feature_source": "observed_sequence_meta_features",
+            "selector_training_target": "imputation_loss",
+            "selector_training_rows": len(ordered_rows),
+            "selector_training_groups": int(len(contexts)),
+            "selector_candidate_support": support,
+            "routing_target_protocol": "sequence_imputation_quality_v1",
+            "ranker_target_protocol": "masked_context_reconstruction_asmape_v1",
+            "selection_scope": (
+                "fixed_univariate_window" if selector_method == "hybrid_lstm" else "whole_series"
+            ),
+            "selection_unit": (
+                "paper_fixed_window"
+                if selector_method == "hybrid_lstm"
+                else "whole_corrupted_episode"
+            ),
+            "uses_missing_block_graph": False,
+            "forecaster_independent_selection": True,
+            "requires_pseudo_candidates": False,
+            "pair_rows": 0,
+            "beta": 0.0,
+            "cost_weight": 0.0,
+            "candidate_switch_penalty": 0.0,
+            "evidence_blend": {},
+            "forecast_consensus": {"mode": "disabled", "candidates": []},
+            **dict(metadata),
+        },
+    )
+    # Sequence-protocol invariants override legacy suite metadata supplied by
+    # the shared train-router entry point.
+    bundle.metadata.update(
+        {
+            "selector_method": canonical_method,
+            "selector_training_target": "imputation_loss",
+            "routing_target_protocol": "sequence_imputation_quality_v1",
+            "ranker_target_protocol": "masked_context_reconstruction_asmape_v1",
+            "requires_pseudo_candidates": False,
+            "uses_missing_block_graph": False,
+            "forecaster_independent_selection": True,
+            "beta": 0.0,
+            "cost_weight": 0.0,
+            "candidate_switch_penalty": 0.0,
+            "forecast_consensus": {"mode": "disabled", "candidates": []},
+        }
+    )
+    bundle.save(output)
+    return bundle
+
+
 def _fit_router_bundle(
     rows: list[dict[str, Any]],
     pair_rows: list[dict[str, Any]],
@@ -3712,9 +4669,23 @@ def _fit_router_bundle(
     if selector_method == "block_fais" and not pair_rows:
         raise ValueError("block_fais fitting requires non-empty pair rows")
     selector_params = dict(selector_params or {})
+    sequence_rows = any(row.get("label_scope") in {"whole_series", "hybrid_window"} for row in rows)
+    if selector_method != "block_fais" and sequence_rows:
+        return _fit_sequence_router_bundle(
+            rows,
+            output,
+            metadata,
+            selector_method=selector_method,
+            selector_params=selector_params,
+            seed=seed,
+        )
     rows = _augment_label_context_features(rows)
     source_unary_rows = len(rows)
     ranker_target = str(metadata.get("ranker_target", "full_candidate_loss"))
+    if ranker_target == "imputation_loss":
+        # Legacy block-adapted baseline artifacts remain readable, while the
+        # formal baseline suite always takes the sequence-protocol branch.
+        ranker_target = "forecast_loss"
     eligible_target = (
         "routing_target"
         if ranker_target == "auto" and all("routing_target" in row for row in rows)
@@ -3871,8 +4842,7 @@ def _fit_router_bundle(
             pair_feature_names=(),
             categorical_maps={
                 "candidate_id": {
-                    candidate_id: index
-                    for index, candidate_id in enumerate(candidates)
+                    candidate_id: index for index, candidate_id in enumerate(candidates)
                 }
             },
             metadata={
@@ -3997,6 +4967,8 @@ def _validate_router_label_protocol(
         if isinstance(sampling, Mapping) and sampling.get("partition") != "train":
             raise ValueError("label episode sampling must use the train partition")
 
+    sequence_protocol = manifest.get("routing_target_protocol") == "sequence_imputation_quality_v1"
+
     resolved_path = labels_artifact.with_name("resolved_config.json")
     source_experiment: Mapping[str, Any] = {}
     if resolved_path.is_file():
@@ -4023,9 +4995,18 @@ def _validate_router_label_protocol(
             f"labels={sorted(set(recorded_splits))}, "
             f"router={config.experiment.split}"
         )
+    protocol_fields = (
+        tuple(
+            field
+            for field in _ROUTER_LABEL_PROTOCOL_FIELDS
+            if field not in {"target_indices", "forecast_batch_size"}
+        )
+        if sequence_protocol
+        else _ROUTER_LABEL_PROTOCOL_FIELDS
+    )
     mismatches = [
         field
-        for field in _ROUTER_LABEL_PROTOCOL_FIELDS
+        for field in protocol_fields
         if source_experiment
         and (
             field not in source_experiment
@@ -4040,7 +5021,9 @@ def _validate_router_label_protocol(
     return {
         "label_split": config.experiment.split,
         "label_origin_partition": "train",
-        "label_protocol_fields": list(_ROUTER_LABEL_PROTOCOL_FIELDS),
+        "label_protocol_fields": list(protocol_fields),
+        "routing_target_protocol": manifest.get("routing_target_protocol"),
+        "forecaster_independent_labels": sequence_protocol,
     }
 
 
@@ -4418,6 +5401,7 @@ def _validate_resumable_imputation(
     item_id: str,
     model_id: str,
     forecast_mode: str,
+    forecaster_independent_selection: bool,
     relative_file: Path,
     relative_assignment: Path,
     artifact_root: Path,
@@ -4444,6 +5428,11 @@ def _validate_resumable_imputation(
             raise ValueError(
                 f"cannot resume: progress entry identity differs at {expected_index:08d}.{field}"
             )
+    if entry.get("forecaster_independent_selection", False) is not forecaster_independent_selection:
+        raise ValueError(
+            "cannot resume: progress forecaster-independence identity differs at "
+            f"{expected_index:08d}"
+        )
     try:
         output_path = _safe_artifact_path(artifact_root / "imputations", str(relative_file))
         assignment_path = _safe_artifact_path(artifact_root, str(relative_assignment))
@@ -4469,12 +5458,15 @@ def _validate_resumable_imputation(
         assignment_field = "artifact_index" if field == "index" else field
         if assignment.get(assignment_field) != expected:
             return False, f"assignment identity mismatch: {assignment_field}", None
+    if (
+        assignment.get("forecaster_independent_selection", False)
+        is not forecaster_independent_selection
+    ):
+        return False, "assignment forecaster-independence identity mismatch", None
     if assignment.get("schema_version") != _IMPUTATION_SCHEMA_VERSION:
         return False, "assignment schema mismatch", None
     try:
-        progress_method = _normalize_assembled_method_id(
-            entry.get("assembled_method_id", "b_fais")
-        )
+        progress_method = _normalize_assembled_method_id(entry.get("assembled_method_id", "b_fais"))
         assignment_method = _normalize_assembled_method_id(
             assignment.get("assembled_method_id", "b_fais")
         )
@@ -4495,15 +5487,22 @@ def _validate_resumable_imputation(
         ("global_missing_rate", episode.global_missing_rate),
         ("local_missing_rate", episode.local_missing_rate),
     ):
+        raw_rate = assignment.get(field)
+        if raw_rate is None:
+            return False, f"assignment mask rate is invalid: {field}", None
         try:
-            actual = float(assignment.get(field))
+            actual = float(raw_rate)
         except (TypeError, ValueError):
             return False, f"assignment mask rate is invalid: {field}", None
         if not np.isclose(actual, float(expected), rtol=0.0, atol=1e-15):
             return False, f"assignment mask rate mismatch: {field}", None
+    raw_scale = assignment.get("mase_scale")
+    raw_lag = assignment.get("mase_scale_lag")
+    if raw_scale is None or raw_lag is None:
+        return False, "assignment MASE scale is invalid", None
     try:
-        assignment_scale = np.asarray(assignment.get("mase_scale"), dtype=float)
-        assignment_lag = int(assignment.get("mase_scale_lag"))
+        assignment_scale = np.asarray(raw_scale, dtype=float)
+        assignment_lag = int(raw_lag)
     except (TypeError, ValueError):
         return False, "assignment MASE scale is invalid", None
     if not np.array_equal(
@@ -4558,6 +5557,8 @@ def _validate_resumable_imputation(
         "pipeline_rss_delta_bytes",
         "pipeline_peak_memory_bytes",
     }
+    if forecaster_independent_selection:
+        required_arrays.add("forecaster_independent_selection")
     try:
         with np.load(output_path, allow_pickle=False) as archive:
             missing = required_arrays.difference(archive.files)
@@ -4579,6 +5580,12 @@ def _validate_resumable_imputation(
             for field, expected in scalar_expectations.items():
                 if _npz_scalar(archive, field) != expected:
                     return False, f"imputation NPZ identity mismatch: {field}", None
+            if (
+                "forecaster_independent_selection" in archive
+                and bool(_npz_scalar(archive, "forecaster_independent_selection"))
+                is not forecaster_independent_selection
+            ):
+                return False, "imputation NPZ forecaster-independence mismatch", None
             try:
                 archive_method = _normalize_assembled_method_id(
                     _npz_scalar(archive, "assembled_method_id")
@@ -4687,6 +5694,54 @@ def _validate_resumable_imputation(
     if assignment_memory != pipeline_rss_delta:
         return False, "assignment and NPZ pipeline memory differ", None
     return True, None, assignment
+
+
+def _replay_neuralucb_imputation(
+    router: RouterBundle,
+    episode: Any,
+    period: int,
+    assignment: Mapping[str, Any],
+) -> None:
+    """Restore one committed NeuralUCB round before selecting the next action."""
+
+    routing_metadata = assignment.get("routing_metadata")
+    if not isinstance(routing_metadata, Mapping):
+        raise ValueError("assignment routing metadata is missing")
+    if routing_metadata.get("selector_method") != "neuralucb":
+        raise ValueError("assignment selector method is not neuralucb")
+    selected = routing_metadata.get("selected_candidate")
+    reward = routing_metadata.get("online_imputation_reward")
+    if selected is None:
+        if reward is not None:
+            raise ValueError("assignment has a reward without a selected action")
+        return
+    if not isinstance(selected, str) or selected not in router.candidate_ids:
+        raise ValueError("assignment selected action is invalid")
+    if reward is None:
+        raise ValueError("assignment online reward is missing")
+    try:
+        replay_reward = float(reward)
+    except (TypeError, ValueError) as error:
+        raise ValueError("assignment online reward is invalid") from error
+    if not np.isfinite(replay_reward) or not 0.0 <= replay_reward <= 1.0:
+        raise ValueError("assignment online reward is outside [0, 1]")
+    assignments = assignment.get("assignments")
+    if not isinstance(assignments, Mapping) or any(
+        candidate_id != selected for candidate_id in assignments.values()
+    ):
+        raise ValueError("assignment block actions differ from the selected action")
+
+    from tsfm_fais.routing.sequence_features import sequence_meta_features
+
+    feature_values = sequence_meta_features(episode.context, period=period)
+    features = np.asarray(
+        [float(feature_values.get(name, 0.0)) for name in router.feature_names],
+        dtype=float,
+    )
+    observer = getattr(router.prior, "observe", None)
+    if not callable(observer):
+        raise TypeError("NeuralUCB selector has no observe method")
+    observer(features, selected, replay_reward)
 
 
 class _ImputeArtifactManager:
@@ -4823,7 +5878,11 @@ class _ImputeEpisodeWork:
     reused_actual_candidate_count: int = 0
 
 
-def _validate_candidate_source(root: Path) -> dict[str, Any]:
+def _validate_candidate_source(
+    root: Path,
+    *,
+    expected_generation_identity: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     """Validate one completed source artifact before candidate reuse."""
 
     source = root.resolve()
@@ -4840,13 +5899,34 @@ def _validate_candidate_source(root: Path) -> dict[str, Any]:
         raise ValueError("candidate source did not save all candidate outputs")
     if int(manifest.get("episode_count", -1)) != int(progress.get("expected_episode_count", -2)):
         raise ValueError("candidate source episode counts are inconsistent")
-    return {
+    source_generation_identity = manifest.get("candidate_generation_identity")
+    if source_generation_identity != dict(expected_generation_identity):
+        raise ValueError("candidate source generation identity differs from the current run")
+    if progress.get("imputation_manifest_sha256") != _file_sha256(manifest_path):
+        raise ValueError("candidate source imputation manifest hash differs from progress")
+    assignments_path = source / "routing_assignments.jsonl"
+    if progress.get("routing_assignments_sha256") != _file_sha256(assignments_path):
+        raise ValueError("candidate source routing assignments hash differs from progress")
+    raw_entries = progress.get("entries")
+    if not isinstance(raw_entries, dict) or len(raw_entries) != int(manifest["episode_count"]):
+        raise ValueError("candidate source progress entries are incomplete")
+    entries: dict[str, dict[str, Any]] = {}
+    for entry_key, raw_entry in raw_entries.items():
+        if not isinstance(entry_key, str) or not isinstance(raw_entry, dict):
+            raise ValueError("candidate source progress contains an invalid entry")
+        digest = raw_entry.get("npz_sha256")
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise ValueError("candidate source progress contains an invalid NPZ hash")
+        entries[entry_key] = raw_entry
+    summary = {
         "path": str(source),
         "forecaster_id": manifest.get("forecaster_id"),
         "episode_count": int(manifest["episode_count"]),
+        "candidate_generation_identity_sha256": _canonical_sha256(source_generation_identity),
         "progress_sha256": _file_sha256(progress_path),
         "manifest_sha256": _file_sha256(manifest_path),
     }
+    return summary, entries
 
 
 def _load_reused_actual_candidates(
@@ -4854,6 +5934,7 @@ def _load_reused_actual_candidates(
     work: _ImputeEpisodeWork,
     dataset: Any,
     registry: ImputerRegistry,
+    source_progress_entries: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, CandidateResult]:
     """Load forecast-independent candidate arrays after strict episode checks."""
 
@@ -4862,6 +5943,15 @@ def _load_reused_actual_candidates(
     path = source_root.resolve() / "imputations" / work.relative
     if not path.is_file():
         raise FileNotFoundError(f"candidate source episode does not exist: {path}")
+    source_entry = source_progress_entries.get(work.entry_key)
+    if not isinstance(source_entry, Mapping):
+        raise ValueError(f"candidate source has no progress entry {work.entry_key}")
+    if source_entry.get("file") != str(work.relative):
+        raise ValueError("candidate source progress file identity differs")
+    if source_entry.get("episode_id") != work.episode_id:
+        raise ValueError("candidate source progress episode identity differs")
+    if source_entry.get("npz_sha256") != _file_sha256(path):
+        raise ValueError("candidate source NPZ hash differs from progress")
     with np.load(path, allow_pickle=False) as archive:
         for field, expected in (
             ("episode_id", work.episode_id),
@@ -4986,6 +6076,8 @@ def _desired_actual_mode(
 ) -> str | None:
     if work.plan is None:  # pragma: no cover - preparation invariant
         raise RuntimeError("imputation work has no route plan")
+    if not bool(getattr(pipeline, "uses_registry_candidates", True)):
+        return "evaluation" if save_all and candidate_id in evaluation_ids else None
     if candidate_id in work.plan.shortlist or candidate_id in _fallback_ids(work.plan, pipeline):
         return "routing"
     if save_all and candidate_id in evaluation_ids:
@@ -5425,6 +6517,8 @@ def _commit_imputation_output(
     output: Path,
     dataset: Any,
     model_id: str,
+    artifact_forecast_mode: str,
+    forecaster_independent_selection: bool,
     registry: ImputerRegistry,
     work: _ImputeEpisodeWork,
     result: FAISResult,
@@ -5460,7 +6554,8 @@ def _commit_imputation_output(
         item_id=np.asarray([work.episode.item_id], dtype=str),
         forecaster_id=np.asarray([model_id], dtype=str),
         assembled_method_id=np.asarray([assembled_method_id], dtype=str),
-        forecast_mode=np.asarray([work.spec.mode], dtype=str),
+        forecast_mode=np.asarray([artifact_forecast_mode], dtype=str),
+        forecaster_independent_selection=np.asarray([forecaster_independent_selection], dtype=bool),
         values=result.values,
         observed_mask=result.observed_mask,
         clean_context=work.episode.clean_context,
@@ -5503,7 +6598,8 @@ def _commit_imputation_output(
         "family_id": dataset.family_id,
         "forecaster_id": model_id,
         "assembled_method_id": assembled_method_id,
-        "forecast_mode": work.spec.mode,
+        "forecast_mode": artifact_forecast_mode,
+        "forecaster_independent_selection": forecaster_independent_selection,
         "item_id": work.episode.item_id,
         "forecast_origin": work.episode.forecast_origin,
         "mechanism": mechanism,
@@ -5547,7 +6643,8 @@ def _commit_imputation_output(
         "item_id": work.episode.item_id,
         "forecaster_id": model_id,
         "assembled_method_id": assembled_method_id,
-        "forecast_mode": work.spec.mode,
+        "forecast_mode": artifact_forecast_mode,
+        "forecaster_independent_selection": forecaster_independent_selection,
         "file": str(work.relative),
         "assignment_file": str(work.relative_assignment),
         "candidate_ids": list(candidate_ids),
@@ -5569,34 +6666,18 @@ def execute_impute(
         inputs.audit_artifact,
         inputs.imputer_artifacts,
         inputs.router_artifact,
-        inputs.forecaster_id,
     ):
         raise ValueError("impute stage is missing a required input")
     assert inputs.audit_artifact is not None
     assert inputs.imputer_artifacts is not None
     assert inputs.router_artifact is not None
-    assert inputs.forecaster_id is not None
-    model_ids = parse_forecaster_ids(inputs.forecaster_id)
-    if len(model_ids) != 1:
-        raise ValueError("impute requires exactly one forecaster ID")
-    model_id = model_ids[0]
+    requested_model_ids = parse_forecaster_ids(inputs.forecaster_id)
     from tsfm_fais.config import load_yaml
     from tsfm_fais.registry_configs import RouterConfig
 
-    runtime_router_config = RouterConfig.model_validate(
-        load_yaml(config.registries.router_config)
-    )
+    runtime_router_config = RouterConfig.model_validate(load_yaml(config.registries.router_config))
     runtime_consensus = runtime_router_config.forecast_consensus
     runtime_consensus_mode = runtime_consensus.mode
-    imputer_registry = _selected_imputer_registry(config)
-    selected_candidate_ids = _selected_candidate_ids(config)
-    resume_identity = _impute_resume_identity(
-        config,
-        inputs,
-        imputer_registry,
-        model_id,
-    )
-    allowed_devices = _allowed_devices(config)
     split = config.experiment.split
     fold_index = _router_fold_index(inputs.router_artifact)
     router_cache: dict[str, RouterBundle] = {}
@@ -5606,14 +6687,7 @@ def execute_impute(
         direct_router = RouterBundle.load(inputs.router_artifact)
         if split == "rolling_origin":
             _validate_router_bundle(direct_router, split)
-        elif split == "leave_model_out":
-            _validate_router_bundle(
-                direct_router,
-                split,
-                held_out=model_id,
-                held_out_field="forecaster_id",
-            )
-        else:
+        elif split == "leave_family_out":
             raw_family = direct_router.metadata.get("held_out")
             if not isinstance(raw_family, str) or not raw_family:
                 raise ValueError("leave-family-out router has no held-out family metadata")
@@ -5630,8 +6704,72 @@ def execute_impute(
             raise ValueError(
                 f"router fold split {fold_split!r} does not match configured split {split!r}"
             )
-        if split == "leave_model_out" and model_id not in fold_paths:
+        held_out_field = "family_id" if split == "leave_family_out" else "forecaster_id"
+        for held_out, fold_path in fold_paths.items():
+            fold_router = RouterBundle.load(fold_path)
+            _validate_router_bundle(
+                fold_router,
+                split,
+                held_out=held_out,
+                held_out_field=held_out_field,
+            )
+            router_cache[held_out] = fold_router
+
+    routers = (direct_router,) if direct_router is not None else tuple(router_cache.values())
+    artifact_methods = {
+        normalize_configured_selector_method(router.metadata.get("selector_method", "b_fais"))
+        for router in routers
+    }
+    if len(artifact_methods) != 1:
+        raise ValueError("router folds contain different selector methods")
+    if not artifact_methods.issubset(set(runtime_router_config.selector_methods)):
+        raise ValueError(
+            "router artifact selector method is not enabled by the runtime router config"
+        )
+    independent_flags = tuple(
+        is_independent_sequence_router_metadata(router.metadata) for router in routers
+    )
+    if any(independent_flags) and not all(independent_flags):
+        raise ValueError("router artifact mixes dependent and independent selector protocols")
+    forecaster_independent_selection = bool(independent_flags) and all(independent_flags)
+    if forecaster_independent_selection:
+        if len(requested_model_ids) > 1:
+            raise ValueError(
+                "forecaster-independent impute accepts at most one compatibility forecaster ID"
+            )
+        if inputs.forecaster_artifact is not None:
+            raise ValueError("forecaster-independent impute does not accept a forecaster artifact")
+        model_id = SELECTOR_INDEPENDENT_FORECASTER_ID
+        artifact_forecast_mode = SELECTOR_INDEPENDENT_FORECAST_MODE
+    else:
+        if len(requested_model_ids) != 1:
+            raise ValueError("impute requires exactly one forecaster ID")
+        model_id = requested_model_ids[0]
+        artifact_forecast_mode = default_forecast_registry().get(model_id).mode
+
+    if direct_router is not None and split == "leave_model_out":
+        _validate_router_bundle(
+            direct_router,
+            split,
+            held_out=model_id,
+            held_out_field="forecaster_id",
+        )
+    if fold_index is not None and split == "leave_model_out":
+        _, fold_paths = fold_index
+        if model_id not in fold_paths:
             raise ValueError(f"no router fold is available for forecaster {model_id!r}")
+
+    imputer_registry = _selected_imputer_registry(config)
+    selected_candidate_ids = _selected_candidate_ids(config)
+    resume_identity = _impute_resume_identity(
+        config,
+        inputs,
+        imputer_registry,
+        model_id,
+        artifact_forecast_mode,
+        forecaster_independent_selection=forecaster_independent_selection,
+    )
+    allowed_devices = _allowed_devices(config)
 
     def router_for(dataset: Any) -> RouterBundle | None:
         if direct_router is not None:
@@ -5644,15 +6782,6 @@ def execute_impute(
         held_out = str(dataset.family_id) if split == "leave_family_out" else model_id
         if held_out not in fold_paths:
             raise ValueError(f"no router fold is available for {held_out_field}={held_out!r}")
-        if held_out not in router_cache:
-            router = RouterBundle.load(fold_paths[held_out])
-            _validate_router_bundle(
-                router,
-                split,
-                held_out=held_out,
-                held_out_field=held_out_field,
-            )
-            router_cache[held_out] = router
         return router_cache[held_out]
 
     forecast_consensus_runner: ForecastRunner | None = None
@@ -5684,11 +6813,13 @@ def execute_impute(
         output,
         assignment_root,
     )
-    candidate_source_summary = (
-        _validate_candidate_source(inputs.candidate_source_impute_artifact)
-        if inputs.candidate_source_impute_artifact is not None
-        else None
-    )
+    candidate_source_summary: dict[str, Any] | None = None
+    candidate_source_entries: dict[str, dict[str, Any]] = {}
+    if inputs.candidate_source_impute_artifact is not None:
+        candidate_source_summary, candidate_source_entries = _validate_candidate_source(
+            inputs.candidate_source_impute_artifact,
+            expected_generation_identity=resume_identity["candidate_generation_identity"],
+        )
     candidate_source_root = (
         inputs.candidate_source_impute_artifact.resolve()
         if inputs.candidate_source_impute_artifact is not None
@@ -5705,6 +6836,8 @@ def execute_impute(
     pipeline_rss_delta_max = 0
     assignment_records_by_index: dict[int, dict[str, Any]] = {}
     artifact_loading: dict[str, dict[str, Any]] = dict(progress.get("artifact_loading", {}))
+    neural_resume_prefix_open = bool(preparation.resuming)
+    neural_pruned_entry_keys: set[str] = set()
     for dataset, items in _datasets(config, inputs.audit_artifact):
         dataset_sampling: dict[str, Any] = {}
         dataset_episodes = tuple(
@@ -5729,6 +6862,7 @@ def execute_impute(
         assembled_method_id = _normalize_assembled_method_id(
             router.metadata.get("selector_method", "b_fais")
         )
+        is_neuralucb = assembled_method_id == "neuralucb"
         consensus_required = (
             runtime_consensus_mode in {"medoid", "historical_backtest"}
             or runtime_consensus.anchor_period_exceeded_mode == "medoid"
@@ -5749,15 +6883,22 @@ def execute_impute(
                 source_item.values[:scale_end], dataset.period
             )
             item = _context_item(source_item, episode)
-            item.metadata["mase_scale"] = list(map(float, mase_scale))
-            item.metadata["mase_scale_lag"] = int(mase_scale_lag)
-            spec = _forecast_spec(config, model_id, episode.context.shape[2])
+            item_metadata = dict(item.metadata)
+            item_metadata["mase_scale"] = list(map(float, mase_scale))
+            item_metadata["mase_scale_lag"] = int(mase_scale_lag)
+            item = replace(item, metadata=item_metadata)
+            spec = (
+                _selector_independent_spec(config, episode.context.shape[2])
+                if forecaster_independent_selection
+                else _forecast_spec(config, model_id, episode.context.shape[2])
+            )
             relative = Path(dataset.dataset_id) / f"{count:08d}.npz"
             relative_assignment = (
                 Path("assignment_records") / dataset.dataset_id / f"{count:08d}.json"
             )
             entry_key = f"{count:08d}"
             existing = progress_entries.get(entry_key)
+            existing_had_entry = existing is not None
             invalid_reason: str | None = None
             if existing is not None:
                 if not isinstance(existing, dict):
@@ -5770,7 +6911,8 @@ def execute_impute(
                     family_id=dataset.family_id,
                     item_id=episode.item_id,
                     model_id=model_id,
-                    forecast_mode=spec.mode,
+                    forecast_mode=artifact_forecast_mode,
+                    forecaster_independent_selection=forecaster_independent_selection,
                     relative_file=relative,
                     relative_assignment=relative_assignment,
                     artifact_root=preparation.store.root,
@@ -5781,19 +6923,52 @@ def execute_impute(
                     allowed_candidate_ids=frozenset(imputer_registry.ids),
                     assembled_method_id=assembled_method_id,
                 )
-                if valid:
+                if valid and is_neuralucb and neural_resume_prefix_open:
                     assert recovered is not None
-                    assignment_records_by_index[count] = recovered
-                    pipeline_runtime = float(recovered["pipeline_runtime_seconds"])
-                    pipeline_memory = int(recovered["pipeline_rss_delta_bytes"])
-                    pipeline_runtime_total += pipeline_runtime
-                    pipeline_rss_delta_max = max(
-                        pipeline_rss_delta_max,
-                        pipeline_memory,
-                    )
-                    reused_count += 1
-                    count += 1
-                    continue
+                    try:
+                        _replay_neuralucb_imputation(
+                            router,
+                            episode,
+                            dataset.period,
+                            recovered,
+                        )
+                    except (TypeError, ValueError) as error:
+                        valid = False
+                        recovered = None
+                        invalid_reason = f"NeuralUCB online replay metadata is invalid: {error}"
+                if valid:
+                    if not is_neuralucb or neural_resume_prefix_open:
+                        assert recovered is not None
+                        assignment_records_by_index[count] = recovered
+                        pipeline_runtime = float(recovered["pipeline_runtime_seconds"])
+                        pipeline_memory = int(recovered["pipeline_rss_delta_bytes"])
+                        pipeline_runtime_total += pipeline_runtime
+                        pipeline_rss_delta_max = max(
+                            pipeline_rss_delta_max,
+                            pipeline_memory,
+                        )
+                        reused_count += 1
+                        count += 1
+                        continue
+                    invalid_reason = "NeuralUCB resume only reuses the continuous valid prefix"
+
+            if is_neuralucb and neural_resume_prefix_open:
+                neural_resume_prefix_open = False
+                suffix_keys = {
+                    key for key in progress_entries if key.isdigit() and int(key) >= count
+                }
+                neural_pruned_entry_keys.update(suffix_keys)
+                for key in suffix_keys:
+                    progress_entries.pop(key, None)
+                progress["completed_count"] = len(progress_entries)
+                progress["last_completed_index"] = count - 1
+                progress["neuralucb_recomputed_from_index"] = count
+                progress["updated_at"] = utc_now()
+                _write_json(progress_path, progress)
+            if is_neuralucb and entry_key in neural_pruned_entry_keys and invalid_reason is None:
+                invalid_reason = "NeuralUCB resume recomputes the non-prefix suffix"
+            elif is_neuralucb and existing_had_entry and invalid_reason is None:
+                invalid_reason = "NeuralUCB resume recomputes the non-prefix suffix"
 
             pending.append(
                 _ImputeEpisodeWork(
@@ -5828,7 +7003,18 @@ def execute_impute(
         )
         available_artifact_ids = artifact_manager.declared_available(selected_candidate_ids)
         artifact_failures = artifact_manager.declared_failures(selected_candidate_ids)
-        pipeline = BlockwiseFAIS(
+        selector_method = str(router.metadata.get("selector_method", "b_fais"))
+        if selector_method in {"b_fais", "block_fais"}:
+            pipeline_type: type[BlockwiseFAIS] = BlockwiseFAIS
+        elif selector_method == "hybrid_lstm":
+            from tsfm_fais.routing.hybrid_lstm_sequence import HybridLSTMSequencePipeline
+
+            pipeline_type = HybridLSTMSequencePipeline
+        else:
+            from tsfm_fais.routing.sequence_pipeline import WholeSeriesSelectorFAIS
+
+            pipeline_type = WholeSeriesSelectorFAIS
+        pipeline = pipeline_type(
             config=config,
             router=router,
             imputer_registry=imputer_registry,
@@ -5854,6 +7040,7 @@ def execute_impute(
                     work,
                     dataset,
                     imputer_registry,
+                    candidate_source_entries,
                 )
                 work.raw_actual.update(reused)
                 work.reused_actual_candidate_count = len(reused)
@@ -5908,6 +7095,11 @@ def execute_impute(
                 backtest_candidates=backtest_candidates,
                 fallback_candidates=work.raw_actual,
             )
+            observe_outcome = getattr(pipeline, "observe_outcome", None)
+            if callable(observe_outcome):
+                online_reward = observe_outcome(work.episode.clean_context)
+                if online_reward is not None:
+                    result.routing.metadata["online_imputation_reward"] = float(online_reward)
             result.routing.metadata["reused_actual_candidate_count"] = (
                 work.reused_actual_candidate_count
             )
@@ -5957,11 +7149,16 @@ def execute_impute(
             )
             saved_candidates.update(result.candidates)
             result.candidates = saved_candidates
+            runtime_independent = is_independent_sequence_routing_metadata(result.routing.metadata)
+            if runtime_independent is not forecaster_independent_selection:
+                raise ValueError("router output protocol differs from the trained router artifact")
             assignment, progress_entry = _commit_imputation_output(
                 preparation,
                 output,
                 dataset,
                 model_id,
+                artifact_forecast_mode,
+                forecaster_independent_selection,
                 imputer_registry,
                 work,
                 result,
@@ -5999,10 +7196,7 @@ def execute_impute(
         raise ValueError("cannot finalize impute: assignment count is inconsistent")
     assignment_records = [assignment_records_by_index[index] for index in range(count)]
     assembled_method_ids = sorted(
-        {
-            str(record.get("assembled_method_id", "b_fais"))
-            for record in assignment_records
-        }
+        {str(record.get("assembled_method_id", "b_fais")) for record in assignment_records}
     )
     if len(assembled_method_ids) != 1:
         raise ValueError(
@@ -6031,8 +7225,14 @@ def execute_impute(
         "max_eval_episodes_per_dataset": (config.experiment.max_eval_episodes_per_dataset),
         "episode_sampling": sampling_manifest,
         "forecaster_id": model_id,
+        "forecast_mode": artifact_forecast_mode,
+        "forecaster_independent_selection": forecaster_independent_selection,
         "assembled_method_id": assembled_method_ids[0],
         "selected_candidates": list(selected_candidate_ids),
+        "candidate_generation_identity": resume_identity["candidate_generation_identity"],
+        "candidate_generation_identity_sha256": _canonical_sha256(
+            resume_identity["candidate_generation_identity"]
+        ),
         "save_all_candidate_outputs": (config.experiment.save_all_candidate_outputs),
         "csdi_num_samples": config.experiment.csdi_num_samples,
         "torch_device": _torch_device(config),

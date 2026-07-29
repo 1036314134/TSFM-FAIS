@@ -19,6 +19,11 @@ from tsfm_fais.contracts import ForecastResult, ForecastSpec, SeriesBatch
 from tsfm_fais.data import stable_seed
 from tsfm_fais.forecasting import ForecastRunner, default_forecast_registry
 from tsfm_fais.imputers import DEFAULT_REGISTRY, CandidateRunner
+from tsfm_fais.routing.sequence_protocol import (
+    SELECTOR_INDEPENDENT_FORECAST_MODE,
+    SELECTOR_INDEPENDENT_FORECASTER_ID,
+    is_independent_sequence_routing_metadata,
+)
 
 EVALUATION_FIELDS: tuple[str, ...] = (
     "schema_version",
@@ -27,6 +32,7 @@ EVALUATION_FIELDS: tuple[str, ...] = (
     "family_id",
     "forecaster_id",
     "routing_forecaster_id",
+    "routing_artifact_forecaster_id",
     "item_id",
     "forecast_origin",
     "mechanism",
@@ -86,19 +92,18 @@ DEFAULT_GROUP_BY: tuple[str, ...] = (
     "method",
 )
 
+FORECAST_CALL_PROTOCOL = "batched_common_contexts_v1"
+
 
 class ForecastPredictor(Protocol):
-    def predict(
-        self, contexts: np.ndarray, forecast_spec: ForecastSpec
-    ) -> ForecastResult: ...
+    def predict(self, contexts: np.ndarray, forecast_spec: ForecastSpec) -> ForecastResult: ...
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True, default=str)
-        + "\n",
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True, default=str) + "\n",
         encoding="utf-8",
     )
     temporary.replace(path)
@@ -113,30 +118,79 @@ def _file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _impute_content_signature(root: Path, assignments: Path) -> dict[str, Any]:
-    """Identify mutable routing metadata that affects evaluation row identity."""
+def _impute_content_signature(
+    root: Path,
+    assignments: Path,
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Validate the completed imputation ledger and identify every NPZ payload."""
 
     manifest_path = root / "imputation_manifest.json"
+    progress_path = root / "imputation_progress.json"
+    if not manifest_path.is_file() or not progress_path.is_file():
+        raise FileNotFoundError(
+            "impute artifact must contain imputation_manifest.json and imputation_progress.json"
+        )
     manifest_method: str | None = None
-    manifest_sha256: str | None = None
-    if manifest_path.is_file():
-        manifest_sha256 = _file_sha256(manifest_path)
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError) as error:
-            raise ValueError("cannot read the imputation manifest") from error
-        raw_method = manifest.get("assembled_method_id")
-        if raw_method is not None:
-            manifest_method = str(raw_method).strip()
-            if not manifest_method:
-                raise ValueError(
-                    "imputation manifest assembled_method_id must be non-empty"
-                )
-    return {
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError("cannot read the imputation manifest or progress ledger") from error
+    if not isinstance(manifest, Mapping) or not isinstance(progress, Mapping):
+        raise ValueError("imputation manifest and progress ledger must be objects")
+    if progress.get("status") != "completed":
+        raise ValueError("imputation progress ledger is not completed")
+    manifest_sha256 = _file_sha256(manifest_path)
+    assignments_sha256 = _file_sha256(assignments)
+    if progress.get("imputation_manifest_sha256") != manifest_sha256:
+        raise ValueError("imputation manifest hash differs from the completed progress ledger")
+    if progress.get("routing_assignments_sha256") != assignments_sha256:
+        raise ValueError("routing assignments hash differs from the completed progress ledger")
+    raw_method = manifest.get("assembled_method_id")
+    if raw_method is not None:
+        manifest_method = str(raw_method).strip()
+        if not manifest_method:
+            raise ValueError("imputation manifest assembled_method_id must be non-empty")
+    raw_entries = progress.get("entries")
+    if not isinstance(raw_entries, Mapping):
+        raise ValueError("imputation progress ledger has no entries")
+    episode_count = int(manifest.get("episode_count", -1))
+    if episode_count < 1 or len(raw_entries) != episode_count:
+        raise ValueError("imputation progress entry count differs from the manifest")
+    npz_hashes: dict[str, str] = {}
+    for raw_entry in raw_entries.values():
+        if not isinstance(raw_entry, Mapping):
+            raise ValueError("imputation progress contains an invalid entry")
+        relative = Path(str(raw_entry.get("file", "")))
+        if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+            raise ValueError(f"unsafe imputation progress path: {relative}")
+        normalized = relative.as_posix()
+        digest = raw_entry.get("npz_sha256")
+        if not isinstance(digest, str) or len(digest) != 64:
+            raise ValueError("imputation progress contains an invalid NPZ hash")
+        if normalized in npz_hashes:
+            raise ValueError(f"imputation progress contains a duplicate file: {normalized}")
+        npz_hashes[normalized] = digest
+    npz_manifest_sha256 = hashlib.sha256(
+        json.dumps(npz_hashes, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    signature = {
         "routing_assignments_sha256": _file_sha256(assignments),
         "imputation_manifest_sha256": manifest_sha256,
+        "imputation_progress_sha256": _file_sha256(progress_path),
+        "npz_manifest_sha256": npz_manifest_sha256,
         "assembled_method_id": manifest_method,
     }
+    return signature, npz_hashes
+
+
+def _verify_imputation_npz_integrity(imputations: Path, npz_hashes: Mapping[str, str]) -> None:
+    for relative, expected in npz_hashes.items():
+        path = imputations / Path(relative)
+        if not path.is_file():
+            raise FileNotFoundError(f"imputation NPZ listed in progress does not exist: {path}")
+        if _file_sha256(path) != expected:
+            raise ValueError(f"imputation NPZ hash differs from progress: {relative}")
 
 
 def parse_ids(value: str | Sequence[str]) -> tuple[str, ...]:
@@ -177,6 +231,7 @@ def _episode_metadata(record: Mapping[str, Any]) -> dict[str, Any]:
         "family_id": str(record.get("family_id", "")),
         "forecaster_id": str(record.get("forecaster_id", "")),
         "routing_forecaster_id": str(record.get("forecaster_id", "")),
+        "routing_artifact_forecaster_id": str(record.get("forecaster_id", "")),
         "item_id": str(record.get("item_id", "")),
         "forecast_origin": int(record.get("forecast_origin", -1)),
         "mechanism": mechanism,
@@ -246,9 +301,10 @@ def _imputation_metrics(
     missing = ~np.asarray(observed_mask, dtype=bool)
     if not missing.any():
         return 0.0, 0.0
-    error = np.asarray(candidate_context, dtype=float)[missing] - np.asarray(
-        clean_context, dtype=float
-    )[missing]
+    error = (
+        np.asarray(candidate_context, dtype=float)[missing]
+        - np.asarray(clean_context, dtype=float)[missing]
+    )
     return float(np.mean(np.abs(error))), float(np.sqrt(np.mean(error**2)))
 
 
@@ -291,9 +347,7 @@ def _load_saved_candidates(
         raise ValueError("saved candidate IDs must be unique")
     if len(statuses) != len(identifiers):
         raise ValueError("saved candidate statuses do not align with candidate IDs")
-    if runtimes.shape != (len(identifiers),) or rss_deltas.shape != (
-        len(identifiers),
-    ):
+    if runtimes.shape != (len(identifiers),) or rss_deltas.shape != (len(identifiers),):
         raise ValueError("saved candidate resource metrics do not align with candidate IDs")
     missing = ~observed_mask
     result: dict[str, dict[str, Any]] = {}
@@ -341,9 +395,7 @@ def _complete_stateless_baselines(
             "values": result.values[0],
             "native_valid": bool(result.native_valid_mask[0][missing].all()),
             "ineligibility_reason": (
-                None
-                if bool(result.native_valid_mask[0][missing].all())
-                else "native_invalid"
+                None if bool(result.native_valid_mask[0][missing].all()) else "native_invalid"
             ),
             "status": result.status.value,
             "runtime_seconds": float(result.runtime_seconds),
@@ -481,9 +533,10 @@ def _recover_completed(path: Path, *, resume: bool) -> set[tuple[str, str, str]]
 
 def _write_csv_from_jsonl(source: Path, target: Path) -> Path:
     temporary = target.with_suffix(target.suffix + ".tmp")
-    with source.open("r", encoding="utf-8") as input_handle, temporary.open(
-        "w", encoding="utf-8", newline=""
-    ) as output_handle:
+    with (
+        source.open("r", encoding="utf-8") as input_handle,
+        temporary.open("w", encoding="utf-8", newline="") as output_handle,
+    ):
         writer = csv.DictWriter(output_handle, fieldnames=EVALUATION_FIELDS)
         writer.writeheader()
         for line in input_handle:
@@ -505,9 +558,7 @@ def _validate_resume_signature(
     if not jsonl_path.exists() or not resume:
         return
     if not manifest_path.is_file():
-        raise ValueError(
-            "cannot safely resume evaluation without evaluation_manifest.json"
-        )
+        raise ValueError("cannot safely resume evaluation without evaluation_manifest.json")
     try:
         existing = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as error:
@@ -518,6 +569,389 @@ def _validate_resume_signature(
             "evaluation resume signature does not match the existing output; "
             "use a new output directory"
         )
+
+
+@dataclass(frozen=True)
+class _SharedEvaluation:
+    root: Path
+    manifest_sha256: str
+    metrics_sha256: str
+    rows_by_episode: dict[str, dict[str, dict[str, Any]]]
+
+    def signature(self) -> dict[str, str]:
+        return {
+            "artifact": str(self.root),
+            "evaluation_manifest_sha256": self.manifest_sha256,
+            "episode_metrics_sha256": self.metrics_sha256,
+        }
+
+
+def _read_json_object(path: Path, *, description: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError(f"cannot read {description}: {path}") from error
+    if not isinstance(payload, dict):
+        raise ValueError(f"{description} must be a JSON object: {path}")
+    return payload
+
+
+def _load_assignment_records(
+    assignments: Path,
+    npz_hashes: Mapping[str, str],
+) -> dict[str, dict[str, Any]]:
+    records: dict[str, dict[str, Any]] = {}
+    files: set[str] = set()
+    with assignments.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            payload = json.loads(line)
+            if not isinstance(payload, dict):
+                raise ValueError("imputation assignment rows must be JSON objects")
+            episode_id = str(payload.get("episode_id", "")).strip()
+            if not episode_id or episode_id in records:
+                raise ValueError("imputation assignments contain an empty or duplicate episode ID")
+            relative = Path(str(payload.get("file", "")))
+            if not relative.parts or relative.is_absolute() or ".." in relative.parts:
+                raise ValueError(f"unsafe imputation artifact path: {relative}")
+            normalized = relative.as_posix()
+            if normalized not in npz_hashes or normalized in files:
+                raise ValueError(
+                    "imputation assignments and completed progress entries do not match"
+                )
+            records[episode_id] = payload
+            files.add(normalized)
+    if files != set(npz_hashes):
+        raise ValueError("imputation assignments and completed progress entries do not match")
+    return records
+
+
+def _arrays_equal(left: Any, right: Any) -> bool:
+    left_array = np.asarray(left)
+    right_array = np.asarray(right)
+    if left_array.dtype != right_array.dtype or left_array.shape != right_array.shape:
+        return False
+    if left_array.dtype.kind in {"f", "c"}:
+        return bool(np.array_equal(left_array, right_array, equal_nan=True))
+    return bool(np.array_equal(left_array, right_array))
+
+
+_SELECTOR_SPECIFIC_ARCHIVE_FIELDS = frozenset(
+    {
+        "values",
+        "assembled_method_id",
+        "pipeline_runtime_seconds",
+        "pipeline_rss_before_bytes",
+        "pipeline_rss_after_bytes",
+        "pipeline_rss_delta_bytes",
+        "pipeline_peak_memory_bytes",
+    }
+)
+
+_ROUTING_IDENTITY_ARCHIVE_FIELDS = frozenset(
+    {
+        "forecaster_id",
+        "forecast_mode",
+        "forecaster_independent_selection",
+    }
+)
+
+_SHARED_ASSIGNMENT_FIELDS = (
+    "schema_version",
+    "episode_id",
+    "dataset_id",
+    "family_id",
+    "item_id",
+    "forecast_origin",
+    "mechanism",
+    "missing_rate",
+    "seed",
+    "episode_seed",
+    "mask_protocol",
+    "mask_seed",
+    "mask_realization_id",
+    "target_missing_rate",
+    "global_missing_rate",
+    "local_missing_rate",
+    "mase_scale",
+    "mase_scale_lag",
+    "candidate_ids",
+    "file",
+    "forecaster_id",
+    "forecast_mode",
+    "forecaster_independent_selection",
+)
+
+
+def _validate_shared_assignment_content(
+    target_record: Mapping[str, Any],
+    source_record: Mapping[str, Any],
+    *,
+    episode_id: str,
+    allow_routing_identity_difference: bool,
+) -> None:
+    for field in _SHARED_ASSIGNMENT_FIELDS:
+        if allow_routing_identity_difference and field in {
+            "forecaster_id",
+            "forecast_mode",
+            "forecaster_independent_selection",
+        }:
+            continue
+        target_has_field = field in target_record
+        source_has_field = field in source_record
+        if target_has_field != source_has_field or (
+            target_has_field
+            and json.dumps(target_record[field], sort_keys=True, separators=(",", ":"))
+            != json.dumps(source_record[field], sort_keys=True, separators=(",", ":"))
+        ):
+            raise ValueError(
+                f"shared imputation assignment differs for episode {episode_id}: {field}"
+            )
+
+
+def _validate_shared_imputation_content(
+    target_archive: Mapping[str, Any],
+    source_archive: Mapping[str, Any],
+    *,
+    episode_id: str,
+    allow_routing_identity_difference: bool,
+) -> None:
+    """Require exact equality for every field unrelated to selector assembly."""
+
+    ignored_fields = _SELECTOR_SPECIFIC_ARCHIVE_FIELDS
+    if allow_routing_identity_difference:
+        ignored_fields = ignored_fields | _ROUTING_IDENTITY_ARCHIVE_FIELDS
+    target_fields = set(target_archive) - ignored_fields
+    source_fields = set(source_archive) - ignored_fields
+    if target_fields != source_fields:
+        raise ValueError(
+            f"shared imputation content differs for episode {episode_id}: archive fields"
+        )
+    for field in sorted(target_fields):
+        if not _arrays_equal(target_archive[field], source_archive[field]):
+            raise ValueError(f"shared imputation content differs for episode {episode_id}: {field}")
+
+
+def _load_shared_metric_rows(
+    metrics_path: Path,
+    *,
+    forecaster_id: str,
+) -> dict[str, dict[str, dict[str, Any]]]:
+    rows_by_episode: dict[str, dict[str, dict[str, Any]]] = {}
+    row_count = 0
+    with metrics_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            payload = json.loads(line)
+            if not isinstance(payload, dict):
+                raise ValueError("shared evaluation metrics must contain JSON objects")
+            if str(payload.get("forecaster_id", "")) != forecaster_id:
+                raise ValueError("shared evaluation metrics contain a different forecaster ID")
+            episode_id = str(payload.get("episode_id", "")).strip()
+            method_id = str(payload.get("method", "")).strip()
+            if not episode_id or not method_id:
+                raise ValueError("shared evaluation metrics contain an empty episode or method ID")
+            episode_rows = rows_by_episode.setdefault(episode_id, {})
+            if method_id in episode_rows:
+                raise ValueError("shared evaluation metrics contain duplicate episode/method rows")
+            episode_rows[method_id] = payload
+            row_count += 1
+    if row_count == 0:
+        raise ValueError("shared evaluation metrics are empty")
+    return rows_by_episode
+
+
+def _validate_shared_rows_for_episode(
+    rows: Mapping[str, Mapping[str, Any]],
+    source_record: Mapping[str, Any],
+    source_archive: Mapping[str, Any],
+    *,
+    config: AppConfig,
+    forecaster_id: str,
+    baseline_ids: Sequence[str],
+) -> None:
+    episode_id = str(source_record["episode_id"])
+    observed_mask = np.asarray(source_archive["observed_mask"], dtype=bool)
+    clean_context = np.asarray(source_archive["clean_context"], dtype=float)
+    candidates = _load_saved_candidates(source_archive, observed_mask)
+    _complete_stateless_baselines(clean_context, observed_mask, candidates, baseline_ids)
+    period = int(np.asarray(source_archive.get("period", 1)).reshape(-1)[0])
+    has_tail_missing = bool((~observed_mask[-1]).any())
+    for candidate_id, candidate_metadata in candidates.items():
+        candidate_spec = DEFAULT_REGISTRY.get_spec(candidate_id)
+        if has_tail_missing and not candidate_spec.supports_tail:
+            candidate_metadata["native_valid"] = False
+        elif candidate_spec.requires_period and period < 2:
+            candidate_metadata["native_valid"] = False
+    assembled_method = _assembled_method_id(source_record, source_archive)
+    expected = {"clean", assembled_method, "oracle", *candidates}
+    if set(rows) != expected:
+        raise ValueError(
+            f"shared evaluation method set differs from its imputation artifact: {episode_id}"
+        )
+    expected_seed = stable_seed(config.seed, forecaster_id, episode_id, "evaluation")
+    for method_id, row in rows.items():
+        if str(row.get("episode_id")) != episode_id:
+            raise ValueError("shared evaluation metrics contain inconsistent episode metadata")
+        if int(row.get("forecast_seed", -1)) != expected_seed:
+            raise ValueError("shared evaluation forecast seed differs from the requested spec")
+        if str(row.get("routing_artifact_forecaster_id", "")) != str(
+            source_record.get("forecaster_id", "")
+        ):
+            raise ValueError(
+                "shared evaluation routing provenance differs from its imputation artifact"
+            )
+        if method_id in candidates:
+            expected_valid = bool(candidates[method_id]["native_valid"])
+            if bool(row.get("native_valid")) != expected_valid:
+                raise ValueError("shared candidate validity differs from its imputation artifact")
+    eligible = [
+        method_id for method_id, candidate in candidates.items() if candidate["native_valid"]
+    ]
+    if not eligible:
+        raise ValueError("shared evaluation episode has no valid oracle candidate")
+    expected_oracle = min(
+        eligible,
+        key=lambda method_id: (float(rows[method_id]["mase"]), method_id),
+    )
+    oracle = rows["oracle"]
+    if oracle.get("oracle_source") != expected_oracle:
+        raise ValueError("shared evaluation oracle is inconsistent with candidate rows")
+    for metric in ("mase", "mae", "rmse", "imputation_mae", "imputation_rmse"):
+        if oracle.get(metric) != rows[expected_oracle].get(metric):
+            raise ValueError("shared evaluation oracle metrics differ from its source candidate")
+
+
+def _prepare_shared_evaluation(
+    shared_artifact: str | Path,
+    *,
+    target_root: Path,
+    target_assignments: Path,
+    target_npz_hashes: Mapping[str, str],
+    expected_spec: Mapping[str, Any],
+    config: AppConfig,
+    forecaster_id: str,
+    baseline_ids: Sequence[str],
+    shared_reference_only: bool,
+) -> _SharedEvaluation:
+    shared_root = Path(shared_artifact).resolve()
+    if shared_root.is_file() and shared_root.name == "evaluation_manifest.json":
+        shared_root = shared_root.parent
+    manifest_path = shared_root / "evaluation_manifest.json"
+    metrics_path = shared_root / "episode_metrics.jsonl"
+    if not manifest_path.is_file() or not metrics_path.is_file():
+        raise FileNotFoundError(
+            "shared evaluation artifact must contain evaluation_manifest.json and "
+            "episode_metrics.jsonl"
+        )
+    manifest_sha256 = _file_sha256(manifest_path)
+    metrics_sha256 = _file_sha256(metrics_path)
+    manifest = _read_json_object(manifest_path, description="shared evaluation manifest")
+    if manifest.get("status") != "completed":
+        raise ValueError("shared evaluation artifact is not completed")
+    recorded_metrics_sha256 = manifest.get("episode_metrics_jsonl_sha256")
+    if not isinstance(recorded_metrics_sha256, str) or not recorded_metrics_sha256.strip():
+        raise ValueError("shared evaluation manifest has no episode_metrics.jsonl SHA-256")
+    if recorded_metrics_sha256.lower() != metrics_sha256:
+        raise ValueError(
+            "shared evaluation episode_metrics.jsonl SHA-256 differs from its manifest"
+        )
+    recorded_metrics_size = manifest.get("episode_metrics_jsonl_size_bytes")
+    if recorded_metrics_size is not None:
+        try:
+            expected_metrics_size = int(recorded_metrics_size)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "shared evaluation manifest has an invalid episode_metrics.jsonl size"
+            ) from error
+        if expected_metrics_size < 0 or metrics_path.stat().st_size != expected_metrics_size:
+            raise ValueError(
+                "shared evaluation episode_metrics.jsonl size differs from its manifest"
+            )
+    if manifest.get("forecaster_id") != forecaster_id:
+        raise ValueError("shared evaluation forecaster ID differs from the requested forecaster")
+    signature = manifest.get("evaluation_signature")
+    if not isinstance(signature, Mapping):
+        raise ValueError("shared evaluation manifest has no evaluation signature")
+    for field, expected in expected_spec.items():
+        if signature.get(field) != expected:
+            raise ValueError(f"shared evaluation spec differs for {field}")
+    if manifest.get("forecaster_artifact") != expected_spec["forecaster_artifact"]:
+        raise ValueError(
+            "shared evaluation forecaster artifact differs from the requested artifact"
+        )
+
+    source_value = manifest.get("impute_artifact")
+    if not isinstance(source_value, str) or not source_value.strip():
+        raise ValueError("shared evaluation manifest has no source imputation artifact")
+    source_root = Path(source_value).resolve()
+    if signature.get("impute_artifact") != str(source_root):
+        raise ValueError("shared evaluation source path differs from its evaluation signature")
+    source_assignments = source_root / "routing_assignments.jsonl"
+    source_imputations = source_root / "imputations"
+    if not source_assignments.is_file() or not source_imputations.is_dir():
+        raise FileNotFoundError("shared evaluation source imputation artifact is unavailable")
+    source_content, source_hashes = _impute_content_signature(source_root, source_assignments)
+    _verify_imputation_npz_integrity(source_imputations, source_hashes)
+    if signature.get("impute_content") != source_content:
+        raise ValueError("shared evaluation source content differs from its evaluation signature")
+
+    target_records = _load_assignment_records(target_assignments, target_npz_hashes)
+    source_records = _load_assignment_records(source_assignments, source_hashes)
+    rows_by_episode = _load_shared_metric_rows(metrics_path, forecaster_id=forecaster_id)
+    episode_ids = set(target_records)
+    if episode_ids != set(source_records) or episode_ids != set(rows_by_episode):
+        raise ValueError(
+            "shared evaluation episode set differs from the target imputation artifact"
+        )
+    if int(manifest.get("total_rows", -1)) != sum(len(rows) for rows in rows_by_episode.values()):
+        raise ValueError("shared evaluation row count differs from its completed manifest")
+
+    target_imputations = target_root / "imputations"
+    for episode_id in sorted(episode_ids):
+        target_record = target_records[episode_id]
+        source_record = source_records[episode_id]
+        _validate_shared_assignment_content(
+            target_record,
+            source_record,
+            episode_id=episode_id,
+            allow_routing_identity_difference=shared_reference_only,
+        )
+        target_file = Path(str(target_record["file"]))
+        source_file = Path(str(source_record["file"]))
+        with (
+            np.load(target_imputations / target_file, allow_pickle=False) as target_archive,
+            np.load(source_imputations / source_file, allow_pickle=False) as source_archive,
+        ):
+            _validate_shared_imputation_content(
+                target_archive,
+                source_archive,
+                episode_id=episode_id,
+                allow_routing_identity_difference=shared_reference_only,
+            )
+            _validate_shared_rows_for_episode(
+                rows_by_episode[episode_id],
+                source_record,
+                source_archive,
+                config=config,
+                forecaster_id=forecaster_id,
+                baseline_ids=baseline_ids,
+            )
+
+    if (
+        _file_sha256(manifest_path) != manifest_sha256
+        or _file_sha256(metrics_path) != metrics_sha256
+    ):
+        raise ValueError("shared evaluation artifact changed during validation")
+
+    return _SharedEvaluation(
+        root=shared_root,
+        manifest_sha256=manifest_sha256,
+        metrics_sha256=metrics_sha256,
+        rows_by_episode=rows_by_episode,
+    )
 
 
 def _assembled_method_id(
@@ -548,6 +982,94 @@ def _assembled_method_id(
     return method_id
 
 
+def _optional_archive_scalar(archive: Mapping[str, Any], field: str) -> Any | None:
+    if field not in archive:
+        return None
+    values = np.asarray(archive[field]).reshape(-1)
+    if values.size != 1:
+        raise ValueError(f"imputation archive field {field!r} must be scalar")
+    value = values[0]
+    return value.item() if hasattr(value, "item") else value
+
+
+def _routing_artifact_forecaster_id(
+    record: Mapping[str, Any],
+    archive: Mapping[str, Any],
+    *,
+    requested_forecaster_id: str,
+) -> str:
+    """Validate dependent or selector-independent routing identity."""
+
+    registry = default_forecast_registry()
+    requested_forecaster = registry.get(requested_forecaster_id)
+    record_id = record.get("forecaster_id")
+    archive_id = _optional_archive_scalar(archive, "forecaster_id")
+    ids = [str(value).strip() for value in (record_id, archive_id) if value not in {None, ""}]
+    if len(set(ids)) > 1:
+        raise ValueError("record and archive routing forecaster IDs differ")
+    routing_model = ids[0] if ids else ""
+
+    record_mode = record.get("forecast_mode")
+    archive_mode = _optional_archive_scalar(archive, "forecast_mode")
+    modes = [str(value).strip() for value in (record_mode, archive_mode) if value not in {None, ""}]
+    if len(set(modes)) > 1:
+        raise ValueError("record and archive routing forecast modes differ")
+    routing_mode = modes[0] if modes else ""
+
+    record_independent = record.get("forecaster_independent_selection")
+    archive_independent = _optional_archive_scalar(archive, "forecaster_independent_selection")
+    routing_metadata = record.get("routing_metadata")
+    metadata_independent = is_independent_sequence_routing_metadata(routing_metadata)
+    claims_independent = (
+        routing_model == SELECTOR_INDEPENDENT_FORECASTER_ID
+        or routing_mode == SELECTOR_INDEPENDENT_FORECAST_MODE
+        or record_independent is True
+        or archive_independent is True
+        or metadata_independent
+    )
+    if claims_independent:
+        if (
+            record_id != SELECTOR_INDEPENDENT_FORECASTER_ID
+            or archive_id != SELECTOR_INDEPENDENT_FORECASTER_ID
+            or record_mode != SELECTOR_INDEPENDENT_FORECAST_MODE
+            or archive_mode != SELECTOR_INDEPENDENT_FORECAST_MODE
+            or record_independent is not True
+            or archive_independent is not True
+            or not metadata_independent
+        ):
+            raise ValueError(
+                "selector-independent routing identity lacks strict sequence protocol metadata"
+            )
+        assembled_method = _assembled_method_id(record, archive)
+        assert isinstance(routing_metadata, Mapping)
+        if assembled_method != str(routing_metadata["selector_method"]):
+            raise ValueError("selector-independent assembled method differs from routing metadata")
+        return SELECTOR_INDEPENDENT_FORECASTER_ID
+
+    if not routing_model:
+        return ""
+    try:
+        routing_forecaster = registry.get(routing_model)
+    except KeyError as error:
+        raise ValueError(
+            f"episode {record.get('episode_id')} records unknown routing "
+            f"forecaster {routing_model!r}"
+        ) from error
+    if routing_mode and routing_mode != routing_forecaster.mode:
+        raise ValueError(
+            f"episode {record.get('episode_id')} records routing mode "
+            f"{routing_mode!r}, expected {routing_forecaster.mode!r}"
+        )
+    if routing_forecaster.mode != requested_forecaster.mode:
+        raise ValueError(
+            f"episode {record.get('episode_id')} was routed for "
+            f"{routing_model!r} ({routing_forecaster.mode}), which is "
+            f"incompatible with {requested_forecaster_id!r} "
+            f"({requested_forecaster.mode})"
+        )
+    return routing_model
+
+
 def _evaluate_episode(
     record: Mapping[str, Any],
     archive: Mapping[str, Any],
@@ -574,8 +1096,7 @@ def _evaluate_episode(
     missing_fields = [field for field in required if field not in archive]
     if missing_fields:
         raise ValueError(
-            "imputation artifact is not evaluation-ready; missing: "
-            + ", ".join(missing_fields)
+            "imputation artifact is not evaluation-ready; missing: " + ", ".join(missing_fields)
         )
     assembled = np.asarray(archive["values"], dtype=float)
     observed_mask = np.asarray(archive["observed_mask"], dtype=bool)
@@ -601,9 +1122,7 @@ def _evaluate_episode(
 
     period = int(np.asarray(archive.get("period", 1)).reshape(-1)[0])
     candidates = _load_saved_candidates(archive, observed_mask)
-    _complete_stateless_baselines(
-        clean_context, observed_mask, candidates, baseline_ids
-    )
+    _complete_stateless_baselines(clean_context, observed_mask, candidates, baseline_ids)
     has_tail_missing = bool((~observed_mask[-1]).any())
     for candidate_id, candidate_metadata in candidates.items():
         candidate_spec = DEFAULT_REGISTRY.get_spec(candidate_id)
@@ -617,20 +1136,36 @@ def _evaluate_episode(
     assembled_method_id = _assembled_method_id(record, archive)
     if assembled_method_id in candidates:
         raise ValueError(
-            "assembled_method_id collides with a saved candidate ID: "
-            f"{assembled_method_id!r}"
+            f"assembled_method_id collides with a saved candidate ID: {assembled_method_id!r}"
         )
+    routing_metadata = record.get("routing_metadata")
+    assembled_native_valid = not (
+        isinstance(routing_metadata, Mapping)
+        and routing_metadata.get("paper_native_valid") is False
+    )
+    assembled_ineligibility_reason = (
+        None
+        if assembled_native_valid or not isinstance(routing_metadata, Mapping)
+        else str(
+            routing_metadata.get(
+                "paper_ineligibility_reason",
+                "paper_method_required_a_safety_fallback",
+            )
+        )
+    )
     method_ids = ("clean", assembled_method_id, *candidate_ids)
     valid_candidate_ids = tuple(
-        candidate_id
-        for candidate_id in candidate_ids
-        if candidates[candidate_id]["native_valid"]
+        candidate_id for candidate_id in candidate_ids if candidates[candidate_id]["native_valid"]
     )
-    forecast_method_ids = ("clean", assembled_method_id, *valid_candidate_ids)
+    forecast_method_ids = (
+        "clean",
+        *((assembled_method_id,) if assembled_native_valid else ()),
+        *valid_candidate_ids,
+    )
     contexts = np.stack(
         (
             clean_context,
-            assembled,
+            *((assembled,) if assembled_native_valid else ()),
             *(candidates[key]["values"] for key in valid_candidate_ids),
         )
     )
@@ -658,22 +1193,12 @@ def _evaluate_episode(
         {
             "mask_protocol": mask_protocol,
             "mask_seed": int(np.asarray(archive["mask_seed"]).reshape(-1)[0]),
-            "mask_realization_id": str(
-                np.asarray(archive["mask_realization_id"]).reshape(-1)[0]
-            ),
-            "target_missing_rate": float(
-                np.asarray(archive["target_missing_rate"]).reshape(-1)[0]
-            ),
-            "global_missing_rate": float(
-                np.asarray(archive["global_missing_rate"]).reshape(-1)[0]
-            ),
-            "local_missing_rate": float(
-                np.asarray(archive["local_missing_rate"]).reshape(-1)[0]
-            ),
+            "mask_realization_id": str(np.asarray(archive["mask_realization_id"]).reshape(-1)[0]),
+            "target_missing_rate": float(np.asarray(archive["target_missing_rate"]).reshape(-1)[0]),
+            "global_missing_rate": float(np.asarray(archive["global_missing_rate"]).reshape(-1)[0]),
+            "local_missing_rate": float(np.asarray(archive["local_missing_rate"]).reshape(-1)[0]),
             "contains_missing": bool((~observed_mask).any()),
-            "mase_scale_lag": int(
-                np.asarray(archive["mase_scale_lag"]).reshape(-1)[0]
-            ),
+            "mase_scale_lag": int(np.asarray(archive["mase_scale_lag"]).reshape(-1)[0]),
         }
     )
     metrics_by_method = {
@@ -688,9 +1213,7 @@ def _evaluate_episode(
     pipeline_runtime = float(
         np.asarray(archive.get("pipeline_runtime_seconds", 0.0)).reshape(-1)[0]
     )
-    pipeline_rss_delta = int(
-        np.asarray(archive.get("pipeline_rss_delta_bytes", 0)).reshape(-1)[0]
-    )
+    pipeline_rss_delta = int(np.asarray(archive.get("pipeline_rss_delta_bytes", 0)).reshape(-1)[0])
     rows: list[dict[str, Any]] = []
     for method_id in method_ids:
         candidate = candidates.get(method_id)
@@ -698,10 +1221,8 @@ def _evaluate_episode(
             method_role = "reference"
             candidate_status = "reference"
         elif method_id == assembled_method_id:
-            method_role = (
-                "method" if assembled_method_id == "b_fais" else "selector_baseline"
-            )
-            candidate_status = "assembled"
+            method_role = "method" if assembled_method_id == "b_fais" else "selector_baseline"
+            candidate_status = "assembled" if assembled_native_valid else "assembled_fallback"
         else:
             if candidate is None:  # pragma: no cover - method_ids construction guard
                 raise RuntimeError(f"missing candidate metadata for {method_id!r}")
@@ -720,7 +1241,11 @@ def _evaluate_episode(
             runtime_seconds = float(candidate["runtime_seconds"])
             rss_delta_bytes = int(candidate["rss_delta_bytes"])
             runtime_scope = "single_imputer"
-        metric_eligible = candidate is None or bool(candidate["native_valid"])
+        metric_eligible = (
+            assembled_native_valid
+            if method_id == assembled_method_id
+            else candidate is None or bool(candidate["native_valid"])
+        )
         method_metrics = metrics_by_method.get(method_id)
         imputation_mae: float | None
         imputation_rmse: float | None
@@ -748,14 +1273,29 @@ def _evaluate_episode(
                 "schema_version": 1,
                 **metadata,
                 "forecaster_id": model_id,
+                "routing_forecaster_id": (
+                    metadata["routing_artifact_forecaster_id"]
+                    if method_id == assembled_method_id
+                    else model_id
+                ),
                 "method": method_id,
                 "method_role": method_role,
                 "oracle_source": None,
                 "oracle_eligible": bool(candidate and candidate["native_valid"]),
-                "native_valid": True if candidate is None else candidate["native_valid"],
+                "native_valid": (
+                    assembled_native_valid
+                    if method_id == assembled_method_id
+                    else True
+                    if candidate is None
+                    else candidate["native_valid"]
+                ),
                 "metric_eligible": metric_eligible,
                 "ineligibility_reason": (
-                    None if candidate is None else candidate["ineligibility_reason"]
+                    assembled_ineligibility_reason
+                    if method_id == assembled_method_id
+                    else None
+                    if candidate is None
+                    else candidate["ineligibility_reason"]
                 ),
                 "candidate_status": candidate_status,
                 "mase": None if method_metrics is None else method_metrics["mase"],
@@ -777,8 +1317,7 @@ def _evaluate_episode(
     eligible = [
         row
         for row in rows
-        if row["method_role"] in {"baseline", "missing_anchor"}
-        and row["oracle_eligible"]
+        if row["method_role"] in {"baseline", "missing_anchor"} and row["oracle_eligible"]
     ]
     if not eligible:
         raise ValueError("episode has no natively valid single-imputer oracle candidate")
@@ -811,6 +1350,244 @@ def _evaluate_episode(
     return rows
 
 
+def _evaluate_episode_with_shared_rows(
+    record: Mapping[str, Any],
+    archive: Mapping[str, Any],
+    config: AppConfig,
+    model_id: str,
+    predictor: ForecastPredictor | None,
+    baseline_ids: Sequence[str],
+    shared_rows: Mapping[str, Mapping[str, Any]],
+    *,
+    shared_reference_only: bool,
+) -> list[dict[str, Any]]:
+    """Evaluate only the assembled context and reuse common forecast rows."""
+
+    required = (
+        "schema_version",
+        "values",
+        "observed_mask",
+        "clean_context",
+        "clean_future",
+        "mask_protocol",
+        "mask_seed",
+        "mask_realization_id",
+        "target_missing_rate",
+        "global_missing_rate",
+        "local_missing_rate",
+        "mase_scale",
+        "mase_scale_lag",
+    )
+    missing_fields = [field for field in required if field not in archive]
+    if missing_fields:
+        raise ValueError(
+            "imputation artifact is not evaluation-ready; missing: " + ", ".join(missing_fields)
+        )
+    assembled = np.asarray(archive["values"], dtype=float)
+    observed_mask = np.asarray(archive["observed_mask"], dtype=bool)
+    clean_context = np.asarray(archive["clean_context"], dtype=float)
+    clean_future = np.asarray(archive["clean_future"], dtype=float)
+    schema_version = int(np.asarray(archive["schema_version"]).reshape(-1)[0])
+    mask_protocol = str(np.asarray(archive["mask_protocol"]).reshape(-1)[0])
+    if schema_version != 3 or mask_protocol != "sequence_mask_v2":
+        raise ValueError("imputation artifact does not use sequence_mask_v2 schema 3")
+    mase_scale = np.asarray(archive["mase_scale"], dtype=float).reshape(-1)
+    if not (
+        assembled.shape == observed_mask.shape == clean_context.shape
+        and clean_future.ndim == 2
+        and clean_future.shape[1] == clean_context.shape[1]
+    ):
+        raise ValueError("imputation artifact contains incompatible episode shapes")
+    if (
+        not np.isfinite(assembled).all()
+        or not np.isfinite(clean_context).all()
+        or not np.isfinite(clean_future).all()
+    ):
+        raise ValueError("evaluation contexts must be finite")
+
+    period = int(np.asarray(archive.get("period", 1)).reshape(-1)[0])
+    candidates = _load_saved_candidates(archive, observed_mask)
+    _complete_stateless_baselines(clean_context, observed_mask, candidates, baseline_ids)
+    has_tail_missing = bool((~observed_mask[-1]).any())
+    for candidate_id, candidate_metadata in candidates.items():
+        candidate_spec = DEFAULT_REGISTRY.get_spec(candidate_id)
+        if has_tail_missing and not candidate_spec.supports_tail:
+            candidate_metadata["native_valid"] = False
+            candidate_metadata["ineligibility_reason"] = "unsupported_tail"
+        elif candidate_spec.requires_period and period < 2:
+            candidate_metadata["native_valid"] = False
+            candidate_metadata["ineligibility_reason"] = "missing_period"
+
+    assembled_method_id = _assembled_method_id(record, archive)
+    if assembled_method_id in candidates:
+        raise ValueError(
+            f"assembled_method_id collides with a saved candidate ID: {assembled_method_id!r}"
+        )
+    routing_metadata = record.get("routing_metadata")
+    assembled_native_valid = not (
+        isinstance(routing_metadata, Mapping)
+        and routing_metadata.get("paper_native_valid") is False
+    )
+    assembled_ineligibility_reason = (
+        None
+        if assembled_native_valid or not isinstance(routing_metadata, Mapping)
+        else str(
+            routing_metadata.get(
+                "paper_ineligibility_reason",
+                "paper_method_required_a_safety_fallback",
+            )
+        )
+    )
+
+    episode_id = str(record["episode_id"])
+    forecast_seed = stable_seed(config.seed, model_id, episode_id, "evaluation")
+    assembled_metrics: dict[str, float] | None = None
+    if assembled_native_valid:
+        if predictor is None:
+            raise RuntimeError("shared evaluation requires a predictor for a valid assembled row")
+        spec = _forecast_spec(config, model_id, clean_context.shape[1])
+        valid_candidate_ids = tuple(
+            candidate_id
+            for candidate_id in sorted(candidates)
+            if candidates[candidate_id]["native_valid"]
+        )
+        # Keep the target method in the same batch position and batch shape used by
+        # a complete evaluation. Some forecasters have small batch-size-dependent
+        # numerical differences, so a singleton call would make shared and full
+        # evaluations incomparable even when their assembled contexts are equal.
+        aligned_contexts = np.stack(
+            (
+                clean_context,
+                assembled,
+                *(candidates[key]["values"] for key in valid_candidate_ids),
+            )
+        )
+        _set_forecast_seed(forecast_seed)
+        forecast = predictor.predict(aligned_contexts, spec)
+        if forecast.point.shape[0] != len(aligned_contexts):
+            raise ValueError("forecaster did not return one prediction per aligned context")
+        metric_arrays = forecast_metrics(
+            clean_context,
+            clean_future,
+            forecast,
+            seasonality=max(1, period),
+            mase_scale=mase_scale,
+        )
+        assembled_metrics = {
+            metric_name: float(metric_values[1])
+            for metric_name, metric_values in metric_arrays.items()
+        }
+
+    metadata = _episode_metadata(record)
+    metadata.update(
+        {
+            "mask_protocol": mask_protocol,
+            "mask_seed": int(np.asarray(archive["mask_seed"]).reshape(-1)[0]),
+            "mask_realization_id": str(np.asarray(archive["mask_realization_id"]).reshape(-1)[0]),
+            "target_missing_rate": float(np.asarray(archive["target_missing_rate"]).reshape(-1)[0]),
+            "global_missing_rate": float(np.asarray(archive["global_missing_rate"]).reshape(-1)[0]),
+            "local_missing_rate": float(np.asarray(archive["local_missing_rate"]).reshape(-1)[0]),
+            "contains_missing": bool((~observed_mask).any()),
+            "mase_scale_lag": int(np.asarray(archive["mase_scale_lag"]).reshape(-1)[0]),
+        }
+    )
+    shared_candidate_ids = tuple(
+        sorted(
+            method_id
+            for method_id, row in shared_rows.items()
+            if row.get("method_role") in {"baseline", "missing_anchor"}
+        )
+    )
+    candidate_ids = shared_candidate_ids if shared_reference_only else tuple(sorted(candidates))
+    expected_shared = {"clean", "oracle", *candidate_ids}
+    available_shared = {
+        method_id
+        for method_id, row in shared_rows.items()
+        if row.get("method_role") in {"reference", "baseline", "missing_anchor", "oracle"}
+    }
+    if available_shared != expected_shared:
+        raise ValueError("shared evaluation common method rows are incomplete")
+
+    common_rows: dict[str, dict[str, Any]] = {}
+    for method_id in expected_shared:
+        row = dict(shared_rows[method_id])
+        if not shared_reference_only:
+            row.update(metadata)
+            row.update(
+                {
+                    "forecaster_id": model_id,
+                    "routing_forecaster_id": model_id,
+                    "routing_artifact_forecaster_id": metadata["routing_artifact_forecaster_id"],
+                    "forecast_seed": forecast_seed,
+                }
+            )
+        common_rows[method_id] = row
+
+    clean_mase = float(common_rows["clean"]["mase"])
+    clean_denominator = max(abs(clean_mase), 1e-8)
+    oracle_mase = float(common_rows["oracle"]["mase"])
+    oracle_denominator = max(abs(oracle_mase), 1e-8)
+    imputation_mae: float | None
+    imputation_rmse: float | None
+    degradation: float | None
+    relative_degradation: float | None
+    regret: float | None
+    relative_regret: float | None
+    if assembled_native_valid:
+        assert assembled_metrics is not None
+        imputation_mae, imputation_rmse = _imputation_metrics(
+            clean_context,
+            assembled,
+            observed_mask,
+        )
+        degradation = assembled_metrics["mase"] - clean_mase
+        relative_degradation = degradation / clean_denominator
+        regret = assembled_metrics["mase"] - oracle_mase
+        relative_regret = regret / oracle_denominator
+    else:
+        imputation_mae = imputation_rmse = None
+        degradation = relative_degradation = None
+        regret = relative_regret = None
+
+    pipeline_runtime = float(
+        np.asarray(archive.get("pipeline_runtime_seconds", 0.0)).reshape(-1)[0]
+    )
+    pipeline_rss_delta = int(np.asarray(archive.get("pipeline_rss_delta_bytes", 0)).reshape(-1)[0])
+    assembled_row = {
+        "schema_version": 1,
+        **metadata,
+        "forecaster_id": model_id,
+        "routing_forecaster_id": metadata["routing_artifact_forecaster_id"],
+        "method": assembled_method_id,
+        "method_role": "method" if assembled_method_id == "b_fais" else "selector_baseline",
+        "oracle_source": common_rows["oracle"]["oracle_source"],
+        "oracle_eligible": False,
+        "native_valid": assembled_native_valid,
+        "metric_eligible": assembled_native_valid,
+        "ineligibility_reason": assembled_ineligibility_reason,
+        "candidate_status": "assembled" if assembled_native_valid else "assembled_fallback",
+        "mase": None if assembled_metrics is None else assembled_metrics["mase"],
+        "mae": None if assembled_metrics is None else assembled_metrics["mae"],
+        "rmse": None if assembled_metrics is None else assembled_metrics["rmse"],
+        "imputation_mae": imputation_mae,
+        "imputation_rmse": imputation_rmse,
+        "degradation_vs_clean_mase": degradation,
+        "relative_degradation_vs_clean": relative_degradation,
+        "regret_mase": regret,
+        "relative_regret": relative_regret,
+        "runtime_seconds": pipeline_runtime,
+        "rss_delta_bytes": pipeline_rss_delta,
+        "runtime_scope": "end_to_end_imputation",
+        "forecast_seed": forecast_seed,
+    }
+    return [
+        common_rows["clean"],
+        assembled_row,
+        *(common_rows[method_id] for method_id in candidate_ids),
+        common_rows["oracle"],
+    ]
+
+
 def evaluate_imputations(
     *,
     config: AppConfig,
@@ -821,9 +1598,13 @@ def evaluate_imputations(
     baseline_ids: Sequence[str] = ("locf", "linear_interp"),
     resume: bool = False,
     forecast_runner: ForecastPredictor | None = None,
+    shared_evaluation_artifact: str | Path | None = None,
+    shared_reference_only: bool = False,
 ) -> dict[str, Any]:
     """Evaluate imputed contexts with one frozen TSFM and stream durable rows."""
 
+    if shared_reference_only and shared_evaluation_artifact is None:
+        raise ValueError("shared_reference_only requires shared_evaluation_artifact")
     baseline_tuple = parse_ids(tuple(baseline_ids))
     registry = default_forecast_registry()
     requested_forecaster = registry.get(forecaster_id)
@@ -861,15 +1642,12 @@ def evaluate_imputations(
         if config.experiment.target_indices == "all"
         else list(config.experiment.target_indices)
     )
-    evaluation_signature = {
-        "schema_version": 2,
-        "impute_artifact": str(root),
-        "impute_content": _impute_content_signature(root, assignments),
+    impute_content, imputation_npz_hashes = _impute_content_signature(root, assignments)
+    _verify_imputation_npz_integrity(imputations, imputation_npz_hashes)
+    evaluation_spec = {
         "forecaster_id": forecaster_id,
         "forecaster_artifact": (
-            None
-            if resolved_forecaster_artifact is None
-            else str(resolved_forecaster_artifact)
+            None if resolved_forecaster_artifact is None else str(resolved_forecaster_artifact)
         ),
         "baseline_ids": list(baseline_tuple),
         "context_length": config.experiment.context_length,
@@ -880,7 +1658,33 @@ def evaluate_imputations(
         "seed": config.seed,
         "mask_protocol": "sequence_mask_v2",
         "resolved_device": resolved_device,
+        "forecast_call_protocol": FORECAST_CALL_PROTOCOL,
     }
+    evaluation_signature: dict[str, Any] = {
+        "schema_version": 2,
+        "impute_artifact": str(root),
+        "impute_content": impute_content,
+        **evaluation_spec,
+    }
+    shared_evaluation = (
+        None
+        if shared_evaluation_artifact is None
+        else _prepare_shared_evaluation(
+            shared_evaluation_artifact,
+            target_root=root,
+            target_assignments=assignments,
+            target_npz_hashes=imputation_npz_hashes,
+            expected_spec=evaluation_spec,
+            config=config,
+            forecaster_id=forecaster_id,
+            baseline_ids=baseline_tuple,
+            shared_reference_only=shared_reference_only,
+        )
+    )
+    if shared_evaluation is not None:
+        evaluation_signature["shared_evaluation"] = shared_evaluation.signature()
+    if shared_reference_only:
+        evaluation_signature["shared_reference_only"] = True
     _validate_resume_signature(
         manifest_path,
         jsonl_path,
@@ -894,15 +1698,28 @@ def evaluate_imputations(
         "impute_artifact": str(root),
         "forecaster_id": forecaster_id,
         "forecaster_artifact": (
-            None
-            if resolved_forecaster_artifact is None
-            else str(resolved_forecaster_artifact)
+            None if resolved_forecaster_artifact is None else str(resolved_forecaster_artifact)
         ),
         "forecaster_mode": requested_forecaster.mode,
         "routing_forecaster_ids": [],
         "runtime_device": config.runtime.device,
         "resolved_device": resolved_device,
+        "forecast_call_protocol": FORECAST_CALL_PROTOCOL,
         "baseline_ids": list(baseline_tuple),
+        "shared_evaluation_artifact": (
+            None if shared_evaluation is None else str(shared_evaluation.root)
+        ),
+        "shared_evaluation_signature": (
+            None if shared_evaluation is None else shared_evaluation.signature()
+        ),
+        "shared_reference_only": bool(shared_reference_only),
+        "forecast_reuse_mode": (
+            "none"
+            if shared_evaluation is None
+            else "shared_reference_only"
+            if shared_reference_only
+            else "common_rows_from_completed_evaluation"
+        ),
         "resume": bool(resume),
         "existing_rows": len(completed),
         "metric_definition": {
@@ -915,13 +1732,11 @@ def evaluate_imputations(
             "oracle": "lowest-MASE natively valid saved single-imputer candidate",
             "degradation_vs_clean_mase": "method_mase - clean_context_mase",
             "relative_degradation_vs_clean": (
-                "(method_mase - clean_context_mase) / "
-                "max(abs(clean_context_mase), 1e-8)"
+                "(method_mase - clean_context_mase) / max(abs(clean_context_mase), 1e-8)"
             ),
             "relative_regret": "(method_mase - oracle_mase) / max(abs(oracle_mase), 1e-8)",
             "runtime_seconds": (
-                "end-to-end imputation for the assembled method; one imputer call "
-                "for candidates"
+                "end-to-end imputation for the assembled method; one imputer call for candidates"
             ),
             "rss_delta_bytes": (
                 "non-negative process RSS after-minus-before delta; not peak memory"
@@ -940,60 +1755,75 @@ def evaluate_imputations(
     episodes_seen = episodes_evaluated = rows_written = 0
     routing_forecaster_ids: set[str] = set()
     try:
-        with assignments.open("r", encoding="utf-8") as assignments_handle, jsonl_path.open(
-            "a", encoding="utf-8"
-        ) as output_handle:
+        with (
+            assignments.open("r", encoding="utf-8") as assignments_handle,
+            jsonl_path.open("a", encoding="utf-8") as output_handle,
+        ):
             for line in assignments_handle:
                 if not line.strip():
                     continue
                 record = json.loads(line)
                 episodes_seen += 1
-                recorded_model = record.get("forecaster_id")
-                if recorded_model not in {None, ""}:
-                    routing_model = str(recorded_model)
-                    try:
-                        routing_forecaster = registry.get(routing_model)
-                    except KeyError as error:
-                        raise ValueError(
-                            f"episode {record.get('episode_id')} records unknown routing "
-                            f"forecaster {routing_model!r}"
-                        ) from error
-                    if routing_forecaster.mode != requested_forecaster.mode:
-                        raise ValueError(
-                            f"episode {record.get('episode_id')} was routed for "
-                            f"{routing_model!r} ({routing_forecaster.mode}), which is "
-                            f"incompatible with {forecaster_id!r} "
-                            f"({requested_forecaster.mode})"
-                        )
-                    routing_forecaster_ids.add(routing_model)
                 relative = Path(str(record["file"]))
                 if relative.is_absolute() or ".." in relative.parts:
                     raise ValueError(f"unsafe imputation artifact path: {relative}")
                 artifact_path = imputations / relative
+                if relative.as_posix() not in imputation_npz_hashes:
+                    raise ValueError(f"imputation assignment is absent from progress: {relative}")
                 with np.load(artifact_path, allow_pickle=False) as archive:
-                    assembled_method_id = _assembled_method_id(record, archive)
-                    saved_ids = (
-                        tuple(
-                            str(value)
-                            for value in np.asarray(archive["candidate_ids"]).tolist()
-                        )
-                        if "candidate_ids" in archive
-                        else ()
+                    routing_model = _routing_artifact_forecaster_id(
+                        record,
+                        archive,
+                        requested_forecaster_id=forecaster_id,
                     )
-                    expected_methods = {
-                        "clean",
-                        assembled_method_id,
-                        "oracle",
-                        *saved_ids,
-                        *baseline_tuple,
-                    }
+                    if routing_model:
+                        routing_forecaster_ids.add(routing_model)
+                    assembled_method_id = _assembled_method_id(record, archive)
                     episode_id = str(record["episode_id"])
+                    if shared_reference_only:
+                        assert shared_evaluation is not None
+                        episode_shared_rows = shared_evaluation.rows_by_episode.get(episode_id)
+                        if episode_shared_rows is None:  # pragma: no cover - preflight guard
+                            raise ValueError(
+                                f"shared evaluation has no rows for episode {episode_id}"
+                            )
+                        expected_methods = {
+                            assembled_method_id,
+                            *(
+                                method_id
+                                for method_id, row in episode_shared_rows.items()
+                                if row.get("method_role")
+                                in {"reference", "baseline", "missing_anchor", "oracle"}
+                            ),
+                        }
+                    else:
+                        saved_ids = (
+                            tuple(
+                                str(value)
+                                for value in np.asarray(archive["candidate_ids"]).tolist()
+                            )
+                            if "candidate_ids" in archive
+                            else ()
+                        )
+                        expected_methods = {
+                            "clean",
+                            assembled_method_id,
+                            "oracle",
+                            *saved_ids,
+                            *baseline_tuple,
+                        }
                     if all(
                         (forecaster_id, episode_id, method_id) in completed
                         for method_id in expected_methods
                     ):
                         continue
-                    if predictor is None:
+                    routing_metadata = record.get("routing_metadata")
+                    assembled_native_valid = not (
+                        isinstance(routing_metadata, Mapping)
+                        and routing_metadata.get("paper_native_valid") is False
+                    )
+                    needs_predictor = shared_evaluation is None or assembled_native_valid
+                    if predictor is None and needs_predictor:
                         assert resolved_forecaster_artifact is not None
                         predictor = _build_forecast_runner(
                             forecaster_id,
@@ -1001,14 +1831,32 @@ def evaluate_imputations(
                             device=resolved_device,
                             batch_size=config.experiment.forecast_batch_size,
                         )
-                    rows = _evaluate_episode(
-                        record,
-                        archive,
-                        config,
-                        forecaster_id,
-                        predictor,
-                        baseline_tuple,
-                    )
+                    if shared_evaluation is None:
+                        assert predictor is not None
+                        rows = _evaluate_episode(
+                            record,
+                            archive,
+                            config,
+                            forecaster_id,
+                            predictor,
+                            baseline_tuple,
+                        )
+                    else:
+                        episode_shared_rows = shared_evaluation.rows_by_episode.get(episode_id)
+                        if episode_shared_rows is None:  # pragma: no cover - preflight guard
+                            raise ValueError(
+                                f"shared evaluation has no rows for episode {episode_id}"
+                            )
+                        rows = _evaluate_episode_with_shared_rows(
+                            record,
+                            archive,
+                            config,
+                            forecaster_id,
+                            predictor,
+                            baseline_tuple,
+                            episode_shared_rows,
+                            shared_reference_only=shared_reference_only,
+                        )
                 pending = [
                     row
                     for row in rows
@@ -1029,9 +1877,7 @@ def evaluate_imputations(
                 )
                 output_handle.flush()
                 for row in pending:
-                    completed.add(
-                        (row["forecaster_id"], row["episode_id"], row["method"])
-                    )
+                    completed.add((row["forecaster_id"], row["episode_id"], row["method"]))
                 rows_written += len(pending)
                 episodes_evaluated += 1
     except Exception as error:
@@ -1050,6 +1896,8 @@ def evaluate_imputations(
         raise
 
     _write_csv_from_jsonl(jsonl_path, csv_path)
+    metrics_size = jsonl_path.stat().st_size
+    metrics_sha256 = _file_sha256(jsonl_path)
     manifest.update(
         {
             "status": "completed",
@@ -1059,6 +1907,8 @@ def evaluate_imputations(
             "total_rows": len(completed),
             "routing_forecaster_ids": sorted(routing_forecaster_ids),
             "episode_metrics_jsonl": str(jsonl_path),
+            "episode_metrics_jsonl_sha256": metrics_sha256,
+            "episode_metrics_jsonl_size_bytes": metrics_size,
             "episode_metrics_csv": str(csv_path),
         }
     )
@@ -1094,9 +1944,7 @@ class _RunningStat:
                 "max": None,
             }
         standard_deviation = (
-            math.sqrt(max(0.0, self.m2 / (self.count - 1)))
-            if self.count > 1
-            else 0.0
+            math.sqrt(max(0.0, self.m2 / (self.count - 1))) if self.count > 1 else 0.0
         )
         return {
             "mean": self.mean,
@@ -1125,9 +1973,7 @@ def _summary_rows(
                 row_counts[key] = 0
                 metric_counts[key] = 0
             row_counts[key] += 1
-            metric_eligible = bool(
-                row.get("metric_eligible", row.get("native_valid", True))
-            )
+            metric_eligible = bool(row.get("metric_eligible", row.get("native_valid", True)))
             if not metric_eligible:
                 continue
             metric_counts[key] += 1
@@ -1136,15 +1982,11 @@ def _summary_rows(
     if not aggregates:
         raise ValueError("evaluation metrics file is empty")
     for key in sorted(aggregates, key=lambda values: tuple(map(str, values))):
-        result: dict[str, Any] = {
-            field: value for field, value in zip(group_by, key, strict=True)
-        }
+        result: dict[str, Any] = {field: value for field, value in zip(group_by, key, strict=True)}
         result["count"] = row_counts[key]
         result["metric_count"] = metric_counts[key]
         result["invalid_count"] = row_counts[key] - metric_counts[key]
-        result["invalid_rate"] = (
-            result["invalid_count"] / row_counts[key]
-        )
+        result["invalid_rate"] = result["invalid_count"] / row_counts[key]
         for metric, statistic in aggregates[key].items():
             for suffix, value in statistic.payload().items():
                 result[f"{metric}_{suffix}"] = value

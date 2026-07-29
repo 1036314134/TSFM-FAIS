@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -35,6 +36,43 @@ def _config():
     return config.model_copy(update={"experiment": experiment})
 
 
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _write_integrity_ledger(artifact: Path, *, assembled_method_id: str) -> None:
+    manifest_path = artifact / "imputation_manifest.json"
+    assignments_path = artifact / "routing_assignments.jsonl"
+    npz_path = artifact / "imputations" / "toy" / "00000000.npz"
+    manifest_path.write_text(
+        json.dumps({"episode_count": 1, "assembled_method_id": assembled_method_id}) + "\n",
+        encoding="utf-8",
+    )
+    progress = {
+        "status": "completed",
+        "expected_episode_count": 1,
+        "imputation_manifest_sha256": _sha256(manifest_path),
+        "routing_assignments_sha256": _sha256(assignments_path),
+        "entries": {
+            "00000000": {
+                "file": "toy/00000000.npz",
+                "npz_sha256": _sha256(npz_path),
+            }
+        },
+    }
+    (artifact / "imputation_progress.json").write_text(
+        json.dumps(progress) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _refresh_assignment_integrity(artifact: Path) -> None:
+    progress_path = artifact / "imputation_progress.json"
+    progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    progress["routing_assignments_sha256"] = _sha256(artifact / "routing_assignments.jsonl")
+    progress_path.write_text(json.dumps(progress) + "\n", encoding="utf-8")
+
+
 def _artifact(
     root: Path,
     *,
@@ -44,9 +82,7 @@ def _artifact(
     artifact = root / "impute-run"
     episode_dir = artifact / "imputations" / "toy"
     episode_dir.mkdir(parents=True)
-    clean = np.asarray(
-        [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]]
-    )
+    clean = np.asarray([[0.0, 0.0], [1.0, 0.0], [2.0, 0.0], [3.0, 0.0]])
     observed = np.ones_like(clean, dtype=bool)
     observed[-1, 0] = False
     assembled = clean.copy()
@@ -106,6 +142,10 @@ def _artifact(
         json.dumps(record) + "\n",
         encoding="utf-8",
     )
+    _write_integrity_ledger(
+        artifact,
+        assembled_method_id=record_method or archive_method or "b_fais",
+    )
     return artifact
 
 
@@ -128,9 +168,7 @@ def test_dynamic_selector_method_is_evaluated_and_resumed(tmp_path: Path) -> Non
     )
     rows = [
         json.loads(line)
-        for line in (output / "episode_metrics.jsonl").read_text(
-            encoding="utf-8"
-        ).splitlines()
+        for line in (output / "episode_metrics.jsonl").read_text(encoding="utf-8").splitlines()
     ]
 
     assert first["status"] == "completed"
@@ -176,9 +214,7 @@ def test_archive_only_selector_method_is_supported(tmp_path: Path) -> None:
     )
     rows = [
         json.loads(line)
-        for line in (output / "episode_metrics.jsonl").read_text(
-            encoding="utf-8"
-        ).splitlines()
+        for line in (output / "episode_metrics.jsonl").read_text(encoding="utf-8").splitlines()
     ]
 
     assembled = next(row for row in rows if row["method"] == "dselect_1")
@@ -201,6 +237,7 @@ def test_resume_rejects_repaired_selector_identity(tmp_path: Path) -> None:
     record = json.loads(assignments.read_text(encoding="utf-8"))
     record["assembled_method_id"] = "metaod"
     assignments.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    _refresh_assignment_integrity(artifact)
 
     with pytest.raises(ValueError, match="resume signature"):
         evaluate_imputations(
@@ -245,8 +282,6 @@ def test_selector_evaluation_merges_with_b_fais_main_results(tmp_path: Path) -> 
     payload = json.loads(Path(result["main_summary_json"]).read_text(encoding="utf-8"))
     assert payload["evaluated_selector_ids"] == ["metaod"]
     assert any(
-        row["scope"] == "overall"
-        and row["comparator"] == "metaod"
-        and row["pair_count"] == 1
+        row["scope"] == "overall" and row["comparator"] == "metaod" and row["pair_count"] == 1
         for row in payload["comparison_summary"]
     )

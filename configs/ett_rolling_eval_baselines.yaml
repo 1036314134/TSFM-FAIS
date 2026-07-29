@@ -34,7 +34,7 @@ experiment:
   max_eval_origins_per_item: 4
   max_eval_episodes_per_dataset: 30
   max_teacher_blocks_per_episode: 4
-  max_teacher_candidates_per_episode: 6
+  max_teacher_candidates_per_episode: 20
   max_pair_labels_per_episode: 4
   forecast_num_samples: 20
   forecast_batch_size: 128

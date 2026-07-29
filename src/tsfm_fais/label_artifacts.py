@@ -67,9 +67,7 @@ def _read_json_object(path: Path, description: str) -> dict[str, Any]:
 
 def _nonempty_string(value: Any, field: str, path: Path, line_number: int) -> str:
     if not isinstance(value, str) or not value:
-        raise ValueError(
-            f"{path}:{line_number}: field {field!r} must be a non-empty string"
-        )
+        raise ValueError(f"{path}:{line_number}: field {field!r} must be a non-empty string")
     return value
 
 
@@ -88,9 +86,7 @@ def _iter_jsonl(path: Path) -> Iterator[tuple[int, dict[str, Any]]]:
                         f"invalid JSONL row at {path}:{line_number}: {error}"
                     ) from error
                 if not isinstance(row, dict):
-                    raise ValueError(
-                        f"{path}:{line_number}: each JSONL row must be an object"
-                    )
+                    raise ValueError(f"{path}:{line_number}: each JSONL row must be an object")
                 yield line_number, row
     except (OSError, UnicodeError) as error:
         raise ValueError(
@@ -140,16 +136,12 @@ def _manifest_count(manifest: Mapping[str, Any], field: str, source: Path) -> in
     return value
 
 
-def _optional_manifest_count(
-    manifest: Mapping[str, Any], field: str, source: Path
-) -> int | None:
+def _optional_manifest_count(manifest: Mapping[str, Any], field: str, source: Path) -> int | None:
     value = manifest.get(field)
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(
-            f"{source}: labels_manifest field {field!r} must be non-negative"
-        )
+        raise ValueError(f"{source}: labels_manifest field {field!r} must be non-negative")
     return value
 
 
@@ -182,22 +174,17 @@ def _inspect_progress(
         selection_summary = raw_plan.get("selection_summary")
         episode_ids = raw_plan.get("episode_ids")
         if not isinstance(selection_summary, dict):
-            raise ValueError(
-                f"{root}: dataset plan {dataset_id!r} selection summary is invalid"
-            )
+            raise ValueError(f"{root}: dataset plan {dataset_id!r} selection summary is invalid")
         if (
             not isinstance(episode_ids, list)
             or any(not isinstance(value, str) or not value for value in episode_ids)
             or len(set(episode_ids)) != len(episode_ids)
         ):
-            raise ValueError(
-                f"{root}: dataset plan {dataset_id!r} episode IDs are invalid"
-            )
+            raise ValueError(f"{root}: dataset plan {dataset_id!r} episode IDs are invalid")
         duplicate_ids = expected_ids.intersection(episode_ids)
         if duplicate_ids:
             raise ValueError(
-                f"{root}: episode IDs occur in multiple dataset plans: "
-                f"{sorted(duplicate_ids)[:5]}"
+                f"{root}: episode IDs occur in multiple dataset plans: {sorted(duplicate_ids)[:5]}"
             )
         expected_ids.update(episode_ids)
         unsigned_plan = {
@@ -205,13 +192,9 @@ def _inspect_progress(
             "selection_summary": selection_summary,
             "episode_ids": episode_ids,
         }
-        expected_sha256 = hashlib.sha256(
-            _canonical_json(unsigned_plan).encode("utf-8")
-        ).hexdigest()
+        expected_sha256 = hashlib.sha256(_canonical_json(unsigned_plan).encode("utf-8")).hexdigest()
         if raw_plan.get("sha256") != expected_sha256:
-            raise ValueError(
-                f"{root}: dataset plan {dataset_id!r} signature is invalid"
-            )
+            raise ValueError(f"{root}: dataset plan {dataset_id!r} signature is invalid")
         normalized_plans[dataset_id] = raw_plan
 
     expected_episodes: dict[str, tuple[str, str, str, int, str, int]] = {}
@@ -231,15 +214,12 @@ def _inspect_progress(
                 f"{root}: progress entry {entry_key!r} has invalid integer fields"
             ) from error
         if artifact_index < 0 or forecast_origin < 0:
-            raise ValueError(
-                f"{root}: progress entry {entry_key!r} has negative integer fields"
-            )
-        if entry_key != f"{artifact_index:08d}" or raw_entry.get(
-            "artifact_index"
-        ) != artifact_index:
-            raise ValueError(
-                f"{root}: progress entry {entry_key!r} has an inconsistent index"
-            )
+            raise ValueError(f"{root}: progress entry {entry_key!r} has negative integer fields")
+        if (
+            entry_key != f"{artifact_index:08d}"
+            or raw_entry.get("artifact_index") != artifact_index
+        ):
+            raise ValueError(f"{root}: progress entry {entry_key!r} has an inconsistent index")
         fields: dict[str, str] = {}
         for field in (
             "forecaster_id",
@@ -251,28 +231,20 @@ def _inspect_progress(
         ):
             value = expectation.get(field)
             if not isinstance(value, str) or not value:
-                raise ValueError(
-                    f"{root}: progress entry {entry_key!r} field {field!r} is invalid"
-                )
+                raise ValueError(f"{root}: progress entry {entry_key!r} field {field!r} is invalid")
             fields[field] = value
         if fields["forecaster_id"] not in declared_forecasters:
-            raise ValueError(
-                f"{root}: progress entry {entry_key!r} uses an undeclared forecaster"
-            )
+            raise ValueError(f"{root}: progress entry {entry_key!r} uses an undeclared forecaster")
         plan = normalized_plans.get(fields["dataset_id"])
         if plan is None or fields["episode_id"] not in plan["episode_ids"]:
             raise ValueError(
                 f"{root}: progress entry {entry_key!r} is absent from its dataset plan"
             )
         if fields["dataset_plan_sha256"] != plan.get("sha256"):
-            raise ValueError(
-                f"{root}: progress entry {entry_key!r} dataset-plan signature differs"
-            )
+            raise ValueError(f"{root}: progress entry {entry_key!r} dataset-plan signature differs")
         sampling_cell = expectation.get("sampling_cell")
         if not isinstance(sampling_cell, dict):
-            raise ValueError(
-                f"{root}: progress entry {entry_key!r} sampling cell is invalid"
-            )
+            raise ValueError(f"{root}: progress entry {entry_key!r} sampling cell is invalid")
         episode_id = fields["episode_id"]
         if episode_id in expected_episodes:
             raise ValueError(f"{root}: duplicate expected episode {episode_id!r}")
@@ -286,20 +258,14 @@ def _inspect_progress(
         )
         outcome = raw_entry.get("outcome")
         if outcome not in {"labeled", "no_labels"}:
-            raise ValueError(
-                f"{root}: progress entry {entry_key!r} outcome is invalid"
-            )
+            raise ValueError(f"{root}: progress entry {entry_key!r} outcome is invalid")
         outcomes[episode_id] = outcome
 
     if set(expected_episodes) != expected_ids:
         difference = _describe_set_difference(expected_ids, set(expected_episodes))
-        raise ValueError(
-            f"{root}: progress entries do not cover the dataset plans: {difference}"
-        )
+        raise ValueError(f"{root}: progress entries do not cover the dataset plans: {difference}")
     manifest_episode_count = _manifest_count(manifest, "episode_count", root)
-    expected_episode_count = manifest.get(
-        "expected_episode_count", manifest_episode_count
-    )
+    expected_episode_count = manifest.get("expected_episode_count", manifest_episode_count)
     if (
         isinstance(expected_episode_count, bool)
         or not isinstance(expected_episode_count, int)
@@ -315,9 +281,7 @@ def _inspect_progress(
     ):
         declared = _optional_manifest_count(manifest, field, root)
         if declared is not None and declared != observed:
-            raise ValueError(
-                f"{root}: labels_manifest field {field!r} does not match progress"
-            )
+            raise ValueError(f"{root}: labels_manifest field {field!r} does not match progress")
     return normalized_plans, expected_episodes, outcomes
 
 
@@ -335,8 +299,7 @@ def _record_episode(
     previous = model_episodes.setdefault(episode_id, metadata)
     if previous != metadata:
         raise ValueError(
-            f"{path}:{line_number}: episode {episode_id!r} has conflicting "
-            "dataset/family metadata"
+            f"{path}:{line_number}: episode {episode_id!r} has conflicting dataset/family metadata"
         )
 
 
@@ -363,7 +326,12 @@ def _inspect_source(
         root, manifest, forecasters
     )
     expected_unary_rows = _manifest_count(manifest, "unary_rows", root)
-    expected_pair_rows = _manifest_count(manifest, "pair_rows", root)
+    sequence_protocol = manifest.get("routing_target_protocol") == "sequence_imputation_quality_v1"
+    if sequence_protocol:
+        expected_pair_rows = _optional_manifest_count(manifest, "pair_rows", root)
+        expected_pair_rows = 0 if expected_pair_rows is None else expected_pair_rows
+    else:
+        expected_pair_rows = _manifest_count(manifest, "pair_rows", root)
     expected_groups = _manifest_count(manifest, "ranking_groups", root)
     teacher_path = root / "teacher_labels.jsonl"
     pair_path = root / "pair_labels.jsonl"
@@ -383,12 +351,8 @@ def _inspect_source(
         dataset_id = _nonempty_string(
             row.get("dataset_id"), "dataset_id", teacher_path, line_number
         )
-        family_id = _nonempty_string(
-            row.get("family_id"), "family_id", teacher_path, line_number
-        )
-        group_id = _nonempty_string(
-            row.get("group_id"), "group_id", teacher_path, line_number
-        )
+        family_id = _nonempty_string(row.get("family_id"), "family_id", teacher_path, line_number)
+        group_id = _nonempty_string(row.get("group_id"), "group_id", teacher_path, line_number)
         expected_group = f"{forecaster_id}::{episode_id}::{block_id}"
         if group_id != expected_group:
             raise ValueError(
@@ -419,26 +383,16 @@ def _inspect_source(
         forecaster_id = _nonempty_string(
             row.get("forecaster_id"), "forecaster_id", pair_path, line_number
         )
-        episode_id = _nonempty_string(
-            row.get("episode_id"), "episode_id", pair_path, line_number
-        )
-        dataset_id = _nonempty_string(
-            row.get("dataset_id"), "dataset_id", pair_path, line_number
-        )
-        family_id = _nonempty_string(
-            row.get("family_id"), "family_id", pair_path, line_number
-        )
+        episode_id = _nonempty_string(row.get("episode_id"), "episode_id", pair_path, line_number)
+        dataset_id = _nonempty_string(row.get("dataset_id"), "dataset_id", pair_path, line_number)
+        family_id = _nonempty_string(row.get("family_id"), "family_id", pair_path, line_number)
         left = (
             _nonempty_string(row.get("left_block"), "left_block", pair_path, line_number),
-            _nonempty_string(
-                row.get("left_candidate"), "left_candidate", pair_path, line_number
-            ),
+            _nonempty_string(row.get("left_candidate"), "left_candidate", pair_path, line_number),
         )
         right = (
             _nonempty_string(row.get("right_block"), "right_block", pair_path, line_number),
-            _nonempty_string(
-                row.get("right_candidate"), "right_candidate", pair_path, line_number
-            ),
+            _nonempty_string(row.get("right_candidate"), "right_candidate", pair_path, line_number),
         )
         first, second = sorted((left, right))
         pair_key = (forecaster_id, episode_id, first, second)
@@ -470,7 +424,7 @@ def _inspect_source(
             f"observed={sorted(observed_unary_forecasters)}, "
             f"declared={sorted(declared_forecasters)}"
         )
-    if observed_pair_forecasters != declared_forecasters:
+    if not sequence_protocol and observed_pair_forecasters != declared_forecasters:
         raise ValueError(
             f"{root}: pair forecasters do not match labels_manifest: "
             f"observed={sorted(observed_pair_forecasters)}, "
@@ -491,14 +445,10 @@ def _inspect_source(
     for model_id in forecasters:
         labeled_episode_ids = set(episodes.get(model_id, {}))
         expected_labeled_ids = {
-            episode_id
-            for episode_id, outcome in episode_outcomes.items()
-            if outcome == "labeled"
+            episode_id for episode_id, outcome in episode_outcomes.items() if outcome == "labeled"
         }
         if labeled_episode_ids != expected_labeled_ids:
-            difference = _describe_set_difference(
-                expected_labeled_ids, labeled_episode_ids
-            )
+            difference = _describe_set_difference(expected_labeled_ids, labeled_episode_ids)
             raise ValueError(
                 f"{root}: emitted labels do not match progress outcomes for "
                 f"forecaster {model_id!r}: {difference}"
@@ -507,14 +457,12 @@ def _inspect_source(
             expected_metadata = expected_episodes[episode_id]
             if metadata != expected_metadata[:2]:
                 raise ValueError(
-                    f"{root}: emitted labels have incompatible metadata for "
-                    f"episode {episode_id!r}"
+                    f"{root}: emitted labels have incompatible metadata for episode {episode_id!r}"
                 )
 
     frozen_blocks = {
         model_id: {
-            episode_id: frozenset(block_ids)
-            for episode_id, block_ids in model_blocks.items()
+            episode_id: frozenset(block_ids) for episode_id, block_ids in model_blocks.items()
         }
         for model_id, model_blocks in blocks.items()
     }
@@ -558,17 +506,19 @@ def _validate_cross_source_compatibility(sources: Sequence[_SourceArtifact]) -> 
     reference = sources[0]
     reference_config = _canonical_json(reference.config)
     reference_lineage = _path_identity(
-        _resolved_path(reference.manifest.get("imputer_artifacts"), "imputer_artifacts", reference.root)
+        _resolved_path(
+            reference.manifest.get("imputer_artifacts"), "imputer_artifacts", reference.root
+        )
     )
     all_forecasters: set[str] = set()
 
     for source in sources:
         if _canonical_json(source.config) != reference_config:
-            raise ValueError(
-                f"resolved config mismatch between {reference.root} and {source.root}"
-            )
+            raise ValueError(f"resolved config mismatch between {reference.root} and {source.root}")
         lineage = _path_identity(
-            _resolved_path(source.manifest.get("imputer_artifacts"), "imputer_artifacts", source.root)
+            _resolved_path(
+                source.manifest.get("imputer_artifacts"), "imputer_artifacts", source.root
+            )
         )
         if lineage != reference_lineage:
             raise ValueError(
@@ -587,9 +537,7 @@ def _validate_cross_source_compatibility(sources: Sequence[_SourceArtifact]) -> 
             )
         all_forecasters.update(source.forecasters)
 
-        if _canonical_json(source.dataset_plans) != _canonical_json(
-            reference.dataset_plans
-        ):
+        if _canonical_json(source.dataset_plans) != _canonical_json(reference.dataset_plans):
             reference_ids = set(reference.expected_episodes)
             current_ids = set(source.expected_episodes)
             difference = _describe_set_difference(reference_ids, current_ids)
@@ -606,9 +554,7 @@ def _validate_cross_source_compatibility(sources: Sequence[_SourceArtifact]) -> 
                 f"{source.root}: {difference}"
             )
         for episode_id in reference_ids:
-            if source.expected_episodes[episode_id] != reference.expected_episodes[
-                episode_id
-            ]:
+            if source.expected_episodes[episode_id] != reference.expected_episodes[episode_id]:
                 raise ValueError(
                     f"episode metadata compatibility mismatch for {episode_id!r} "
                     f"between {reference.root} and {source.root}"
@@ -684,9 +630,7 @@ def merge_label_artifacts(
     pair_output.with_suffix(".jsonl.tmp").replace(pair_output)
 
     reference = ordered_sources[0]
-    forecasters = sorted(
-        model_id for source in ordered_sources for model_id in source.forecasters
-    )
+    forecasters = sorted(model_id for source in ordered_sources for model_id in source.forecasters)
     reference_episodes = reference.expected_episodes
     datasets = sorted({metadata[0] for metadata in reference_episodes.values()})
     families = sorted({metadata[1] for metadata in reference_episodes.values()})
@@ -702,16 +646,12 @@ def merge_label_artifacts(
             "ranking_groups": source.ranking_groups,
             "expected_episode_count": len(source.expected_episodes),
             "labeled_episode_count": sum(
-                outcome == "labeled"
-                for outcome in source.episode_outcomes.values()
+                outcome == "labeled" for outcome in source.episode_outcomes.values()
             ),
             "no_label_episode_count": sum(
-                outcome == "no_labels"
-                for outcome in source.episode_outcomes.values()
+                outcome == "no_labels" for outcome in source.episode_outcomes.values()
             ),
-            "routing_target_protocol": source.manifest.get(
-                "routing_target_protocol"
-            ),
+            "routing_target_protocol": source.manifest.get("routing_target_protocol"),
             "artifact_loading": source.manifest.get("artifact_loading"),
             "teacher_labels_sha256": source.teacher_sha256,
             "pair_labels_sha256": source.pair_sha256,
@@ -754,37 +694,23 @@ def merge_label_artifacts(
         "unary_rows": sum(source.unary_rows for source in ordered_sources),
         "pair_rows": sum(source.pair_rows for source in ordered_sources),
         "labeled_episode_counts": {
-            model_id: sum(
-                outcome == "labeled"
-                for outcome in source.episode_outcomes.values()
-            )
+            model_id: sum(outcome == "labeled" for outcome in source.episode_outcomes.values())
             for source in ordered_sources
             for model_id in source.forecasters
         },
         "no_label_episode_counts": {
-            model_id: sum(
-                outcome == "no_labels"
-                for outcome in source.episode_outcomes.values()
-            )
+            model_id: sum(outcome == "no_labels" for outcome in source.episode_outcomes.values())
             for source in ordered_sources
             for model_id in source.forecasters
         },
-        "routing_target_protocol": reference.manifest.get(
-            "routing_target_protocol"
-        ),
+        "routing_target_protocol": reference.manifest.get("routing_target_protocol"),
         "selected_candidates": reference.manifest.get("selected_candidates"),
-        "max_train_episodes_per_dataset": reference.manifest.get(
-            "max_train_episodes_per_dataset"
-        ),
-        "max_teacher_blocks_per_episode": reference.manifest.get(
-            "max_teacher_blocks_per_episode"
-        ),
+        "max_train_episodes_per_dataset": reference.manifest.get("max_train_episodes_per_dataset"),
+        "max_teacher_blocks_per_episode": reference.manifest.get("max_teacher_blocks_per_episode"),
         "max_teacher_candidates_per_episode": reference.manifest.get(
             "max_teacher_candidates_per_episode"
         ),
-        "max_pair_labels_per_episode": reference.manifest.get(
-            "max_pair_labels_per_episode"
-        ),
+        "max_pair_labels_per_episode": reference.manifest.get("max_pair_labels_per_episode"),
         "csdi_num_samples": reference.manifest.get("csdi_num_samples"),
     }
     _write_json(output / "labels_manifest.json", summary)

@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from tsfm_fais.artifacts import RunArtifactStore, validate_run_id
-from tsfm_fais.cli import main
+from tsfm_fais.cli import build_parser, main
 from tsfm_fais.config import load_config
 from tsfm_fais.stages import (
     StageInputs,
@@ -26,9 +26,7 @@ def _write_config(root: Path) -> Path:
         "router.yaml": Path("configs/router/block_fais.yaml"),
     }
     for name, source in source_files.items():
-        (config_dir / name).write_text(
-            source.read_text(encoding="utf-8"), encoding="utf-8"
-        )
+        (config_dir / name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     config = config_dir / "config.yaml"
     config.write_text(
         "\n".join(
@@ -53,6 +51,47 @@ def _write_config(root: Path) -> Path:
     return config
 
 
+def test_evaluate_parser_accepts_shared_evaluation_artifact() -> None:
+    args = build_parser().parse_args(
+        [
+            "evaluate",
+            "--config",
+            "config.yaml",
+            "--impute-artifact",
+            "impute",
+            "--forecaster-id",
+            "chronos2",
+            "--forecaster-artifact",
+            "checkpoint",
+            "--output-dir",
+            "evaluation",
+            "--shared-evaluation-artifact",
+            "shared-evaluation",
+            "--shared-reference-only",
+        ]
+    )
+
+    assert args.shared_evaluation_artifact == "shared-evaluation"
+    assert args.shared_reference_only is True
+
+
+def test_summarize_main_parser_accepts_primary_comparator_roles() -> None:
+    args = build_parser().parse_args(
+        [
+            "summarize-main",
+            "--input",
+            "evaluation-a",
+            "evaluation-b",
+            "--output-dir",
+            "summary",
+            "--primary-comparator-role",
+            "selector_baseline",
+        ]
+    )
+
+    assert args.primary_comparator_role == ["selector_baseline"]
+
+
 def _accepted_audit(path: Path) -> Path:
     path.write_text(
         json.dumps(
@@ -64,6 +103,30 @@ def _accepted_audit(path: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def _sequence_router_artifact(path: Path, *, strict: bool = True) -> Path:
+    path.mkdir()
+    (path / "router_bundle.joblib").write_bytes(b"test stub")
+    metadata = {
+        "selector_method": "metaod",
+        "forecaster_independent_selection": True,
+        "uses_missing_block_graph": False,
+        "requires_pseudo_candidates": False,
+        "routing_target_protocol": "sequence_imputation_quality_v1",
+        "selector_training_target": "imputation_loss",
+    }
+    if not strict:
+        metadata.pop("routing_target_protocol")
+    (path / "manifest.json").write_text(json.dumps({"metadata": metadata}), encoding="utf-8")
+    return path
+
+
+def _use_sequence_router_config(config_path: Path) -> None:
+    (config_path.parent / "router.yaml").write_text(
+        Path("configs/router/baseline_selector_suite.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
 
 
 def test_blocked_stage_writes_auditable_baseline(tmp_path, capsys):
@@ -188,9 +251,7 @@ def test_each_later_stage_reports_its_required_artifacts(
     assert code == 2
     assert required_option in capsys.readouterr().err
     manifest = json.loads(
-        (tmp_path / "artifacts" / run_id / "stage_manifest.json").read_text(
-            encoding="utf-8"
-        )
+        (tmp_path / "artifacts" / run_id / "stage_manifest.json").read_text(encoding="utf-8")
     )
     assert manifest["stage"] == stage
     assert manifest["status"] == "blocked"
@@ -260,9 +321,7 @@ def test_cli_resume_requires_execute_and_run_id(tmp_path, capsys):
     assert "--resume requires --execute" in capsys.readouterr().err
 
 
-def test_explicit_execution_dispatch_updates_completed_manifest(
-    tmp_path, monkeypatch
-):
+def test_explicit_execution_dispatch_updates_completed_manifest(tmp_path, monkeypatch):
     import tsfm_fais.stage_execution as execution
 
     config_path = _write_config(tmp_path)
@@ -314,9 +373,7 @@ def test_labels_stage_accepts_comma_separated_forecaster_ids(tmp_path):
     )
 
     check = next(
-        entry
-        for entry in preparation.manifest["checks"]
-        if entry["name"] == "forecaster_id"
+        entry for entry in preparation.manifest["checks"] if entry["name"] == "forecaster_id"
     )
     assert check["valid"] is True
 
@@ -325,9 +382,7 @@ def test_labels_stage_accepts_comma_separated_forecaster_ids(tmp_path):
     "forecaster_ids",
     ("chronos2,chronos2", "chronos2,unknown", "chronos2,"),
 )
-def test_comma_separated_forecaster_ids_reject_invalid_lists(
-    tmp_path, forecaster_ids
-):
+def test_comma_separated_forecaster_ids_reject_invalid_lists(tmp_path, forecaster_ids):
     config = load_config(_write_config(tmp_path))
 
     check = _forecaster_check(config, forecaster_ids)
@@ -376,9 +431,7 @@ def test_impute_stage_accepts_router_fold_root(tmp_path):
     )
 
     check = next(
-        entry
-        for entry in preparation.manifest["checks"]
-        if entry["name"] == "router_artifact"
+        entry for entry in preparation.manifest["checks"] if entry["name"] == "router_artifact"
     )
     assert check["valid"] is True
 
@@ -405,4 +458,133 @@ def test_impute_stage_rejects_multiple_forecaster_ids(tmp_path):
                 forecaster_id="chronos2,timesfm2p5",
             ),
             run_id="impute-multiple-forecasters",
+        )
+
+
+def test_impute_stage_allows_sequence_selector_without_forecaster_id(tmp_path):
+    config_path = _write_config(tmp_path)
+    _use_sequence_router_config(config_path)
+    config = load_config(config_path)
+    audit = _accepted_audit(tmp_path / "audit.json")
+    imputers = tmp_path / "imputers"
+    imputers.mkdir()
+    router = _sequence_router_artifact(tmp_path / "router")
+
+    preparation = prepare_stage(
+        config,
+        config_path,
+        "impute",
+        StageInputs(
+            audit_artifact=audit,
+            imputer_artifacts=imputers,
+            router_artifact=router,
+        ),
+        run_id="sequence-without-forecaster",
+    )
+
+    forecaster_check = next(
+        check for check in preparation.manifest["checks"] if check["name"] == "forecaster_id"
+    )
+    assert forecaster_check["valid"] is True
+    assert forecaster_check["required"] is False
+
+
+def test_impute_stage_rejects_unproven_independence_without_forecaster_id(tmp_path):
+    config_path = _write_config(tmp_path)
+    _use_sequence_router_config(config_path)
+    config = load_config(config_path)
+    audit = _accepted_audit(tmp_path / "audit.json")
+    imputers = tmp_path / "imputers"
+    imputers.mkdir()
+    router = _sequence_router_artifact(tmp_path / "router", strict=False)
+
+    with pytest.raises(StagePreparationError, match="missing required option --forecaster-id"):
+        prepare_stage(
+            config,
+            config_path,
+            "impute",
+            StageInputs(
+                audit_artifact=audit,
+                imputer_artifacts=imputers,
+                router_artifact=router,
+            ),
+            run_id="unproven-sequence-without-forecaster",
+        )
+
+
+def test_impute_stage_rejects_forecaster_artifact_for_independent_selector(tmp_path):
+    config_path = _write_config(tmp_path)
+    _use_sequence_router_config(config_path)
+    config = load_config(config_path)
+    audit = _accepted_audit(tmp_path / "audit.json")
+    imputers = tmp_path / "imputers"
+    checkpoints = tmp_path / "checkpoints"
+    imputers.mkdir()
+    checkpoints.mkdir()
+    router = _sequence_router_artifact(tmp_path / "router")
+
+    with pytest.raises(StagePreparationError, match="do not accept --forecaster-artifact"):
+        prepare_stage(
+            config,
+            config_path,
+            "impute",
+            StageInputs(
+                audit_artifact=audit,
+                imputer_artifacts=imputers,
+                router_artifact=router,
+                forecaster_artifact=checkpoints,
+            ),
+            run_id="independent-with-forecaster-artifact",
+        )
+
+
+def test_impute_stage_rejects_router_method_not_enabled_by_config(tmp_path):
+    config_path = _write_config(tmp_path)
+    config = load_config(config_path)
+    audit = _accepted_audit(tmp_path / "audit.json")
+    imputers = tmp_path / "imputers"
+    imputers.mkdir()
+    router = _sequence_router_artifact(tmp_path / "router")
+
+    with pytest.raises(StagePreparationError, match="selector method is not enabled"):
+        prepare_stage(
+            config,
+            config_path,
+            "impute",
+            StageInputs(
+                audit_artifact=audit,
+                imputer_artifacts=imputers,
+                router_artifact=router,
+                forecaster_id="chronos2",
+            ),
+            run_id="router-method-config-mismatch",
+        )
+
+
+def test_independent_sequence_router_rejects_leave_model_out_split(tmp_path):
+    config_path = _write_config(tmp_path)
+    _use_sequence_router_config(config_path)
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "experiment:\n", "experiment:\n  split: leave_model_out\n"
+        ),
+        encoding="utf-8",
+    )
+    config = load_config(config_path)
+    audit = _accepted_audit(tmp_path / "audit.json")
+    imputers = tmp_path / "imputers"
+    imputers.mkdir()
+    router = _sequence_router_artifact(tmp_path / "router")
+
+    with pytest.raises(StagePreparationError, match="do not support leave_model_out"):
+        prepare_stage(
+            config,
+            config_path,
+            "impute",
+            StageInputs(
+                audit_artifact=audit,
+                imputer_artifacts=imputers,
+                router_artifact=router,
+            ),
+            run_id="independent-leave-model-out",
         )

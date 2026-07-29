@@ -28,6 +28,7 @@ from .features import (
 )
 from .graph import BlockEdge, BlockGraph, build_block_graph
 from .lightgbm_model import LazyLightGBMRegressor, LightGBMUnaryModel
+from .meta_selectors import ALORSSequenceSelector, MetaODSequenceSelector
 from .metrics import (
     block_candidate_losses,
     forecast_degradation,
@@ -43,6 +44,11 @@ from .models import (
     RouterBundle,
     RouterTrainer,
 )
+from .neural_sequence_selectors import (
+    DSelectOneSequenceSelector,
+    NeuralUCBSequenceSelector,
+)
+from .sequence_features import SEQUENCE_FEATURE_NAMES, sequence_meta_features
 from .shortlist import CandidateShortlister, ShortlistResult, shortlist_candidates
 from .solver import (
     BeamSearchSolver,
@@ -68,6 +74,7 @@ from .teacher import (
 
 __all__ = [
     "ALORSSelector",
+    "ALORSSequenceSelector",
     "BASELINE_SELECTOR_METHODS",
     "BeamSearchSolver",
     "BlockEdge",
@@ -75,13 +82,16 @@ __all__ = [
     "CandidateShortlister",
     "CoherenceAdjustedTarget",
     "DSelectOneSelector",
+    "DSelectOneSequenceSelector",
     "ExhaustiveSolver",
     "InferenceRouterBundle",
     "HybridLSTMSelector",
     "LazyLightGBMRegressor",
     "LightGBMUnaryModel",
     "MetaODSelector",
+    "MetaODSequenceSelector",
     "NeuralUCBSelector",
+    "NeuralUCBSequenceSelector",
     "PairwiseRiskModel",
     "RankerModel",
     "RandomValidBlockSelector",
@@ -91,6 +101,7 @@ __all__ = [
     "RoutingProblem",
     "RoutingTeacher",
     "RouterTrainer",
+    "SEQUENCE_FEATURE_NAMES",
     "ShortlistResult",
     "SolverResult",
     "TeacherTargets",
@@ -120,6 +131,7 @@ __all__ = [
     "greedy_shortlist",
     "replace_block",
     "shortlist_candidates",
+    "sequence_meta_features",
     "solve_routing",
     "top_k_hit",
     "validate_blocks",

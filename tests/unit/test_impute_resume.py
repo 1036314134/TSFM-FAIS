@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,7 @@ from tsfm_fais.config import AppConfig, load_config
 from tsfm_fais.contracts import TimeSeriesItem
 from tsfm_fais.imputers import CandidateRunner
 from tsfm_fais.pipeline import BlockwiseFAIS as RealBlockwiseFAIS
+from tsfm_fais.routing.models import PairwiseRiskModel, RouterBundle
 from tsfm_fais.stage_execution import execute_prepared_stage
 from tsfm_fais.stages import StageInputs, prepare_stage
 
@@ -28,9 +30,7 @@ def _write_config(tmp_path: Path) -> tuple[Path, AppConfig]:
         "router.yaml": Path("configs/router/block_fais.yaml"),
     }
     for name, source in sources.items():
-        (config_dir / name).write_text(
-            source.read_text(encoding="utf-8"), encoding="utf-8"
-        )
+        (config_dir / name).write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
     config_path = config_dir / "resume.yaml"
     config_path.write_text(
         "\n".join(
@@ -88,9 +88,7 @@ class _FakePipeline:
         self.fallback_tail = ("locf", "train_median")
         router = kwargs.get("router")
         self.selector_method = (
-            "b_fais"
-            if router is None
-            else str(router.metadata.get("selector_method", "b_fais"))
+            "b_fais" if router is None else str(router.metadata.get("selector_method", "b_fais"))
         )
         self._pipeline = RealBlockwiseFAIS(
             imputer_registry=imputer_registry,
@@ -118,6 +116,51 @@ class _Clock:
         current = self.value
         self.value += 1.0
         return current
+
+
+class _AlternatingNeuralSelector:
+    def __init__(self) -> None:
+        self.candidate_ids = ("kalman_local_trend", "kalman_ar")
+        self.round_count = 0
+
+    def select(self, features, valid_candidate_ids):
+        np.testing.assert_allclose(np.asarray(features, dtype=float).shape, (1,))
+        valid = tuple(valid_candidate_ids)
+        selected = self.candidate_ids[self.round_count % len(self.candidate_ids)]
+        return selected if selected in valid else valid[0]
+
+    def score(self, features):
+        np.testing.assert_allclose(np.asarray(features, dtype=float).shape, (1,))
+        return np.asarray((1.0, 0.0), dtype=float)
+
+    def observe(self, features, candidate_id, reward):
+        np.testing.assert_allclose(np.asarray(features, dtype=float).shape, (1,))
+        assert candidate_id == self.candidate_ids[self.round_count % len(self.candidate_ids)]
+        assert 0.0 <= float(reward) <= 1.0
+        self.round_count += 1
+
+
+def _neural_router() -> RouterBundle:
+    selector = _AlternatingNeuralSelector()
+    return RouterBundle(
+        prior=selector,
+        unary=selector,
+        pairwise=PairwiseRiskModel(),
+        feature_names=("missing_fraction",),
+        candidate_ids=selector.candidate_ids,
+        metadata={
+            "split": "rolling_origin",
+            "selector_method": "neuralucb",
+            "requires_pseudo_candidates": False,
+            "routing_target_protocol": "sequence_imputation_quality_v1",
+            "selector_training_target": "imputation_loss",
+            "forecaster_independent_selection": True,
+            "uses_missing_block_graph": False,
+            "beta": 0.0,
+            "cost_weight": 0.0,
+            "forecast_consensus": {"mode": "disabled", "candidates": []},
+        },
+    )
 
 
 def _setup(tmp_path: Path, monkeypatch):
@@ -198,6 +241,26 @@ def _setup(tmp_path: Path, monkeypatch):
     return config_path, config, inputs
 
 
+def _setup_neural(tmp_path: Path, monkeypatch):
+    config_path, _, inputs = _setup(tmp_path, monkeypatch)
+    (config_path.parent / "router.yaml").write_text(
+        Path("configs/router/baseline_selector_suite.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    text = config_path.read_text(encoding="utf-8")
+    text = text.replace("context_length: 4", "context_length: 12")
+    text = text.replace(
+        "missing_mechanisms: [independent_block]", "missing_mechanisms: [random_point]"
+    )
+    text = text.replace("seeds: [7, 8]", "seeds: [7, 8, 9]")
+    text = text.replace(
+        "candidate_ids: [locf, linear_interp]",
+        "candidate_ids: [locf, linear_interp, kalman_local_trend, kalman_ar]",
+    )
+    config_path.write_text(text, encoding="utf-8")
+    return config_path, load_config(config_path), inputs
+
+
 def _run(
     config_path: Path,
     config: AppConfig,
@@ -249,9 +312,7 @@ def test_impute_resume_strictly_skips_valid_committed_episodes(tmp_path, monkeyp
     assert _FakePipeline.calls == 2
     files = sorted((root / "imputations" / "synthetic").glob("*.npz"))
     before = [_archive_payload(path) for path in files]
-    assignments_before = (root / "routing_assignments.jsonl").read_text(
-        encoding="utf-8"
-    )
+    assignments_before = (root / "routing_assignments.jsonl").read_text(encoding="utf-8")
 
     _FakePipeline.calls = 0
     monkeypatch.setattr(
@@ -271,9 +332,7 @@ def test_impute_resume_strictly_skips_valid_committed_episodes(tmp_path, monkeyp
         actual = _archive_payload(path)
         assert actual.keys() == expected.keys()
         assert all(np.array_equal(actual[key], expected[key]) for key in actual)
-    assert (root / "routing_assignments.jsonl").read_text(
-        encoding="utf-8"
-    ) == assignments_before
+    assert (root / "routing_assignments.jsonl").read_text(encoding="utf-8") == assignments_before
     progress = json.loads((root / "imputation_progress.json").read_text(encoding="utf-8"))
     assert progress["status"] == "completed"
     assert progress["completed_count"] == progress["expected_episode_count"] == 2
@@ -307,9 +366,7 @@ def test_impute_resume_recomputes_pair_left_before_progress_commit(tmp_path, mon
         execute_prepared_stage(preparation, config, inputs)
     root = preparation.store.root
     assert len(list((root / "imputations").rglob("*.npz"))) == 1
-    progress = json.loads(
-        (root / "imputation_progress.json").read_text(encoding="utf-8")
-    )
+    progress = json.loads((root / "imputation_progress.json").read_text(encoding="utf-8"))
     assert progress["completed_count"] == 0
 
     monkeypatch.setattr(stage_execution, "_write_json", original_write_json)
@@ -322,9 +379,7 @@ def test_impute_resume_recomputes_pair_left_before_progress_commit(tmp_path, mon
 
 
 @pytest.mark.parametrize("orphan_kind", ["npz", "assignment"])
-def test_impute_resume_does_not_accept_uncommitted_half_output(
-    tmp_path, monkeypatch, orphan_kind
-):
+def test_impute_resume_does_not_accept_uncommitted_half_output(tmp_path, monkeypatch, orphan_kind):
     config_path, config, inputs = _setup(tmp_path, monkeypatch)
     _, root = _run(config_path, config, inputs, resume=False)
     progress_path = root / "imputation_progress.json"
@@ -346,9 +401,7 @@ def test_impute_resume_does_not_accept_uncommitted_half_output(
     assert resumed["episodes_executed"] == 1
     assert resumed["episodes_reused"] == 1
     assert _FakePipeline.calls == 1
-    assert len(
-        (root / "routing_assignments.jsonl").read_text(encoding="utf-8").splitlines()
-    ) == 2
+    assert len((root / "routing_assignments.jsonl").read_text(encoding="utf-8").splitlines()) == 2
     with np.load(root / "imputations" / removed["file"], allow_pickle=False) as archive:
         assert int(np.asarray(archive["schema_version"]).reshape(-1)[0]) == 3
     json.loads((root / removed["assignment_file"]).read_text(encoding="utf-8"))
@@ -357,9 +410,7 @@ def test_impute_resume_does_not_accept_uncommitted_half_output(
 def test_impute_resume_repairs_corrupted_committed_file(tmp_path, monkeypatch):
     config_path, config, inputs = _setup(tmp_path, monkeypatch)
     _, root = _run(config_path, config, inputs, resume=False)
-    progress = json.loads(
-        (root / "imputation_progress.json").read_text(encoding="utf-8")
-    )
+    progress = json.loads((root / "imputation_progress.json").read_text(encoding="utf-8"))
     damaged = progress["entries"]["00000001"]
     (root / "imputations" / damaged["file"]).write_bytes(b"half-npz")
 
@@ -370,12 +421,8 @@ def test_impute_resume_repairs_corrupted_committed_file(tmp_path, monkeypatch):
     assert resumed["episodes_reused"] == 1
     assert resumed["repaired_episode_count"] == 1
     assert _FakePipeline.calls == 1
-    repaired_progress = json.loads(
-        (root / "imputation_progress.json").read_text(encoding="utf-8")
-    )
-    assert "hash mismatch" in repaired_progress["entries"]["00000001"][
-        "repaired_reason"
-    ]
+    repaired_progress = json.loads((root / "imputation_progress.json").read_text(encoding="utf-8"))
+    assert "hash mismatch" in repaired_progress["entries"]["00000001"]["repaired_reason"]
 
 
 def test_impute_resume_revalidates_finiteness_after_hash_match(tmp_path, monkeypatch):
@@ -399,9 +446,7 @@ def test_impute_resume_revalidates_finiteness_after_hash_match(tmp_path, monkeyp
     assert resumed["episodes_reused"] == 1
     assert _FakePipeline.calls == 1
     repaired_progress = json.loads(progress_path.read_text(encoding="utf-8"))
-    assert "non-finite" in repaired_progress["entries"]["00000000"][
-        "repaired_reason"
-    ]
+    assert "non-finite" in repaired_progress["entries"]["00000000"]["repaired_reason"]
 
 
 def test_impute_resume_revalidates_candidate_ids_after_hash_match(tmp_path, monkeypatch):
@@ -425,13 +470,19 @@ def test_impute_resume_revalidates_candidate_ids_after_hash_match(tmp_path, monk
     assert resumed["episodes_reused"] == 1
     assert _FakePipeline.calls == 1
     repaired_progress = json.loads(progress_path.read_text(encoding="utf-8"))
-    assert "candidate IDs differ" in repaired_progress["entries"]["00000000"][
-        "repaired_reason"
-    ]
+    assert "candidate IDs differ" in repaired_progress["entries"]["00000000"]["repaired_reason"]
 
 
 def test_impute_resume_repairs_assembled_method_mismatch(tmp_path, monkeypatch):
+    from tsfm_fais.routing import sequence_pipeline
+
     config_path, config, inputs = _setup(tmp_path, monkeypatch)
+    (config_path.parent / "router.yaml").write_text(
+        Path("configs/router/baseline_selector_suite.yaml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    config = load_config(config_path)
+    monkeypatch.setattr(sequence_pipeline, "WholeSeriesSelectorFAIS", _FakePipeline)
     monkeypatch.setattr(
         stage_execution.RouterBundle,
         "load",
@@ -458,17 +509,202 @@ def test_impute_resume_repairs_assembled_method_mismatch(tmp_path, monkeypatch):
     assert resumed["episodes_reused"] == 1
     assert _FakePipeline.calls == 1
     repaired_progress = json.loads(progress_path.read_text(encoding="utf-8"))
-    assert "assembled method ID differs" in repaired_progress["entries"]["00000000"][
-        "repaired_reason"
+    assert (
+        "assembled method ID differs" in repaired_progress["entries"]["00000000"]["repaired_reason"]
+    )
+
+
+def test_impute_execution_rejects_router_method_not_enabled_by_config(tmp_path, monkeypatch):
+    config_path, config, inputs = _setup(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        stage_execution.RouterBundle,
+        "load",
+        lambda _path: SimpleNamespace(
+            metadata={"split": "rolling_origin", "selector_method": "metaod"}
+        ),
+    )
+
+    with pytest.raises(ValueError, match="not enabled by the runtime router config"):
+        _run(config_path, config, inputs, resume=False)
+
+
+def test_neuralucb_resume_replays_prefix_before_recomputing_suffix(tmp_path, monkeypatch):
+    from tsfm_fais.routing import sequence_pipeline
+
+    reference_path, reference_config, reference_inputs = _setup_neural(
+        tmp_path / "reference", monkeypatch
+    )
+    monkeypatch.setattr(
+        stage_execution.RouterBundle,
+        "load",
+        lambda _path: _neural_router(),
+    )
+    reference, reference_root = _run(
+        reference_path,
+        reference_config,
+        reference_inputs,
+        resume=False,
+    )
+    assert reference["episodes_executed"] == 3
+
+    resume_path, resume_config, resume_inputs = _setup_neural(tmp_path / "resume", monkeypatch)
+    monkeypatch.setattr(
+        stage_execution.RouterBundle,
+        "load",
+        lambda _path: _neural_router(),
+    )
+    real_pipeline = sequence_pipeline.WholeSeriesSelectorFAIS
+
+    class _InterruptSecondEpisode(real_pipeline):
+        calls = 0
+
+        def finish_route(self, *args, **kwargs):
+            type(self).calls += 1
+            if type(self).calls == 2:
+                raise OSError("injected NeuralUCB interruption")
+            return super().finish_route(*args, **kwargs)
+
+    monkeypatch.setattr(
+        sequence_pipeline,
+        "WholeSeriesSelectorFAIS",
+        _InterruptSecondEpisode,
+    )
+    preparation = prepare_stage(
+        resume_config,
+        resume_path,
+        "impute",
+        resume_inputs,
+        run_id="resume-impute",
+    )
+    with pytest.raises(OSError, match="injected NeuralUCB interruption"):
+        execute_prepared_stage(preparation, resume_config, resume_inputs)
+    interrupted_progress = json.loads(
+        (preparation.store.root / "imputation_progress.json").read_text(encoding="utf-8")
+    )
+    assert interrupted_progress["completed_count"] == 1
+
+    monkeypatch.setattr(
+        sequence_pipeline,
+        "WholeSeriesSelectorFAIS",
+        real_pipeline,
+    )
+    resumed, resumed_root = _run(
+        resume_path,
+        resume_config,
+        resume_inputs,
+        resume=True,
+    )
+    assert resumed["episodes_reused"] == 1
+    assert resumed["episodes_executed"] == 2
+
+    def selected_actions(root: Path):
+        records = [
+            json.loads(line)
+            for line in (root / "routing_assignments.jsonl")
+            .read_text(encoding="utf-8")
+            .splitlines()
+        ]
+        return [
+            (
+                record["assignments"],
+                record["routing_metadata"]["selected_candidate"],
+            )
+            for record in records
+        ]
+
+    assert selected_actions(resumed_root) == selected_actions(reference_root)
+    assert [selected for _, selected in selected_actions(resumed_root)] == [
+        "kalman_local_trend",
+        "kalman_ar",
+        "kalman_local_trend",
     ]
 
 
-@pytest.mark.parametrize(
-    "changed_upstream", ["audit", "imputer", "router", "forecaster_registry"]
-)
-def test_impute_resume_rejects_changed_upstream_content(
-    tmp_path, monkeypatch, changed_upstream
-):
+def test_neuralucb_resume_recomputes_valid_records_after_a_broken_prefix(tmp_path, monkeypatch):
+    config_path, config, inputs = _setup_neural(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        stage_execution.RouterBundle,
+        "load",
+        lambda _path: _neural_router(),
+    )
+    _, root = _run(config_path, config, inputs, resume=False)
+    original_records = [
+        json.loads(line)
+        for line in (root / "routing_assignments.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    progress_path = root / "imputation_progress.json"
+    progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    damaged = progress["entries"]["00000001"]
+    (root / "imputations" / damaged["file"]).write_bytes(b"broken")
+
+    resumed, _ = _run(config_path, config, inputs, resume=True)
+
+    assert resumed["episodes_reused"] == 1
+    assert resumed["episodes_executed"] == 2
+    repaired_records = [
+        json.loads(line)
+        for line in (root / "routing_assignments.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["assignments"] for record in repaired_records] == [
+        record["assignments"] for record in original_records
+    ]
+    assert [record["routing_metadata"]["selected_candidate"] for record in repaired_records] == [
+        record["routing_metadata"]["selected_candidate"] for record in original_records
+    ]
+    repaired_progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert repaired_progress["entries"]["00000002"]["repaired_reason"] == (
+        "NeuralUCB resume recomputes the non-prefix suffix"
+    )
+
+
+def test_sequence_impute_without_forecaster_writes_independent_identity(tmp_path, monkeypatch):
+    config_path, config, inputs = _setup_neural(tmp_path, monkeypatch)
+    router = _neural_router()
+    router_manifest = inputs.router_artifact / "manifest.json"
+    router_manifest.write_text(
+        json.dumps({"schema_version": 1, "metadata": router.metadata}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        stage_execution.RouterBundle,
+        "load",
+        lambda _path: _neural_router(),
+    )
+
+    independent_inputs = replace(inputs, forecaster_id=None)
+    summary, root = _run(
+        config_path,
+        config,
+        independent_inputs,
+        resume=False,
+    )
+
+    assert summary["forecaster_id"] == "imputation"
+    assert summary["forecast_mode"] == "selector_independent"
+    assert summary["forecaster_independent_selection"] is True
+    assignment = json.loads(
+        (root / "routing_assignments.jsonl").read_text(encoding="utf-8").splitlines()[0]
+    )
+    assert assignment["forecaster_id"] == "imputation"
+    assert assignment["forecast_mode"] == "selector_independent"
+    assert assignment["forecaster_independent_selection"] is True
+    with np.load(root / "imputations" / assignment["file"], allow_pickle=False) as archive:
+        assert str(archive["forecaster_id"][0]) == "imputation"
+        assert str(archive["forecast_mode"][0]) == "selector_independent"
+        assert bool(archive["forecaster_independent_selection"][0]) is True
+
+    resumed, _ = _run(
+        config_path,
+        config,
+        independent_inputs,
+        resume=True,
+    )
+    assert resumed["episodes_reused"] == summary["episode_count"]
+    assert resumed["episodes_executed"] == 0
+
+
+@pytest.mark.parametrize("changed_upstream", ["audit", "imputer", "router", "forecaster_registry"])
+def test_impute_resume_rejects_changed_upstream_content(tmp_path, monkeypatch, changed_upstream):
     config_path, config, inputs = _setup(tmp_path, monkeypatch)
     _run(config_path, config, inputs, resume=False)
     if changed_upstream == "audit":

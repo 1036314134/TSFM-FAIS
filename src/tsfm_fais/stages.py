@@ -12,6 +12,10 @@ import yaml
 
 from tsfm_fais.artifacts import RunArtifactStore, make_run_id, utc_now
 from tsfm_fais.config import AppConfig
+from tsfm_fais.routing.sequence_protocol import (
+    is_independent_sequence_router_metadata,
+    normalize_configured_selector_method,
+)
 
 StageName = Literal["fit-imputers", "labels", "train-router", "impute"]
 
@@ -65,6 +69,22 @@ _CONFIG_REQUIREMENTS: Mapping[StageName, tuple[str, ...]] = {
     "train-router": ("router_config",),
     "impute": ("data_manifest", "imputer_registry", "router_config", "forecaster_registry"),
 }
+
+
+def _configured_router_methods(config: AppConfig) -> tuple[str, ...]:
+    try:
+        payload = yaml.safe_load(config.registries.router_config.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise ValueError(f"cannot read router config: {type(error).__name__}: {error}") from error
+    from tsfm_fais.registry_configs import RouterConfig
+
+    return RouterConfig.model_validate(payload).selector_methods
+
+
+def _labels_require_forecaster(config: AppConfig) -> bool:
+    """Return whether the configured labels are forecast-aware B-FAIS labels."""
+
+    return "block_fais" in _configured_router_methods(config)
 
 
 def _resolved_or_none(path: Path | None) -> str | None:
@@ -157,9 +177,11 @@ def _router_semantics(check: dict[str, Any]) -> None:
         check["valid"] = False
         check["message"] = f"invalid router fold manifest: {type(error).__name__}: {error}"
         return
-    if split not in {"leave_family_out", "leave_model_out"} or not isinstance(
-        folds, dict
-    ) or not folds:
+    if (
+        split not in {"leave_family_out", "leave_model_out"}
+        or not isinstance(folds, dict)
+        or not folds
+    ):
         check["valid"] = False
         check["message"] = "router fold manifest has an invalid split or empty folds"
         return
@@ -176,6 +198,57 @@ def _router_semantics(check: dict[str, Any]) -> None:
         resolved[str(held_out)] = str(target)
     check["resolved_folds"] = resolved
     check["fold_split"] = split
+
+
+def _router_manifest_metadata(path: Path) -> tuple[Mapping[str, Any], ...]:
+    """Read metadata from a direct router or every declared router fold."""
+
+    resolved = path.resolve()
+    manifest_paths: tuple[Path, ...]
+    if resolved.is_file():
+        manifest_paths = (resolved.with_name("manifest.json"),)
+    elif (resolved / "router_bundle.joblib").is_file():
+        manifest_paths = (resolved / "manifest.json",)
+    else:
+        folds_path = resolved / "folds.json"
+        try:
+            payload = json.loads(folds_path.read_text(encoding="utf-8"))
+            folds = payload.get("folds") if isinstance(payload, Mapping) else None
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return ()
+        if not isinstance(folds, Mapping) or not folds:
+            return ()
+        paths: list[Path] = []
+        for raw_target in folds.values():
+            target = Path(str(raw_target))
+            if not target.is_absolute():
+                target = (folds_path.parent / target).resolve()
+            paths.append(
+                target / "manifest.json" if target.is_dir() else target.with_name("manifest.json")
+            )
+        manifest_paths = tuple(paths)
+
+    metadata: list[Mapping[str, Any]] = []
+    for manifest_path in manifest_paths:
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return ()
+        entry = payload.get("metadata") if isinstance(payload, Mapping) else None
+        if not isinstance(entry, Mapping):
+            return ()
+        metadata.append(entry)
+    return tuple(metadata)
+
+
+def _router_is_forecaster_independent(path: Path | None) -> bool:
+    if path is None:
+        return False
+
+    metadata = _router_manifest_metadata(path)
+    return bool(metadata) and all(
+        is_independent_sequence_router_metadata(entry) for entry in metadata
+    )
 
 
 def parse_forecaster_ids(value: str | None) -> tuple[str, ...]:
@@ -233,9 +306,7 @@ def _forecaster_check(
 
     runtime_ids = {entry.model_id for entry in default_forecast_registry().specs()}
     missing = tuple(
-        model_id
-        for model_id in requested
-        if model_id not in ids or model_id not in runtime_ids
+        model_id for model_id in requested if model_id not in ids or model_id not in runtime_ids
     )
     result["valid"] = not missing
     result["values"] = list(requested)
@@ -276,19 +347,20 @@ def _input_checks(
                 option="--imputer-artifacts",
             )
         )
-        checks.append(
-            _forecaster_check(
-                config,
-                inputs.forecaster_id,
-                allow_multiple=stage == "labels",
+        if stage == "labels" and _labels_require_forecaster(config):
+            checks.append(
+                _forecaster_check(
+                    config,
+                    inputs.forecaster_id,
+                    allow_multiple=stage == "labels",
+                )
             )
-        )
     if stage == "labels":
         checks.append(
             _check(
                 "forecaster_artifact",
                 inputs.forecaster_artifact,
-                required=True,
+                required=_labels_require_forecaster(config),
                 kind="any",
                 option="--forecaster-artifact",
             )
@@ -312,7 +384,73 @@ def _input_checks(
             option="--router-artifact",
         )
         _router_semantics(router)
+        router_metadata = (
+            _router_manifest_metadata(inputs.router_artifact)
+            if router["valid"] and inputs.router_artifact is not None
+            else ()
+        )
+        artifact_methods = {
+            normalize_configured_selector_method(entry["selector_method"])
+            for entry in router_metadata
+            if "selector_method" in entry
+        }
+        if len(artifact_methods) > 1:
+            router["valid"] = False
+            router["message"] = "router folds contain different selector methods"
+        elif artifact_methods:
+            configured_methods = set(_configured_router_methods(config))
+            if not artifact_methods.issubset(configured_methods):
+                router["valid"] = False
+                router["message"] = (
+                    "router artifact selector method is not enabled by "
+                    "config.registries.router_config"
+                )
+            router["selector_methods"] = sorted(artifact_methods)
+        forecaster_independent = bool(
+            router["valid"] and _router_is_forecaster_independent(inputs.router_artifact)
+        )
+        router["forecaster_independent_selection"] = forecaster_independent
         checks.append(router)
+        if forecaster_independent and config.experiment.split == "leave_model_out":
+            checks.append(
+                {
+                    "name": "router_protocol",
+                    "option": "config.experiment.split",
+                    "path": None,
+                    "required": True,
+                    "kind": "protocol",
+                    "exists": True,
+                    "valid": False,
+                    "message": (
+                        "forecaster-independent sequence selectors do not support "
+                        "leave_model_out routing folds"
+                    ),
+                }
+            )
+        if forecaster_independent and inputs.forecaster_id is None:
+            checks.append(
+                {
+                    "name": "forecaster_id",
+                    "option": "--forecaster-id",
+                    "path": None,
+                    "required": False,
+                    "kind": "registry_id",
+                    "exists": False,
+                    "valid": True,
+                    "message": "not required for a forecaster-independent sequence selector",
+                    "value": None,
+                }
+            )
+        else:
+            forecaster = _forecaster_check(config, inputs.forecaster_id)
+            if forecaster_independent:
+                forecaster["required"] = False
+                if forecaster["valid"]:
+                    forecaster["message"] = (
+                        "accepted for compatibility; the imputation artifact uses the "
+                        "stable independent identity"
+                    )
+            checks.append(forecaster)
         checks.append(
             _check(
                 "candidate_source_impute_artifact",
@@ -322,15 +460,20 @@ def _input_checks(
                 option="--candidate-source-impute-artifact",
             )
         )
-        checks.append(
-            _check(
-                "forecaster_artifact",
-                inputs.forecaster_artifact,
-                required=False,
-                kind="any",
-                option="--forecaster-artifact",
-            )
+        forecaster_artifact = _check(
+            "forecaster_artifact",
+            inputs.forecaster_artifact,
+            required=False,
+            kind="any",
+            option="--forecaster-artifact",
         )
+        if forecaster_independent and inputs.forecaster_artifact is not None:
+            forecaster_artifact["valid"] = False
+            forecaster_artifact["message"] = (
+                "forecaster-independent sequence selectors do not accept "
+                "--forecaster-artifact during imputation"
+            )
+        checks.append(forecaster_artifact)
     return checks
 
 
@@ -350,7 +493,11 @@ def prepare_stage(
             raise ValueError(
                 "--resume is currently supported only for fit-imputers, labels, and impute"
             )
-        if stage == "labels" and len(parse_forecaster_ids(inputs.forecaster_id)) != 1:
+        if (
+            stage == "labels"
+            and _labels_require_forecaster(config)
+            and len(parse_forecaster_ids(inputs.forecaster_id)) != 1
+        ):
             raise ValueError("labels resume requires exactly one forecaster ID")
         if run_id is None:
             raise ValueError("--resume requires an explicit --run-id")
@@ -370,13 +517,13 @@ def prepare_stage(
         try:
             normalized_stored = AppConfig.model_validate(stored_config).model_dump(mode="json")
         except ValueError as error:
-            raise ValueError(f"cannot resume: stored resolved config is invalid: {error}") from error
+            raise ValueError(
+                f"cannot resume: stored resolved config is invalid: {error}"
+            ) from error
         if normalized_stored != config.model_dump(mode="json"):
             raise ValueError("cannot resume: resolved config differs from the original run")
         if not isinstance(manifest, dict) or manifest.get("stage") != stage:
-            raise ValueError(
-                f"cannot resume: stage manifest does not describe {stage}"
-            )
+            raise ValueError(f"cannot resume: stage manifest does not describe {stage}")
         if manifest.get("run_id") != store.run_id:
             raise ValueError("cannot resume: stage manifest run_id mismatch")
         if manifest.get("inputs") != inputs.to_manifest():
@@ -426,9 +573,7 @@ def prepare_stage(
         }
         manifest_path = store.write("stage_manifest.json", manifest)
     if invalid:
-        details = "; ".join(
-            f"{check['name']}: {check['message']}" for check in invalid
-        )
+        details = "; ".join(f"{check['name']}: {check['message']}" for check in invalid)
         raise StagePreparationError(
             f"stage {stage!r} is blocked: {details}. Audit manifest: {manifest_path}"
         )

@@ -347,6 +347,7 @@ class RouterConfig(_StrictModel):
         "forecast_loss",
         "full_candidate_loss",
         "routing_target",
+        "imputation_loss",
     ] = "full_candidate_loss"
     evidence_tuning_family: str | None = None
     evidence_blend: dict[str, EvidenceBlendWeights] = Field(default_factory=dict)
@@ -372,6 +373,18 @@ class RouterConfig(_StrictModel):
         if unknown_selectors:
             raise ValueError(
                 "unsupported selector methods: " + ", ".join(sorted(unknown_selectors))
+            )
+        if "block_fais" in self.selector_methods and len(self.selector_methods) > 1:
+            raise ValueError(
+                "block_fais cannot be mixed with sequence-level selector baselines; "
+                "generate and train their label protocols separately"
+            )
+        if "block_fais" not in self.selector_methods and (
+            self.forecast_consensus.mode != "disabled" or self.forecast_consensus.candidates
+        ):
+            raise ValueError(
+                "sequence-level selector baselines require disabled forecast_consensus "
+                "with no candidates"
             )
         unknown_param_methods = set(self.selector_params).difference(supported_selectors)
         if unknown_param_methods:

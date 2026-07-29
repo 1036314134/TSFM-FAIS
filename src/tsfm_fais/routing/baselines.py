@@ -35,23 +35,27 @@ BASELINE_SELECTOR_METHODS = (
 BASELINE_SELECTOR_PARAM_NAMES: dict[str, frozenset[str]] = {
     "metaod": frozenset(
         {
-            "batch_size",
             "epochs",
             "latent_dim",
             "learning_rate",
             "max_depth",
+            "max_gradient_norm",
             "min_samples_leaf",
+            "min_samples_split",
             "n_estimators",
-            "torch_threads",
-            "weight_decay",
+            "regularization",
         }
     ),
     "alors": frozenset(
         {
             "epochs",
             "latent_dim",
+            "learning_rate",
             "max_depth",
+            "max_gradient_norm",
             "min_samples_leaf",
+            "min_samples_split",
+            "ndcg_cutoff",
             "n_estimators",
             "regularization",
         }
@@ -65,37 +69,43 @@ BASELINE_SELECTOR_PARAM_NAMES: dict[str, frozenset[str]] = {
             "init_scale",
             "learning_rate",
             "padding_penalty",
+            "reachable_mass_weight",
             "torch_threads",
             "weight_decay",
         }
     ),
     "neuralucb": frozenset(
         {
-            "alpha",
-            "batch_size",
-            "epochs",
+            "gradient_clip",
             "hidden_size",
             "learning_rate",
-            "replay_size",
+            "nu",
+            "regularization",
             "retrain_interval",
             "ridge",
-            "torch_threads",
-            "update_epochs",
-            "weight_decay",
+            "training_steps",
         }
     ),
     "hybrid_lstm": frozenset(
         {
+            "balance_classes",
             "batch_size",
+            "dense_size",
+            "dropout",
             "epochs",
+            "filters",
             "hidden_size",
+            "kernel_size",
+            "l1_strength",
             "learning_rate",
+            "multiclass_weight",
             "multilabel_weight",
-            "near_optimal_tolerance",
+            "multilabel_threshold",
             "torch_threads",
-            "weight_decay",
+            "window_size",
         }
     ),
+    "random_valid_series": frozenset(),
     "random_valid_block": frozenset(),
 }
 
@@ -105,6 +115,7 @@ _METHOD_ALIASES = {
     "neural_ucb": "neuralucb",
     "random": "random_valid_block",
     "random_valid": "random_valid_block",
+    "random_valid_series": "random_valid_block",
 }
 
 

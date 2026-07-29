@@ -46,7 +46,6 @@ from tsfm_fais.registry_configs import validate_project_configuration
 from tsfm_fais.stages import (
     StageInputs,
     finish_preparation,
-    parse_forecaster_ids,
     prepare_stage,
 )
 
@@ -83,10 +82,7 @@ def _data_audit(args: argparse.Namespace) -> int:
             }
         rejected += int(not report_payload["accepted"])
         reports.append(report_payload)
-        print(
-            f"{spec.dataset_id}: "
-            f"{'PASS' if report_payload['accepted'] else 'REJECT'}"
-        )
+        print(f"{spec.dataset_id}: {'PASS' if report_payload['accepted'] else 'REJECT'}")
     payload = {"schema_version": 1, "datasets": reports}
     if args.output:
         output = Path(args.output)
@@ -102,13 +98,9 @@ def _imputers_list(args: argparse.Namespace) -> int:
     for spec in DEFAULT_REGISTRY.specs():
         availability = DEFAULT_REGISTRY.availability(spec.imputer_id)
         suffix = (
-            "available"
-            if availability.available
-            else f"missing={','.join(availability.missing)}"
+            "available" if availability.available else f"missing={','.join(availability.missing)}"
         )
-        print(
-            f"{spec.imputer_id:20} mode={spec.mode:20} cost={spec.cost_tier} {suffix}"
-        )
+        print(f"{spec.imputer_id:20} mode={spec.mode:20} cost={spec.cost_tier} {suffix}")
     return 0
 
 
@@ -237,12 +229,6 @@ def _run_stage(args: argparse.Namespace) -> int:
         raise ValueError(
             "--resume is currently supported only for fit-imputers, labels, and impute"
         )
-    if (
-        args.resume
-        and args.stage == "labels"
-        and len(parse_forecaster_ids(args.forecaster_id)) != 1
-    ):
-        raise ValueError("labels resume requires exactly one forecaster ID")
     if args.resume and not args.run_id:
         raise ValueError("--resume requires an explicit --run-id")
     config = load_config(args.config)
@@ -253,9 +239,7 @@ def _run_stage(args: argparse.Namespace) -> int:
         labels_artifact=_optional_path(args.labels_artifact),
         router_artifact=_optional_path(args.router_artifact),
         forecaster_artifact=_optional_path(args.forecaster_artifact),
-        candidate_source_impute_artifact=_optional_path(
-            args.candidate_source_impute_artifact
-        ),
+        candidate_source_impute_artifact=_optional_path(args.candidate_source_impute_artifact),
         forecaster_id=args.forecaster_id,
     )
     preparation = prepare_stage(
@@ -288,6 +272,8 @@ def _evaluate(args: argparse.Namespace) -> int:
         output_dir=args.output_dir,
         baseline_ids=parse_ids(args.baseline_ids),
         resume=args.resume,
+        shared_evaluation_artifact=args.shared_evaluation_artifact,
+        shared_reference_only=args.shared_reference_only,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
@@ -309,6 +295,7 @@ def _summarize_main(args: argparse.Namespace) -> int:
         output_dir=args.output_dir,
         bootstrap_replicates=args.bootstrap_replicates,
         bootstrap_seed=args.bootstrap_seed,
+        primary_comparator_roles=args.primary_comparator_role,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
@@ -396,7 +383,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.add_argument(
         "--forecaster-id",
-        help="registered model ID, or comma-separated IDs for the labels stage",
+        help=(
+            "registered model ID, or comma-separated IDs for the labels stage; "
+            "omit for a trained forecaster-independent sequence selector"
+        ),
     )
     run.add_argument(
         "--execute",
@@ -427,6 +417,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="local checkpoint file or directory; evaluation never downloads weights",
     )
     evaluate.add_argument("--output-dir", required=True)
+    evaluate.add_argument(
+        "--shared-evaluation-artifact",
+        help=(
+            "completed evaluation directory for the same forecaster and common candidate "
+            "content; reuse clean, candidate, and oracle forecasts after strict validation"
+        ),
+    )
+    evaluate.add_argument(
+        "--shared-reference-only",
+        action="store_true",
+        help=(
+            "reuse only clean, candidate, and oracle rows while allowing the target "
+            "assembled method to have a different routing identity; requires "
+            "--shared-evaluation-artifact"
+        ),
+    )
     evaluate.add_argument(
         "--baseline-ids",
         default="locf,linear_interp",
@@ -473,6 +479,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--bootstrap-seed",
         type=int,
         default=DEFAULT_BOOTSTRAP_SEED,
+    )
+    summarize_main.add_argument(
+        "--primary-comparator-role",
+        nargs="+",
+        choices=("baseline", "missing_anchor", "selector_baseline"),
+        help=(
+            "method roles included in the family-equal primary bootstrap; "
+            "defaults to baseline, missing_anchor, and selector_baseline; "
+            "method and episode-weighted diagnostic tables remain complete"
+        ),
     )
     summarize_main.set_defaults(handler=_summarize_main)
 
