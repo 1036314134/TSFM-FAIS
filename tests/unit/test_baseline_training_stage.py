@@ -221,6 +221,71 @@ def test_baseline_bundle_uses_only_prior_features_and_no_pair_model(
     assert RouterBundle.load(tmp_path / "metaod").metadata["selector_seed"] == 7
 
 
+def test_block_router_seed_is_passed_to_all_lightgbm_models(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, dict[str, object]] = {}
+
+    class RecordingTrainer:
+        def __init__(
+            self,
+            *,
+            prior_params: dict[str, object],
+            unary_params: dict[str, object],
+            pairwise_params: dict[str, object],
+        ) -> None:
+            captured.update(
+                {
+                    "prior": prior_params,
+                    "unary": unary_params,
+                    "pairwise": pairwise_params,
+                }
+            )
+
+        def fit(self, *args: object, **kwargs: object) -> RouterBundle:
+            return RouterBundle(
+                prior=_DeterministicScoreModel(1),
+                unary=_DeterministicScoreModel(1),
+                pairwise=_DeterministicScoreModel(1),
+                feature_names=tuple(kwargs.get("feature_names", ())),
+                candidate_ids=tuple(kwargs.get("candidate_ids", ())),
+                pair_feature_names=tuple(kwargs.get("pair_feature_names", ())),
+            )
+
+    monkeypatch.setattr("tsfm_fais.stage_execution.RouterTrainer", RecordingTrainer)
+    pair_rows = [
+        {
+            "episode_id": "toy__item__12__independent_block__0.2__22",
+            "dataset_id": "toy",
+            "family_id": "toy-family",
+            "forecaster_id": "chronos2",
+            "left_block": "n0:d0:0-1",
+            "right_block": "n0:d0:1-2",
+            "left_candidate": "locf",
+            "right_candidate": "linear_interp",
+            "features": {"pair_edge_weight": 1.0},
+            "interaction": 0.1,
+        }
+    ]
+
+    bundle = _fit_router_bundle(
+        _teacher_rows(),
+        pair_rows,
+        tmp_path / "block",
+        {"split": "rolling_origin", "ranker_target": "forecast_loss"},
+        selector_method="block_fais",
+        seed=4101,
+    )
+
+    assert captured == {
+        "prior": {"random_state": 4101},
+        "unary": {"random_state": 4101},
+        "pairwise": {"random_state": 4101},
+    }
+    assert bundle.metadata["selector_seed"] == 4101
+
+
 def test_execute_train_router_writes_all_suite_artifacts_without_pair_labels(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -235,6 +300,11 @@ def test_execute_train_router_writes_all_suite_artifacts_without_pair_labels(
     labels_path = tmp_path / "teacher_labels.jsonl"
     _write_jsonl(labels_path, _teacher_rows())
     config = load_config("configs/main_rolling_train_baselines.yaml")
+    config = config.model_copy(
+        update={
+            "experiment": config.experiment.model_copy(update={"router_seed": 4101})
+        }
+    )
     store = RunArtifactStore.create(tmp_path / "artifacts", "baseline-suite")
     preparation = StagePreparation("train-router", store, {})
 
@@ -254,4 +324,5 @@ def test_execute_train_router_writes_all_suite_artifacts_without_pair_labels(
         assert (artifact / "router_bundle.joblib").is_file()
         bundle = RouterBundle.load(artifact)
         assert bundle.metadata["selector_method"] == method
+        assert bundle.metadata["selector_seed"] == 4101
         assert bundle.metadata["requires_pseudo_candidates"] is False

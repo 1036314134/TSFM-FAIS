@@ -29,9 +29,13 @@ class DatasetSpec(BaseModel):
     allow_implicit_regular_time: bool = False
     variate_name_normalization: Literal["none", "strip_bracket_suffix"] = "none"
     expected_num_variates: int | None = Field(default=None, ge=2)
-    provenance: Literal["source_complete", "release_complete", "snapshot_complete"] = (
-        "snapshot_complete"
-    )
+    missingness: Literal["complete", "native"] = "complete"
+    provenance: Literal[
+        "source_complete",
+        "release_complete",
+        "snapshot_complete",
+        "source_native_missing",
+    ] = "snapshot_complete"
     enabled: bool = True
 
     @model_validator(mode="after")
@@ -62,6 +66,10 @@ class DatasetSpec(BaseModel):
             raise ValueError("sentinel_values must be finite")
         if len(set(self.sentinel_values)) != len(self.sentinel_values):
             raise ValueError("sentinel_values must be unique")
+        if self.missingness == "native" and self.provenance != "source_native_missing":
+            raise ValueError("native-missing datasets require source_native_missing provenance")
+        if self.missingness == "complete" and self.provenance == "source_native_missing":
+            raise ValueError("source_native_missing provenance requires missingness='native'")
         return self
 
 

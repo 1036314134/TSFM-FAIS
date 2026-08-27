@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -11,6 +12,14 @@ from typing import Any
 
 import joblib
 import numpy as np
+
+
+def _serialized_booster(component: Any) -> str | None:
+    estimator = getattr(component, "model", None)
+    booster = getattr(estimator, "booster_", None)
+    if booster is None or not hasattr(booster, "model_to_string"):
+        return None
+    return str(booster.model_to_string(num_iteration=-1))
 
 
 def _lightgbm_classes():
@@ -167,6 +176,25 @@ class RouterBundle:
         target = Path(path)
         target.mkdir(parents=True, exist_ok=True)
         joblib.dump(self, target / "router_bundle.joblib")
+        component_files: dict[str, dict[str, Any]] = {}
+        for name, component in (
+            ("prior", self.prior),
+            ("unary", self.unary),
+            ("pairwise", self.pairwise),
+        ):
+            serialized = _serialized_booster(component)
+            if serialized is None:
+                continue
+            payload = serialized.encode("utf-8")
+            component_path = target / f"{name}_model.txt"
+            temporary = component_path.with_suffix(component_path.suffix + ".tmp")
+            temporary.write_bytes(payload)
+            temporary.replace(component_path)
+            component_files[name] = {
+                "path": component_path.name,
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "size_bytes": len(payload),
+            }
         manifest = {
             "schema_version": 1,
             "selector_method": self.metadata.get("selector_method", "b_fais"),
@@ -175,6 +203,7 @@ class RouterBundle:
             "candidate_ids": list(self.candidate_ids),
             "categorical_maps": self.categorical_maps,
             "dependency_versions": _dependency_versions(),
+            "component_models": component_files,
             "metadata": self.metadata,
         }
         (target / "manifest.json").write_text(
@@ -211,12 +240,18 @@ class RouterTrainer:
         feature_names: Sequence[str],
         candidate_ids: Sequence[str],
         pair_feature_names: Sequence[str] | None = None,
+        *,
+        train_pairwise: bool = True,
     ) -> RouterBundle:
         labels = np.asarray(unary_labels, dtype=float).reshape(-1)
         relevance = losses_to_relevance(labels, groups)
         prior = RankerModel(self.prior_params).fit(prior_features, relevance, groups)
         unary = RankerModel(self.unary_params).fit(unary_features, relevance, groups)
-        pairwise = PairwiseRiskModel(self.pairwise_params).fit(pair_features, pair_labels)
+        pairwise = (
+            PairwiseRiskModel(self.pairwise_params).fit(pair_features, pair_labels)
+            if train_pairwise
+            else PairwiseRiskModel()
+        )
         candidate_tuple = tuple(candidate_ids)
         return RouterBundle(
             prior=prior,
@@ -224,18 +259,17 @@ class RouterTrainer:
             pairwise=pairwise,
             feature_names=tuple(feature_names),
             candidate_ids=candidate_tuple,
-            pair_feature_names=tuple(pair_feature_names or ()),
+            pair_feature_names=(tuple(pair_feature_names or ()) if train_pairwise else ()),
             categorical_maps={
                 "candidate_id": {
-                    candidate_id: index
-                    for index, candidate_id in enumerate(candidate_tuple)
+                    candidate_id: index for index, candidate_id in enumerate(candidate_tuple)
                 }
             },
             metadata={
                 "dependency_versions": _dependency_versions(),
                 "unary_risk_scale": _robust_scale(labels),
-                "pair_risk_scale": _robust_scale(
-                    np.asarray(pair_labels, dtype=float)
+                "pair_risk_scale": (
+                    _robust_scale(np.asarray(pair_labels, dtype=float)) if train_pairwise else 1.0
                 ),
             },
         )

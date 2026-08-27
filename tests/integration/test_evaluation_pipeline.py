@@ -40,11 +40,12 @@ class BatchSensitiveForecaster(LastValueForecaster):
         )
 
 
-def _config():
+def _config(*, router_seed: int | None = None):
     config = load_config("configs/smoke.yaml")
-    experiment = config.experiment.model_copy(
-        update={"context_length": 4, "horizon": 2, "target_indices": (0,)}
-    )
+    experiment_update = {"context_length": 4, "horizon": 2, "target_indices": (0,)}
+    if router_seed is not None:
+        experiment_update["router_seed"] = router_seed
+    experiment = config.experiment.model_copy(update=experiment_update)
     return config.model_copy(update={"experiment": experiment})
 
 
@@ -400,7 +401,11 @@ def test_selector_safety_fallback_is_recorded_but_excluded(tmp_path: Path) -> No
     assert forecaster.batch_sizes == [2]  # clean and LOCF; linear is tail-ineligible
 
 
-def _shared_evaluation_fixture(tmp_path: Path) -> tuple[Path, Path]:
+def _shared_evaluation_fixture(
+    tmp_path: Path,
+    *,
+    router_seed: int | None = None,
+) -> tuple[Path, Path]:
     source = _impute_artifact(
         tmp_path / "source",
         selector_independent=True,
@@ -409,7 +414,7 @@ def _shared_evaluation_fixture(tmp_path: Path) -> tuple[Path, Path]:
     )
     shared = tmp_path / "shared-evaluation"
     evaluate_imputations(
-        config=_config(),
+        config=_config(router_seed=router_seed),
         impute_artifact=source,
         forecaster_id="chronos2",
         forecaster_artifact=None,
@@ -693,6 +698,64 @@ def test_shared_reference_only_allows_b_fais_routing_identity_and_predicts_assem
     assert manifest["shared_reference_only"] is True
     assert manifest["forecast_reuse_mode"] == "shared_reference_only"
     assert manifest["evaluation_signature"]["shared_reference_only"] is True
+
+
+def test_shared_reference_only_allows_router_seed_difference(tmp_path: Path) -> None:
+    _, shared = _shared_evaluation_fixture(tmp_path, router_seed=4101)
+    source_manifest = json.loads((shared / "evaluation_manifest.json").read_text(encoding="utf-8"))
+    source_router_seed = source_manifest["evaluation_signature"]["router_seed"]
+    target_router_seed = source_router_seed + 1
+    target = _impute_artifact(
+        tmp_path / "different-router-seed",
+        routing_forecaster_id="chronos2",
+        assembled_missing_value=1.5,
+    )
+    output = tmp_path / "different-router-seed-evaluation"
+
+    result = evaluate_imputations(
+        config=_config(router_seed=target_router_seed),
+        impute_artifact=target,
+        forecaster_id="chronos2",
+        forecaster_artifact=None,
+        output_dir=output,
+        forecast_runner=LastValueForecaster(),
+        shared_evaluation_artifact=shared,
+        shared_reference_only=True,
+    )
+
+    assert result["status"] == "completed"
+    manifest = json.loads((output / "evaluation_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["evaluation_signature"]["router_seed"] == target_router_seed
+    shared_lines = {
+        json.loads(line)["method"]: line
+        for line in (shared / "episode_metrics.jsonl").read_text(encoding="utf-8").splitlines()
+    }
+    target_lines = {
+        json.loads(line)["method"]: line
+        for line in (output / "episode_metrics.jsonl").read_text(encoding="utf-8").splitlines()
+    }
+    assert "b_fais" in target_lines
+    for method_id in set(target_lines) - {"b_fais"}:
+        assert target_lines[method_id] == shared_lines[method_id]
+
+
+def test_shared_evaluation_rejects_router_seed_difference_without_reference_only(
+    tmp_path: Path,
+) -> None:
+    target, shared = _shared_evaluation_fixture(tmp_path, router_seed=4101)
+    source_manifest = json.loads((shared / "evaluation_manifest.json").read_text(encoding="utf-8"))
+    source_router_seed = source_manifest["evaluation_signature"]["router_seed"]
+
+    with pytest.raises(ValueError, match="shared evaluation spec differs for router_seed"):
+        evaluate_imputations(
+            config=_config(router_seed=source_router_seed + 1),
+            impute_artifact=target,
+            forecaster_id="chronos2",
+            forecaster_artifact=None,
+            output_dir=tmp_path / "different-router-seed-evaluation",
+            forecast_runner=LastValueForecaster(),
+            shared_evaluation_artifact=shared,
+        )
 
 
 @pytest.mark.parametrize("candidate_field", ("candidate_values", "candidate_status"))

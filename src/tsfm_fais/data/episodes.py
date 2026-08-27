@@ -27,6 +27,9 @@ class Episode:
     target_missing_rate: float = 0.0
     global_missing_rate: float = 0.0
     local_missing_rate: float = 0.0
+    context_truth_mask: np.ndarray | None = None
+    future_observed_mask: np.ndarray | None = None
+    base_observed_mask: np.ndarray | None = None
 
 
 def fit_prefix_end(
@@ -81,10 +84,17 @@ def build_episode(
     start = forecast_origin - context_length
     clean_context = item.values[start:forecast_origin].copy()
     clean_future = item.values[forecast_origin : forecast_origin + horizon].copy()
-    if not np.isfinite(clean_context).all() or not np.isfinite(clean_future).all():
-        raise ValueError("episodes require source-complete context and future")
+    context_truth_mask = np.isfinite(clean_context)
+    future_observed_mask = np.isfinite(clean_future)
+    if not context_truth_mask.any() or not future_observed_mask.any():
+        raise ValueError("episodes require observed source context and future values")
     masked = masked_series.values[start:forecast_origin].copy()
     observed = masked_series.observed_mask[start:forecast_origin].copy()
+    base_observed = np.asarray(masked_series.base_observed_mask, dtype=bool)[
+        start:forecast_origin
+    ].copy()
+    if np.any(observed & ~context_truth_mask):
+        raise ValueError("episode mask exposes an unavailable source value")
     if not np.array_equal(masked[observed], clean_context[observed]):
         raise ValueError("masked series observed values differ from the source item")
     blocks = extract_missing_blocks(observed, masked_series.spec.mechanism)
@@ -104,12 +114,15 @@ def build_episode(
             "dataset_id": dataset_id,
             "period": item.metadata.get("period"),
             "forecast_origin": forecast_origin,
-            "mask_protocol": "sequence_mask_v2",
+            "mask_protocol": masked_series.metadata["protocol"],
             "mask_realization_id": masked_series.realization_id,
             "missing_mechanism": masked_series.spec.mechanism,
             "target_missing_rate": masked_series.spec.missing_rate,
             "global_missing_rate": masked_series.metadata["realized_missing_rate"],
             "local_missing_rate": local_rate,
+            "base_missing_rate": float((~base_observed).mean()),
+            "context_truth_fraction": float(context_truth_mask.mean()),
+            "future_observed_fraction": float(future_observed_mask.mean()),
         },
     )
     return Episode(
@@ -127,4 +140,7 @@ def build_episode(
         target_missing_rate=masked_series.spec.missing_rate,
         global_missing_rate=float(masked_series.metadata["realized_missing_rate"]),
         local_missing_rate=local_rate,
+        context_truth_mask=context_truth_mask,
+        future_observed_mask=future_observed_mask,
+        base_observed_mask=base_observed,
     )

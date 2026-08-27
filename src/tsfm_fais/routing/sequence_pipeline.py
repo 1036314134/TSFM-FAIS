@@ -473,8 +473,11 @@ class WholeSeriesSelectorFAIS(BlockwiseFAIS):
         truth = np.asarray(clean_context, dtype=float)
         prediction = np.asarray(feedback["prediction"], dtype=float)
         missing = np.asarray(feedback["missing_mask"], dtype=bool)
-        actual = truth[missing]
-        estimate = prediction[missing]
+        scorable = missing & np.isfinite(truth)
+        if not scorable.any():
+            return None
+        actual = truth[scorable]
+        estimate = prediction[scorable]
         denominator = np.abs(actual) + np.abs(estimate)
         relative_error = np.zeros_like(denominator, dtype=float)
         nonzero = denominator > 0.0

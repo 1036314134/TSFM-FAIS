@@ -10,7 +10,13 @@ from typing import Any, Literal
 
 import yaml
 
-from tsfm_fais.artifacts import RunArtifactStore, make_run_id, utc_now
+from tsfm_fais.artifacts import (
+    RunArtifactStore,
+    make_run_id,
+    revision_protocol_payload,
+    utc_now,
+    validate_run_id,
+)
 from tsfm_fais.config import AppConfig
 from tsfm_fais.routing.sequence_protocol import (
     is_independent_sequence_router_metadata,
@@ -29,6 +35,8 @@ class StageInputs:
     audit_artifact: Path | None = None
     imputer_artifacts: Path | None = None
     labels_artifact: Path | None = None
+    reconstruction_labels_artifact: Path | None = None
+    episode_plan_artifact: Path | None = None
     router_artifact: Path | None = None
     forecaster_artifact: Path | None = None
     candidate_source_impute_artifact: Path | None = None
@@ -39,6 +47,10 @@ class StageInputs:
             "audit_artifact": _resolved_or_none(self.audit_artifact),
             "imputer_artifacts": _resolved_or_none(self.imputer_artifacts),
             "labels_artifact": _resolved_or_none(self.labels_artifact),
+            "reconstruction_labels_artifact": _resolved_or_none(
+                self.reconstruction_labels_artifact
+            ),
+            "episode_plan_artifact": _resolved_or_none(self.episode_plan_artifact),
             "router_artifact": _resolved_or_none(self.router_artifact),
             "forecaster_artifact": _resolved_or_none(self.forecaster_artifact),
             "candidate_source_impute_artifact": _resolved_or_none(
@@ -72,13 +84,17 @@ _CONFIG_REQUIREMENTS: Mapping[StageName, tuple[str, ...]] = {
 
 
 def _configured_router_methods(config: AppConfig) -> tuple[str, ...]:
+    return _configured_router(config).selector_methods
+
+
+def _configured_router(config: AppConfig):
     try:
         payload = yaml.safe_load(config.registries.router_config.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, yaml.YAMLError) as error:
         raise ValueError(f"cannot read router config: {type(error).__name__}: {error}") from error
     from tsfm_fais.registry_configs import RouterConfig
 
-    return RouterConfig.model_validate(payload).selector_methods
+    return RouterConfig.model_validate(payload)
 
 
 def _labels_require_forecaster(config: AppConfig) -> bool:
@@ -356,6 +372,19 @@ def _input_checks(
                 )
             )
     if stage == "labels":
+        episode_plan = _check(
+            "episode_plan",
+            inputs.episode_plan_artifact,
+            required=False,
+            kind="file",
+            option="--episode-plan-artifact",
+        )
+        if inputs.episode_plan_artifact is not None and _labels_require_forecaster(config):
+            episode_plan["valid"] = False
+            episode_plan["message"] = (
+                "an episode plan can be bound only to forecaster-independent sequence labels"
+            )
+        checks.append(episode_plan)
         checks.append(
             _check(
                 "forecaster_artifact",
@@ -373,6 +402,19 @@ def _input_checks(
                 required=True,
                 kind="file",
                 option="--labels-artifact",
+            )
+        )
+        router_config = _configured_router(config)
+        checks.append(
+            _check(
+                "reconstruction_labels",
+                inputs.reconstruction_labels_artifact,
+                required=(
+                    "block_fais" in router_config.selector_methods
+                    and router_config.ranker_target == "imputation_loss"
+                ),
+                kind="file",
+                option="--reconstruction-labels-artifact",
             )
         )
     if stage == "impute":
@@ -488,6 +530,15 @@ def prepare_stage(
 ) -> StagePreparation:
     """Create audit artifacts and validate dependencies without running an experiment."""
 
+    protocol = config.protocol
+    if protocol is not None and run_id is not None:
+        safe_run_id = validate_run_id(run_id)
+        expected_prefix = f"{protocol.run_id_prefix}-"
+        if not safe_run_id.startswith(expected_prefix):
+            raise ValueError(
+                f"revision protocol run_id must start with {expected_prefix!r}: {safe_run_id!r}"
+            )
+
     if resume:
         if stage not in {"fit-imputers", "labels", "impute"}:
             raise ValueError(
@@ -531,7 +582,11 @@ def prepare_stage(
     else:
         store = RunArtifactStore.create(
             config.runtime.output_root,
-            run_id or make_run_id(stage),
+            run_id
+            or make_run_id(
+                stage,
+                prefix=None if protocol is None else protocol.run_id_prefix,
+            ),
         )
         store.write_baseline(config, config_source)
     checks: list[dict[str, Any]] = []
@@ -571,6 +626,10 @@ def prepare_stage(
                 else "all declared dependencies are available; no experiment has been executed"
             ),
         }
+        protocol_payload = revision_protocol_payload(config)
+        if protocol_payload is not None:
+            manifest["experiment_protocol"] = protocol_payload
+            manifest["protocol_artifact"] = str((store.root / "experiment_protocol.json").resolve())
         manifest_path = store.write("stage_manifest.json", manifest)
     if invalid:
         details = "; ".join(f"{check['name']}: {check['message']}" for check in invalid)

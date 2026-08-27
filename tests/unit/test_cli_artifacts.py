@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from tsfm_fais.artifacts import RunArtifactStore, validate_run_id
-from tsfm_fais.cli import build_parser, main
-from tsfm_fais.config import load_config
+from tsfm_fais.cli import _apply_config_overrides, build_parser, main
+from tsfm_fais.config import load_config, validate_forecaster_revision_binding
+from tsfm_fais.registry_configs import validate_project_configuration
 from tsfm_fais.stages import (
     StageInputs,
     StagePreparationError,
@@ -51,6 +53,41 @@ def _write_config(root: Path) -> Path:
     return config
 
 
+def _write_r2_config(root: Path) -> Path:
+    config = _write_config(root)
+    payload = config.read_text(encoding="utf-8")
+    payload = payload.replace(
+        "  seeds: [1, 2]",
+        "  seeds: [1101, 1102, 1103]\n"
+        "  router_seed: 4101\n"
+        "  exclude_family_ids: [ett]\n"
+        "  feature_policy: deployment_available",
+    ).replace(
+        "  output_root: ../artifacts",
+        "  output_root: ../artifacts/iclr27-r2",
+    )
+    payload += """
+protocol:
+  protocol_id: iclr27-r2-test-v1
+  artifact_namespace: iclr27-r2
+  run_id_prefix: r2
+  family_split_policy: ett_dev_non_ett_leave_family_out_v1
+  development_family_ids: [ett]
+  target_protocol: full_candidate_forecast_loss_v2
+  active_mask_partition: train
+  mask_seeds:
+    train: [1101, 1102, 1103]
+    development: [2101, 2102, 2103]
+    confirmation: [3101, 3102, 3103]
+  router_seed_roots: [4101, 4102, 4103, 4104, 4105]
+  teacher_forecaster_ids: [chronos2, timesfm2p5]
+  held_out_forecaster_id: sundial
+  held_out_forecaster_revision: 3212e42564493f520593e5414af4367fc4b49226
+"""
+    config.write_text(payload, encoding="utf-8")
+    return config
+
+
 def test_evaluate_parser_accepts_shared_evaluation_artifact() -> None:
     args = build_parser().parse_args(
         [
@@ -73,6 +110,50 @@ def test_evaluate_parser_accepts_shared_evaluation_artifact() -> None:
 
     assert args.shared_evaluation_artifact == "shared-evaluation"
     assert args.shared_reference_only is True
+
+
+def test_run_parser_accepts_reconstruction_label_artifact() -> None:
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--config",
+            "config.yaml",
+            "--stage",
+            "train-router",
+            "--labels-artifact",
+            "forecast-labels.jsonl",
+            "--reconstruction-labels-artifact",
+            "reconstruction-labels.jsonl",
+        ]
+    )
+
+    assert args.reconstruction_labels_artifact == "reconstruction-labels.jsonl"
+
+
+def test_run_parser_accepts_episode_plan_artifact() -> None:
+    args = build_parser().parse_args(
+        [
+            "run",
+            "--config",
+            "config.yaml",
+            "--stage",
+            "labels",
+            "--episode-plan-artifact",
+            "completed-labels/labels_progress.json",
+        ]
+    )
+
+    assert args.episode_plan_artifact == "completed-labels/labels_progress.json"
+
+
+def test_router_seed_override_is_revalidated_against_protocol(tmp_path: Path) -> None:
+    config = load_config(_write_r2_config(tmp_path))
+
+    updated = _apply_config_overrides(config, SimpleNamespace(router_seed=4105))
+
+    assert updated.experiment.router_seed == 4105
+    with pytest.raises(ValueError, match="router_seed_roots"):
+        _apply_config_overrides(config, SimpleNamespace(router_seed=9999))
 
 
 def test_summarize_main_parser_accepts_primary_comparator_roles() -> None:
@@ -191,6 +272,126 @@ def test_prepared_stage_returns_success_without_starting_execution(tmp_path, cap
     assert not (run_dir / "imputer_artifacts").exists()
 
 
+def test_r2_protocol_isolates_artifacts_and_writes_auditable_metadata(tmp_path):
+    config_path = _write_r2_config(tmp_path)
+    config = load_config(config_path)
+    audit = _accepted_audit(tmp_path / "audit.json")
+
+    preparation = prepare_stage(
+        config,
+        config_path,
+        "fit-imputers",
+        StageInputs(audit_artifact=audit),
+    )
+
+    assert preparation.store.root.parent == (tmp_path / "artifacts" / "iclr27-r2").resolve()
+    assert preparation.store.run_id.startswith("r2-fit-imputers-")
+    protocol = json.loads(
+        (preparation.store.root / "experiment_protocol.json").read_text(encoding="utf-8")
+    )
+    assert protocol["protocol"]["held_out_forecaster_id"] == "sundial"
+    assert (
+        protocol["protocol"]["held_out_forecaster_revision"]
+        == "3212e42564493f520593e5414af4367fc4b49226"
+    )
+    assert protocol["execution_binding"]["feature_policy"] == "deployment_available"
+    repository = json.loads(
+        (preparation.store.root / "repository_state.json").read_text(encoding="utf-8")
+    )
+    assert {
+        "commit",
+        "dirty",
+        "status_entry_count",
+        "status_sha256",
+        "tracked_diff_sha256",
+        "tracked_diff_size_bytes",
+        "untracked_reproducibility_files",
+        "error",
+    }.issubset(repository)
+    assert repository["commit"] is not None or repository["error"] is not None
+    if repository["error"] is None:
+        assert len(repository["status_sha256"]) == 64
+        assert len(repository["tracked_diff_sha256"]) == 64
+        assert repository["tracked_diff_size_bytes"] >= 0
+    seeds = json.loads((preparation.store.root / "seeds.json").read_text(encoding="utf-8"))
+    assert seeds["root_seed"] == 123
+    assert seeds["active_router_seed"] == 4101
+    assert seeds["active_mask_partition"] == "train"
+    assert seeds["mask_seed_partitions"]["confirmation"] == [3101, 3102, 3103]
+    assert preparation.manifest["experiment_protocol"]["protocol"]["protocol_id"] == (
+        "iclr27-r2-test-v1"
+    )
+
+
+def test_r2_protocol_rejects_run_id_without_revision_prefix(tmp_path):
+    config_path = _write_r2_config(tmp_path)
+    config = load_config(config_path)
+    audit = _accepted_audit(tmp_path / "audit.json")
+
+    with pytest.raises(ValueError, match="must start with 'r2-'"):
+        prepare_stage(
+            config,
+            config_path,
+            "fit-imputers",
+            StageInputs(audit_artifact=audit),
+            run_id="legacy-name",
+        )
+    assert not (tmp_path / "artifacts" / "iclr27-r2" / "legacy-name").exists()
+
+
+def test_r2_protocol_rejects_episode_cap_below_mask_cell_count(tmp_path):
+    config_path = _write_r2_config(tmp_path)
+    payload = config_path.read_text(encoding="utf-8").replace(
+        "  seeds: [1101, 1102, 1103]",
+        "  seeds: [1101, 1102, 1103]\n  max_train_episodes_per_dataset: 10",
+    )
+    config_path.write_text(payload, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="mechanism-rate-seed cell"):
+        load_config(config_path)
+
+
+def test_r2_project_validation_rejects_target_protocol_mismatch(tmp_path):
+    config_path = _write_r2_config(tmp_path)
+    payload = config_path.read_text(encoding="utf-8").replace(
+        "target_protocol: full_candidate_forecast_loss_v2",
+        "target_protocol: single_block_counterfactual_forecast_loss_v1",
+    )
+    config_path.write_text(payload, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="does not match router ranker_target"):
+        validate_project_configuration(load_config(config_path))
+
+
+def test_r2_project_validation_rejects_unknown_family_filter(tmp_path):
+    config_path = _write_r2_config(tmp_path)
+    payload = config_path.read_text(encoding="utf-8").replace(
+        "exclude_family_ids: [ett]",
+        "exclude_family_ids: [unknown_family]",
+    )
+    config_path.write_text(payload, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unknown family IDs"):
+        validate_project_configuration(load_config(config_path))
+
+
+def test_r2_held_out_forecaster_revision_is_bound_to_artifact_path(tmp_path):
+    config = load_config(_write_r2_config(tmp_path))
+    assert config.protocol is not None
+    revision = config.protocol.held_out_forecaster_revision
+    assert revision is not None
+    expected = tmp_path / "models" / revision / "checkpoint"
+    expected.mkdir(parents=True)
+
+    validate_forecaster_revision_binding(config, "sundial", expected)
+    validate_forecaster_revision_binding(config, "chronos2", tmp_path / "anywhere")
+
+    wrong = tmp_path / "models" / "different-revision"
+    wrong.mkdir(parents=True)
+    with pytest.raises(ValueError, match="declared revision"):
+        validate_forecaster_revision_binding(config, "sundial", wrong)
+
+
 def test_rejected_audit_blocks_stage_without_running(tmp_path, capsys):
     config = _write_config(tmp_path)
     audit = tmp_path / "audit.json"
@@ -256,6 +457,50 @@ def test_each_later_stage_reports_its_required_artifacts(
     assert manifest["stage"] == stage
     assert manifest["status"] == "blocked"
     assert manifest["execution_started"] is False
+
+
+def test_reconstruction_control_requires_its_second_label_artifact(tmp_path: Path) -> None:
+    config_path = _write_config(tmp_path)
+    router_path = config_path.parent / "router.yaml"
+    router_payload = router_path.read_text(encoding="utf-8")
+    router_payload += (
+        "\nranker_target: imputation_loss\n"
+        "selection_granularity: sequence\n"
+        "routing_structure: independent\n"
+    )
+    router_path.write_text(router_payload, encoding="utf-8")
+    labels = tmp_path / "forecast-labels.jsonl"
+    labels.write_text("{}\n", encoding="utf-8")
+    config = load_config(config_path)
+
+    with pytest.raises(StagePreparationError, match="reconstruction-labels-artifact"):
+        prepare_stage(
+            config,
+            config_path,
+            "train-router",
+            StageInputs(labels_artifact=labels),
+            run_id="reconstruction-input-missing",
+        )
+
+    reconstruction = tmp_path / "reconstruction-labels.jsonl"
+    reconstruction.write_text("{}\n", encoding="utf-8")
+    preparation = prepare_stage(
+        config,
+        config_path,
+        "train-router",
+        StageInputs(
+            labels_artifact=labels,
+            reconstruction_labels_artifact=reconstruction,
+        ),
+        run_id="reconstruction-input-present",
+    )
+    dependency = next(
+        check
+        for check in preparation.manifest["checks"]
+        if check["name"] == "reconstruction_labels"
+    )
+    assert dependency["valid"] is True
+    assert dependency["required"] is True
 
 
 def test_artifact_store_rejects_traversal_and_overwrite(tmp_path):

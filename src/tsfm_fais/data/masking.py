@@ -1,4 +1,4 @@
-"""Deterministic sequence-level missingness for complete multivariate series."""
+"""Deterministic sequence-level missingness for multivariate series."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import numpy as np
 from tsfm_fais.contracts import MissingBlock
 
 MissingMechanism = Literal[
+    "native",
     "random_point",
     "independent_block",
     "synchronous_block",
@@ -30,7 +31,10 @@ class MaskingSpec:
     block_lengths: tuple[int, ...] = (6, 12, 24, 48)
 
     def __post_init__(self) -> None:
-        if not 0 < self.missing_rate <= 0.5:
+        if self.mechanism == "native":
+            if self.missing_rate != 0.0:
+                raise ValueError("native masking requires missing_rate=0")
+        elif not 0 < self.missing_rate <= 0.5:
             raise ValueError("missing_rate must be in (0, 0.5]")
         if not self.block_lengths or any(length < 1 for length in self.block_lengths):
             raise ValueError("block_lengths must contain positive integers")
@@ -40,7 +44,7 @@ class MaskingSpec:
 
 @dataclass(frozen=True)
 class MaskedSeries:
-    """A reusable missingness realization over one complete ``[T,D]`` item."""
+    """A reusable missingness realization over one ``[T,D]`` item."""
 
     values: np.ndarray
     observed_mask: np.ndarray
@@ -48,6 +52,7 @@ class MaskedSeries:
     spec: MaskingSpec
     seed: int
     realization_id: str
+    base_observed_mask: np.ndarray | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -59,17 +64,162 @@ class MaskedSeries:
             raise ValueError("MaskedSeries cannot be empty")
         if np.any(~np.isfinite(values[observed])):
             raise ValueError("observed values must be finite")
+        base_observed = (
+            np.ones_like(observed, dtype=bool)
+            if self.base_observed_mask is None
+            else np.asarray(self.base_observed_mask, dtype=bool)
+        )
+        if base_observed.shape != observed.shape:
+            raise ValueError("base_observed_mask must match MaskedSeries values")
+        if np.any(observed & ~base_observed):
+            raise ValueError("final observations must be a subset of the base observations")
         normalized = values.copy()
         normalized[~observed] = np.nan
         if not (~observed).any():
             raise ValueError("MaskedSeries must contain at least one missing value")
         object.__setattr__(self, "values", normalized)
         object.__setattr__(self, "observed_mask", observed)
+        object.__setattr__(self, "base_observed_mask", base_observed)
 
 
 def stable_seed(*parts: object) -> int:
     text = "\x1f".join(map(str, parts)).encode("utf-8")
     return int.from_bytes(hashlib.sha256(text).digest()[:8], "little") % (2**32)
+
+
+def _fenwick_tree(weights: np.ndarray) -> np.ndarray:
+    tree = np.zeros(len(weights) + 1, dtype=np.int64)
+    tree[1:] = np.asarray(weights, dtype=np.int64)
+    for index in range(1, len(tree)):
+        parent = index + (index & -index)
+        if parent < len(tree):
+            tree[parent] += tree[index]
+    return tree
+
+
+def _fenwick_add(tree: np.ndarray, position: int, delta: int) -> None:
+    index = position + 1
+    while index < len(tree):
+        tree[index] += delta
+        index += index & -index
+
+
+def _fenwick_position(tree: np.ndarray, rank: int) -> int:
+    """Return the zero-based position of a zero-based active rank."""
+
+    index = 0
+    bit = 1 << ((len(tree) - 1).bit_length() - 1)
+    while bit:
+        candidate = index + bit
+        if candidate < len(tree) and int(tree[candidate]) <= rank:
+            index = candidate
+            rank -= int(tree[candidate])
+        bit >>= 1
+    return index
+
+
+def _hide_uniform_visible_cells(
+    observed: np.ndarray,
+    visible_counts: np.ndarray,
+    prefix_end: int,
+    count: int,
+    rng: np.random.Generator,
+) -> None:
+    """Sample the legacy row-major eligible set without rebuilding it per draw."""
+
+    dimensions = observed.shape[1]
+    prefix = observed[:prefix_end]
+    initially_eligible = prefix & (visible_counts > 2)[None, :]
+    tree = _fenwick_tree(initially_eligible.reshape(-1))
+    eligible_count = int(initially_eligible.sum())
+    for _ in range(count):
+        if eligible_count == 0:
+            raise ValueError("base missing rate leaves a variate without sufficient observations")
+        rank = int(rng.integers(0, eligible_count))
+        position = _fenwick_position(tree, rank)
+        time_index, channel = divmod(position, dimensions)
+        observed[time_index, channel] = False
+        _fenwick_add(tree, position, -1)
+        eligible_count -= 1
+        visible_counts[channel] -= 1
+        if visible_counts[channel] == 2:
+            for remaining_time in np.flatnonzero(observed[:prefix_end, channel]):
+                remaining_position = int(remaining_time) * dimensions + channel
+                _fenwick_add(tree, remaining_position, -1)
+                eligible_count -= 1
+
+
+def no_complete_window_base_mask(
+    values: np.ndarray,
+    prefix_end: int,
+    window_length: int,
+    missing_rate: float,
+    seed: int,
+    *,
+    source_observed_mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Hide only visible prefix cells while ensuring every training window is incomplete."""
+
+    array = np.asarray(values, dtype=float)
+    if array.ndim != 2:
+        raise ValueError("values must have shape [T,D]")
+    if not 0 < missing_rate <= 0.5:
+        raise ValueError("base missing_rate must be in (0, 0.5]")
+    if window_length < 2 or not window_length <= prefix_end <= array.shape[0]:
+        raise ValueError("invalid prefix_end or window_length for the persistent base mask")
+    source = (
+        np.isfinite(array)
+        if source_observed_mask is None
+        else np.asarray(source_observed_mask, dtype=bool)
+    )
+    if source.shape != array.shape or np.any(source & ~np.isfinite(array)):
+        raise ValueError("source_observed_mask must identify finite source values")
+    observed = source.copy()
+    visible_counts = np.sum(observed[:prefix_end], axis=0).astype(int)
+    if np.any(visible_counts < 2):
+        raise ValueError("each variate needs at least two visible prefix values")
+
+    rng = np.random.default_rng(int(seed))
+    additions = 0
+    for start in range(prefix_end - window_length + 1):
+        stop = start + window_length
+        if np.any(~observed[start:stop]):
+            continue
+        candidates = np.argwhere(observed[start:stop])
+        eligible = [
+            (start + int(time_index), int(channel))
+            for time_index, channel in candidates
+            if visible_counts[int(channel)] > 2
+        ]
+        if not eligible:
+            raise ValueError("cannot make every training window incomplete safely")
+        latest_time = max(time_index for time_index, _ in eligible)
+        latest = [
+            (time_index, channel) for time_index, channel in eligible if time_index == latest_time
+        ]
+        time_index, channel = latest[int(rng.integers(0, len(latest)))]
+        observed[time_index, channel] = False
+        visible_counts[channel] -= 1
+        additions += 1
+
+    source_visible = int(source[:prefix_end].sum())
+    target_additions = max(additions, int(round(source_visible * missing_rate)))
+    _hide_uniform_visible_cells(
+        observed,
+        visible_counts,
+        prefix_end,
+        target_additions - additions,
+        rng,
+    )
+
+    if any(
+        np.all(observed[start : start + window_length])
+        for start in range(prefix_end - window_length + 1)
+    ):
+        raise RuntimeError("persistent base mask left a complete training window")
+    if not np.array_equal(observed[prefix_end:], source[prefix_end:]):
+        raise RuntimeError("persistent base mask changed values outside the fit prefix")
+    return observed
 
 
 def extract_missing_blocks(
@@ -169,6 +319,34 @@ def _place_synchronous_blocks(
     target: int,
     lengths: Sequence[int],
 ) -> None:
+    time_length, _ = mask.shape
+    attempts = 0
+    missing_count = int((~mask).sum())
+    while missing_count < target and attempts < max(500, target * 10):
+        attempts += 1
+        remaining = target - missing_count
+        width = _draw_block_length(rng, lengths, time_length, max(1, remaining))
+        start = int(rng.integers(0, time_length - width + 1))
+        for time_index in range(start, start + width):
+            if missing_count >= target:
+                break
+            visible = np.flatnonzero(mask[time_index])
+            if not len(visible):
+                continue
+            take = min(target - missing_count, len(visible))
+            mask[time_index, visible[:take]] = False
+            missing_count += take
+    _hide_random(mask, rng, target - missing_count)
+
+
+def _place_complete_synchronous_blocks(
+    mask: np.ndarray,
+    rng: np.random.Generator,
+    target: int,
+    lengths: Sequence[int],
+) -> None:
+    """Preserve the established complete-series synchronous-mask realization."""
+
     time_length, dimensions = mask.shape
     synchronous_times = target // dimensions
     time_mask = np.ones(time_length, dtype=bool)
@@ -305,48 +483,84 @@ def _value_scores(values: np.ndarray, calibration: np.ndarray) -> np.ndarray:
     return np.abs(values - center[None, :]) / scale[None, :]
 
 
+def _complete_visible(values: np.ndarray, name: str) -> np.ndarray:
+    array = np.asarray(values, dtype=float)
+    if array.ndim != 2 or array.shape[0] < 2:
+        raise ValueError(f"{name} must have shape [T,D] with at least two rows")
+    medians = np.nanmedian(array, axis=0)
+    if not np.isfinite(medians).all():
+        raise ValueError(f"{name} has a variate without visible values")
+    return np.where(np.isfinite(array), array, medians[None, :])
+
+
 def mask_time_series(
     values: np.ndarray,
     spec: MaskingSpec,
     seed: int,
     *,
     calibration_values: np.ndarray | None = None,
+    base_observed_mask: np.ndarray | None = None,
 ) -> MaskedSeries:
     """Generate one deterministic mask before any forecasting window is cut."""
 
     array = np.asarray(values, dtype=float)
     if array.ndim != 2:
         raise ValueError("values must have shape [T,D]")
-    if array.size < 2 or not np.isfinite(array).all():
-        raise ValueError("sequence-level masking requires complete finite values")
-    calibration = array if calibration_values is None else np.asarray(calibration_values, dtype=float)
-    if (
-        calibration.ndim != 2
-        or calibration.shape[1] != array.shape[1]
-        or calibration.shape[0] < 2
-        or not np.isfinite(calibration).all()
-    ):
-        raise ValueError("calibration_values must be complete [C,D] data")
+    if array.size < 2:
+        raise ValueError("sequence-level masking requires at least two values")
+    base_observed = (
+        np.isfinite(array)
+        if base_observed_mask is None
+        else np.asarray(base_observed_mask, dtype=bool)
+    )
+    if base_observed.shape != array.shape or np.any(base_observed & ~np.isfinite(array)):
+        raise ValueError("base_observed_mask must identify finite source values")
+    if not base_observed.any() or np.any(np.sum(base_observed, axis=0) < 2):
+        raise ValueError("every variate needs at least two base-observed values")
+    raw_calibration = (
+        np.where(base_observed, array, np.nan)
+        if calibration_values is None
+        else np.asarray(calibration_values, dtype=float)
+    )
+    if raw_calibration.ndim != 2 or raw_calibration.shape[1] != array.shape[1]:
+        raise ValueError("calibration_values must align with the sequence variates")
+    calibration = _complete_visible(raw_calibration, "calibration_values")
+    scoring_values = _complete_visible(
+        np.where(base_observed, array, np.nan),
+        "values",
+    )
 
     rng = np.random.default_rng(int(seed))
-    observed = np.ones(array.shape, dtype=bool)
-    target = _target_count(array.size, spec.missing_rate)
+    observed = base_observed.copy()
+    base_missing_count = int((~base_observed).sum())
+    additional_target = (
+        0
+        if spec.mechanism == "native"
+        else _target_count(int(base_observed.sum()), spec.missing_rate)
+    )
+    if spec.mechanism == "synchronous_block" and base_missing_count == 0:
+        dimensions = array.shape[1]
+        additional_target = max(
+            dimensions,
+            min(
+                int(base_observed.sum()) - dimensions,
+                int(round(additional_target / dimensions)) * dimensions,
+            ),
+        )
+    target = base_missing_count + additional_target
     lengths = tuple(sorted(min(array.shape[0], length) for length in spec.block_lengths))
 
-    if spec.mechanism == "random_point":
-        _hide_random(observed, rng, target)
+    if spec.mechanism == "native":
+        pass
+    elif spec.mechanism == "random_point":
+        _hide_random(observed, rng, additional_target)
     elif spec.mechanism == "independent_block":
         _place_independent_blocks(observed, rng, target, lengths)
     elif spec.mechanism == "synchronous_block":
-        dimensions = array.shape[1]
-        target = max(
-            dimensions,
-            min(
-                array.size - dimensions,
-                int(round(target / dimensions)) * dimensions,
-            ),
-        )
-        _place_synchronous_blocks(observed, rng, target, lengths)
+        if base_missing_count:
+            _place_synchronous_blocks(observed, rng, target, lengths)
+        else:
+            _place_complete_synchronous_blocks(observed, rng, target, lengths)
     elif spec.mechanism == "staggered_correlated":
         channels = _strongly_correlated_channels(
             calibration,
@@ -356,34 +570,48 @@ def mask_time_series(
     elif spec.mechanism == "value_dependent":
         _place_value_dependent_blocks(
             observed,
-            _value_scores(array, calibration),
+            _value_scores(scoring_values, calibration),
             target,
             lengths,
         )
         _hide_random(observed, rng, target - int((~observed).sum()))
     elif spec.mechanism == "mixed_outage":
-        block_target = int(round(0.7 * target))
+        block_target = base_missing_count + int(round(0.7 * additional_target))
         _place_independent_blocks(observed, rng, block_target, lengths)
         _hide_random(observed, rng, target - int((~observed).sum()))
     else:  # pragma: no cover - protected by the typed configuration
         raise ValueError(f"unsupported mechanism: {spec.mechanism}")
 
     missing_count = int((~observed).sum())
-    if missing_count != target:
+    additional_missing_count = missing_count - base_missing_count
+    if additional_missing_count != additional_target:
         raise RuntimeError(
-            f"{spec.mechanism} placed {missing_count} cells; expected {target}"
+            f"{spec.mechanism} placed {additional_missing_count} additional cells; "
+            f"expected {additional_target}"
         )
     masked = array.copy()
     masked[~observed] = np.nan
     digest = hashlib.sha256()
     digest.update(np.ascontiguousarray(observed, dtype=np.uint8).tobytes())
+    if base_missing_count:
+        digest.update(np.ascontiguousarray(base_observed, dtype=np.uint8).tobytes())
     digest.update(str(int(seed)).encode("ascii"))
     realization_id = digest.hexdigest()[:20]
     metadata = {
-        "protocol": "sequence_mask_v2",
+        "protocol": (
+            "native_observation_mask_v1"
+            if spec.mechanism == "native"
+            else "base_plus_sequence_mask_v1"
+            if base_missing_count
+            else "sequence_mask_v2"
+        ),
         "target_missing_rate": float(spec.missing_rate),
         "realized_missing_rate": missing_count / float(array.size),
         "missing_count": missing_count,
+        "base_missing_count": base_missing_count,
+        "base_missing_rate": base_missing_count / float(array.size),
+        "additional_missing_count": additional_missing_count,
+        "additional_missing_rate_visible": (additional_missing_count / float(base_observed.sum())),
         "total_count": int(array.size),
         "block_lengths": list(spec.block_lengths),
     }
@@ -394,5 +622,6 @@ def mask_time_series(
         spec=spec,
         seed=int(seed),
         realization_id=realization_id,
+        base_observed_mask=base_observed,
         metadata=metadata,
     )

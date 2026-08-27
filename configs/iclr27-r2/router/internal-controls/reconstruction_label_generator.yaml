@@ -1,0 +1,25 @@
+schema_version: 1
+selector_methods: [random_valid_block]
+selector_params:
+  random_valid_block: {}
+shortlist_size: 20
+forced_candidates: [locf, linear_interp]
+pseudo_blocks: 8
+beam_width: 32
+beta: 0.0
+cost_weight: 0.0
+beta_grid: [0.0]
+cost_weight_grid: [0.0]
+prior_model: lightgbm_lambdarank
+unary_model: lightgbm_lambdarank
+pairwise_model: lightgbm_huber
+ranker_target: imputation_loss
+selection_granularity: sequence
+routing_structure: independent
+candidate_switch_penalty: 0.0
+forecast_consensus:
+  mode: disabled
+  candidates: []
+fallback:
+  internal: [linear_interp, locf, train_median]
+  tail: [locf, train_median]

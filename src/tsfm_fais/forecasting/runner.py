@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import perf_counter
 from typing import Any
 
 import numpy as np
@@ -20,13 +21,69 @@ class ForecastRunner:
     ):
         self.registry = registry
         self.adapters = adapters or {}
+        self.call_count = 0
+        self.context_count = 0
+        self.underlying_series_count = 0
+        self.runtime_seconds = 0.0
+        self.peak_cuda_memory_allocated_bytes = 0
+        self.peak_cuda_memory_reserved_bytes = 0
 
     def _adapter(self, model_id: str) -> Any:
         if model_id not in self.adapters:
             self.adapters[model_id] = self.registry.build(model_id)
         return self.adapters[model_id]
 
+    @staticmethod
+    def _cuda_profiler() -> Any | None:
+        try:
+            import torch
+        except ImportError:
+            return None
+        if not torch.cuda.is_available():
+            return None
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+        return torch
+
+    def resource_metrics(self) -> dict[str, int | float]:
+        return {
+            "forecast_call_count": self.call_count,
+            "forecast_context_count": self.context_count,
+            "forecast_underlying_series_count": self.underlying_series_count,
+            "forecast_runtime_seconds": self.runtime_seconds,
+            "peak_cuda_memory_allocated_bytes": self.peak_cuda_memory_allocated_bytes,
+            "peak_cuda_memory_reserved_bytes": self.peak_cuda_memory_reserved_bytes,
+        }
+
     def predict(self, contexts: np.ndarray, forecast_spec: ForecastSpec) -> ForecastResult:
+        values = np.asarray(contexts, dtype=float)
+        self.call_count += 1
+        if values.ndim == 3:
+            targets = forecast_spec.target_indices or tuple(range(values.shape[2]))
+            self.context_count += int(values.shape[0])
+            self.underlying_series_count += int(
+                values.shape[0]
+                if forecast_spec.mode == "joint_multivariate"
+                else values.shape[0] * len(targets)
+            )
+        started = perf_counter()
+        torch = self._cuda_profiler()
+        try:
+            return self._predict(values, forecast_spec)
+        finally:
+            self.runtime_seconds += perf_counter() - started
+            if torch is not None:
+                torch.cuda.synchronize()
+                self.peak_cuda_memory_allocated_bytes = max(
+                    self.peak_cuda_memory_allocated_bytes,
+                    int(torch.cuda.max_memory_allocated()),
+                )
+                self.peak_cuda_memory_reserved_bytes = max(
+                    self.peak_cuda_memory_reserved_bytes,
+                    int(torch.cuda.max_memory_reserved()),
+                )
+
+    def _predict(self, contexts: np.ndarray, forecast_spec: ForecastSpec) -> ForecastResult:
         values = np.asarray(contexts, dtype=float)
         if values.ndim != 3:
             raise ValueError("contexts must have shape [N,L,D]")
@@ -56,8 +113,12 @@ class ForecastRunner:
             point = np.asarray(native.point, dtype=float)
             if point.shape != (n, forecast_spec.horizon, dimensions):
                 raise ValueError(f"joint adapter returned unexpected point shape {point.shape}")
-            quantiles = None if native.quantiles is None else np.asarray(native.quantiles)[:, :, targets, :]
-            samples = None if native.samples is None else np.asarray(native.samples)[:, :, :, targets]
+            quantiles = (
+                None if native.quantiles is None else np.asarray(native.quantiles)[:, :, targets, :]
+            )
+            samples = (
+                None if native.samples is None else np.asarray(native.samples)[:, :, :, targets]
+            )
             return ForecastResult(
                 point=point[:, :, targets],
                 target_indices=tuple(targets),
@@ -103,11 +164,15 @@ class ForecastRunner:
         quantiles = None
         if native.quantiles is not None:
             q = np.asarray(native.quantiles)
-            quantiles = q.reshape(n, len(targets), forecast_spec.horizon, q.shape[-1]).transpose(0, 2, 1, 3)
+            quantiles = q.reshape(n, len(targets), forecast_spec.horizon, q.shape[-1]).transpose(
+                0, 2, 1, 3
+            )
         samples = None
         if native.samples is not None:
             s = np.asarray(native.samples)
-            samples = s.reshape(n, len(targets), s.shape[1], forecast_spec.horizon).transpose(0, 2, 3, 1)
+            samples = s.reshape(n, len(targets), s.shape[1], forecast_spec.horizon).transpose(
+                0, 2, 3, 1
+            )
         return ForecastResult(
             point=point,
             target_indices=tuple(targets),

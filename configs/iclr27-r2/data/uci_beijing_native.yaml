@@ -1,0 +1,18 @@
+schema_version: 1
+data_root: ../../../artifacts/iclr27-r2/_data/uci-beijing-native-v003
+datasets:
+  - dataset_id: uci_beijing_multisite
+    family_id: uci_beijing_air_quality
+    format: csv
+    path: beijing_multisite_native.csv
+    frequency: H
+    period: 24
+    domain: climate
+    timestamp_column: timestamp
+    item_id_column: station
+    value_columns: [PM2.5, PM10, SO2, NO2, CO, O3, TEMP, PRES, DEWP, RAIN, WSPM]
+    target_columns: [PM2.5, PM10]
+    expected_num_variates: 11
+    missingness: native
+    provenance: source_native_missing
+

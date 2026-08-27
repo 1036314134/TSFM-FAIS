@@ -566,21 +566,24 @@ def _historical_backtest_candidate(
     for candidate_offset, candidate_id in enumerate(candidate_ids):
         target_scores = []
         for target in range(len(target_indices)):
-            selected = validation_mask[:, target]
+            observed_target = validation_mask[:, target]
             target_scores.append(
                 float(
                     np.mean(
-                        np.abs(point[candidate_offset, selected, target] - truth[selected, target])
+                        np.abs(
+                            point[candidate_offset, observed_target, target]
+                            - truth[observed_target, target]
+                        )
                     )
                     / scale[target]
                 )
             )
         scores[candidate_id] = float(np.mean(target_scores))
-    selected = min(
+    selected_candidate = min(
         candidate_ids,
         key=lambda candidate_id: (scores[candidate_id], candidate_id),
     )
-    return selected, scores
+    return selected_candidate, scores
 
 
 @dataclass
@@ -1051,6 +1054,104 @@ def _pairwise_free_search(
     )
 
 
+def _independent_block_search(
+    blocks: tuple[Any, ...],
+    candidates: tuple[str, ...],
+    unary: Mapping[tuple[str, str], float],
+    costs: Mapping[str, float],
+    cost_weight: float,
+    invalid: set[tuple[str, str]],
+) -> RoutingResult:
+    """Choose the minimum-risk native candidate independently for each block."""
+
+    assignments: dict[str, str] = {}
+    risk_energy = 0.0
+    for block in blocks:
+        choices = [
+            (
+                float(unary.get((block.block_id, candidate_id), float("inf")))
+                + cost_weight * float(costs.get(candidate_id, 1.0)),
+                candidate_id,
+            )
+            for candidate_id in candidates
+            if (block.block_id, candidate_id) not in invalid
+        ]
+        choices = [choice for choice in choices if np.isfinite(choice[0])]
+        if not choices:
+            raise RuntimeError(f"no native candidate is available for block {block.block_id}")
+        _, candidate_id = min(choices)
+        assignments[block.block_id] = candidate_id
+        risk_energy += float(unary[(block.block_id, candidate_id)])
+    active = tuple(sorted(set(assignments.values())))
+    activated_cost = float(sum(float(costs.get(candidate, 1.0)) for candidate in active))
+    return RoutingResult(
+        assignments=assignments,
+        shortlist=candidates,
+        total_energy=float(risk_energy + cost_weight * activated_cost),
+        predicted_unary=dict(unary),
+        predicted_pairwise={},
+        activated_candidates=active,
+        candidate_costs={candidate: float(costs.get(candidate, 1.0)) for candidate in candidates},
+        activated_cost=activated_cost,
+        risk_energy=float(risk_energy),
+        cost_energy=float(cost_weight * activated_cost),
+        metadata={"solver": "independent_block_argmin"},
+    )
+
+
+def _sequence_candidate_search(
+    blocks: tuple[Any, ...],
+    candidates: tuple[str, ...],
+    unary: Mapping[tuple[str, str], float],
+    costs: Mapping[str, float],
+    cost_weight: float,
+    invalid: set[tuple[str, str]],
+) -> RoutingResult:
+    """Select one native candidate for the complete corrupted sequence."""
+
+    choices: list[tuple[float, str, float]] = []
+    for candidate_id in candidates:
+        values = [
+            float(unary.get((block.block_id, candidate_id), float("inf"))) for block in blocks
+        ]
+        if any(
+            (block.block_id, candidate_id) in invalid or not np.isfinite(value)
+            for block, value in zip(blocks, values, strict=True)
+        ):
+            continue
+        mean_risk = float(np.mean(values))
+        choices.append(
+            (
+                mean_risk + cost_weight * float(costs.get(candidate_id, 1.0)),
+                candidate_id,
+                mean_risk,
+            )
+        )
+    if not choices:
+        raise RuntimeError("no single native candidate covers every missing block")
+    _, candidate_id, mean_risk = min(choices)
+    assignments = {block.block_id: candidate_id for block in blocks}
+    activated_cost = float(costs.get(candidate_id, 1.0))
+    risk_energy = float(sum(float(unary[(block.block_id, candidate_id)]) for block in blocks))
+    return RoutingResult(
+        assignments=assignments,
+        shortlist=candidates,
+        total_energy=float(risk_energy + cost_weight * activated_cost),
+        predicted_unary=dict(unary),
+        predicted_pairwise={},
+        activated_candidates=(candidate_id,),
+        candidate_costs={candidate: float(costs.get(candidate, 1.0)) for candidate in candidates},
+        activated_cost=activated_cost,
+        risk_energy=risk_energy,
+        cost_energy=float(cost_weight * activated_cost),
+        metadata={
+            "solver": "sequence_candidate_mean",
+            "selected_candidate": candidate_id,
+            "mean_unary_risk": mean_risk,
+        },
+    )
+
+
 def _native_block_is_valid(result: CandidateResult, block) -> bool:
     native = result.native_valid_mask[block.batch_index, block.start : block.end, block.channel]
     return result.status not in {CandidateStatus.FAILED, CandidateStatus.UNAVAILABLE} and bool(
@@ -1116,9 +1217,7 @@ class BlockwiseFAIS:
         self.config = config
         self.router = router
         raw_requires_pseudo = (
-            False
-            if router is None
-            else router.metadata.get("requires_pseudo_candidates", True)
+            False if router is None else router.metadata.get("requires_pseudo_candidates", True)
         )
         if not isinstance(raw_requires_pseudo, (bool, np.bool_)):
             raise ValueError("requires_pseudo_candidates router metadata must be boolean")
@@ -1169,6 +1268,9 @@ class BlockwiseFAIS:
         configured_beam_width = 32
         configured_beta = 1.0
         configured_cost_weight = 0.0
+        configured_selection_granularity = "block"
+        configured_routing_structure = "structured"
+        configured_training_target = "full_candidate_loss"
         configured_forecast_consensus: Mapping[str, Any] = {
             "mode": "disabled",
             "candidates": (),
@@ -1218,12 +1320,27 @@ class BlockwiseFAIS:
             configured_beam_width = router_config.beam_width
             configured_beta = router_config.beta
             configured_cost_weight = router_config.cost_weight
+            configured_selection_granularity = router_config.selection_granularity
+            configured_routing_structure = router_config.routing_structure
+            configured_training_target = router_config.ranker_target
             runtime_forecast_consensus = router_config.forecast_consensus.model_dump()
             configured_forecast_consensus = runtime_forecast_consensus
         if router is not None:
             configured_beta = float(router.metadata.get("beta", configured_beta))
             configured_cost_weight = float(
                 router.metadata.get("cost_weight", configured_cost_weight)
+            )
+            configured_selection_granularity = str(
+                router.metadata.get(
+                    "selection_granularity",
+                    configured_selection_granularity,
+                )
+            )
+            configured_routing_structure = str(
+                router.metadata.get("routing_structure", configured_routing_structure)
+            )
+            configured_training_target = str(
+                router.metadata.get("ranker_target", configured_training_target)
             )
             artifact_forecast_consensus = router.metadata.get(
                 "forecast_consensus", configured_forecast_consensus
@@ -1275,6 +1392,18 @@ class BlockwiseFAIS:
         )
         self.beta = float(configured_beta if beta is None else beta)
         self.cost_weight = float(configured_cost_weight if cost_weight is None else cost_weight)
+        if configured_selection_granularity not in {"sequence", "block"}:
+            raise ValueError("router selection_granularity is invalid")
+        if configured_routing_structure not in {"independent", "structured"}:
+            raise ValueError("router routing_structure is invalid")
+        if (
+            configured_selection_granularity == "sequence"
+            and configured_routing_structure != "independent"
+        ):
+            raise ValueError("router granularity and structure are incompatible")
+        self.selection_granularity = configured_selection_granularity
+        self.routing_structure = configured_routing_structure
+        self.selector_training_target = configured_training_target
         if (
             not np.isfinite(self.beta)
             or not np.isfinite(self.cost_weight)
@@ -2317,6 +2446,7 @@ class BlockwiseFAIS:
         backtest_candidates: Mapping[str, CandidateResult] | None = None,
         backtest_cutoff: int | None = None,
     ) -> tuple[str | None, dict[str, Any]]:
+        proxy_score_map: Mapping[str, float] = proxy_scores or {}
         if self.forecast_consensus_mode == "disabled":
             return None, {"active": False, "reason": "disabled"}
         if (
@@ -2404,7 +2534,7 @@ class BlockwiseFAIS:
                 eligible_ids,
                 visible_blocks,
                 unary_risks or {},
-                proxy_scores or {},
+                proxy_score_map,
             )
             if not scores:
                 return None, {"active": False, "reason": "no_finite_candidate_signal"}
@@ -2430,6 +2560,9 @@ class BlockwiseFAIS:
                 "prior_weight": configured_prior_weight,
             }
         raw_scale = batch.metadata.get("mase_scale")
+        forecast_predictor = self.forecast_predictor
+        if forecast_predictor is None:
+            raise ValueError("forecast consensus requires --forecaster-artifact during imputation")
         if raw_scale is None:
             raise ValueError("forecast consensus requires a frozen MASE scale")
         full_scale = np.asarray(raw_scale, dtype=float).reshape(-1)
@@ -2477,7 +2610,7 @@ class BlockwiseFAIS:
                         for candidate_id in backtest_ids
                     },
                     forecast_spec,
-                    self.forecast_predictor,
+                    forecast_predictor,
                     scale,
                     batch.values,
                     batch.observed_mask,
@@ -2510,7 +2643,7 @@ class BlockwiseFAIS:
             scores, target_scores = _forecast_consensus_scores(
                 consensus_values,
                 consensus_spec,
-                self.forecast_predictor,
+                forecast_predictor,
                 scale,
             )
             selected, selection_scores = _regularized_forecast_consensus_candidate(
@@ -2608,7 +2741,7 @@ class BlockwiseFAIS:
                     )
                     target_weights = _proxy_weighted_consensus_weights(
                         target_weights,
-                        proxy_scores,
+                        proxy_score_map,
                         power=self.forecast_consensus_ensemble_proxy_weight_power,
                     )
                     ensemble_weights_by_target[target_key] = target_weights
@@ -2632,7 +2765,7 @@ class BlockwiseFAIS:
                 )
                 ensemble_weights = _proxy_weighted_consensus_weights(
                     ensemble_weights,
-                    proxy_scores,
+                    proxy_score_map,
                     power=self.forecast_consensus_ensemble_proxy_weight_power,
                 )
                 ensemble_candidates = list(ensemble_weights)
@@ -2652,10 +2785,10 @@ class BlockwiseFAIS:
                         self.forecast_consensus_ensemble_proxy_weight_power
                     ),
                     "ensemble_proxy_scores": {
-                        candidate_id: float(proxy_scores[candidate_id])
+                        candidate_id: float(proxy_score_map[candidate_id])
                         for candidate_id in ensemble_weights
-                        if candidate_id in proxy_scores
-                        and np.isfinite(float(proxy_scores[candidate_id]))
+                        if candidate_id in proxy_score_map
+                        and np.isfinite(float(proxy_score_map[candidate_id]))
                     },
                     "ensemble_top_k": self.forecast_consensus_ensemble_top_k,
                     "ensemble_selected_k": ensemble_selected_k,
@@ -3078,6 +3211,7 @@ class BlockwiseFAIS:
                 "pseudo",
             )
             proxy_mask = plan.pseudo_batch.observed_mask | ~batch.observed_mask
+            assert proxy_mask is not None
             proxy_error_scores = {
                 candidate_id: float(
                     proxy_features(
@@ -3107,10 +3241,13 @@ class BlockwiseFAIS:
                 plan.prior_unary,
                 seed=plan.seed,
             )
-        pairwise_skipped_for_scale = len(plan.blocks) > self.max_pairwise_blocks
+        structured_routing = self.routing_structure == "structured"
+        pairwise_skipped_for_scale = (
+            structured_routing and len(plan.blocks) > self.max_pairwise_blocks
+        )
         pairwise = (
             {}
-            if pairwise_skipped_for_scale
+            if not structured_routing or pairwise_skipped_for_scale
             else self._pairwise_risk(
                 batch,
                 plan.graph,
@@ -3230,7 +3367,10 @@ class BlockwiseFAIS:
                         )
 
         forecast_irrelevant_assignments: dict[str, str] = {}
-        if plan.forecast_spec.mode == "independent_univariate":
+        if (
+            self.selection_granularity == "block"
+            and plan.forecast_spec.mode == "independent_univariate"
+        ):
             for block in plan.blocks:
                 if _block_visible_to_forecaster(block, plan.forecast_spec):
                     continue
@@ -3274,11 +3414,31 @@ class BlockwiseFAIS:
         # successful candidate result.
         fallback_id = "__fallback__"
         solver_candidates = list(plan.shortlist)
-        no_native_candidate = {
-            block.block_id
-            for block in plan.blocks
-            if all((block.block_id, candidate_id) in invalid for candidate_id in plan.shortlist)
-        }
+        if self.selection_granularity == "sequence":
+            sequence_candidate_available = any(
+                all(
+                    (block.block_id, candidate_id) not in invalid
+                    and np.isfinite(
+                        float(
+                            unary.get(
+                                (block.block_id, candidate_id),
+                                float("inf"),
+                            )
+                        )
+                    )
+                    for block in plan.blocks
+                )
+                for candidate_id in plan.shortlist
+            )
+            no_native_candidate = (
+                set() if sequence_candidate_available else {block.block_id for block in plan.blocks}
+            )
+        else:
+            no_native_candidate = {
+                block.block_id
+                for block in plan.blocks
+                if all((block.block_id, candidate_id) in invalid for candidate_id in plan.shortlist)
+            }
         costs = dict(plan.costs)
         if no_native_candidate:
             solver_candidates.append(fallback_id)
@@ -3299,7 +3459,25 @@ class BlockwiseFAIS:
                 max_memory_bytes=plan.budget.max_memory_bytes,
                 allowed_devices=plan.budget.allowed_devices,
             )
-        if pairwise_skipped_for_scale:
+        if self.selection_granularity == "sequence":
+            routing = _sequence_candidate_search(
+                plan.blocks,
+                tuple(solver_candidates),
+                unary,
+                costs,
+                self.cost_weight,
+                invalid,
+            )
+        elif self.routing_structure == "independent":
+            routing = _independent_block_search(
+                plan.blocks,
+                tuple(solver_candidates),
+                unary,
+                costs,
+                self.cost_weight,
+                invalid,
+            )
+        elif pairwise_skipped_for_scale:
             routing = _pairwise_free_search(
                 plan.blocks,
                 tuple(solver_candidates),
@@ -3540,11 +3718,12 @@ class BlockwiseFAIS:
                 proxy_risk_margin = (
                     None if primary_proxy_risk is None else float(primary_proxy_risk) - proxy_risk
                 )
-                proxy_risk_relative_margin = (
-                    None
-                    if proxy_risk_margin is None
-                    else proxy_risk_margin / max(abs(float(primary_proxy_risk)), 1e-8)
-                )
+                if primary_proxy_risk is None or proxy_risk_margin is None:
+                    proxy_risk_relative_margin = None
+                else:
+                    proxy_risk_relative_margin = proxy_risk_margin / max(
+                        abs(float(primary_proxy_risk)), 1e-8
+                    )
                 proxy_gate_applied = bool(
                     proxy_risk_relative_margin is not None
                     and proxy_risk_relative_margin + 1e-12 >= proxy_blend_min_relative_margin
@@ -3675,6 +3854,13 @@ class BlockwiseFAIS:
         routing.metadata["fallback_records"] = fallback_records
         routing.metadata["correlation_source"] = plan.correlation_source
         routing.metadata["pairwise_skipped_for_scale"] = pairwise_skipped_for_scale
+        routing.metadata["selection_granularity"] = self.selection_granularity
+        routing.metadata["routing_structure"] = self.routing_structure
+        routing.metadata["selector_training_target"] = self.selector_training_target
+        routing.metadata["pairwise_model_called"] = bool(
+            structured_routing and not pairwise_skipped_for_scale
+        )
+        routing.metadata["block_graph_used_by_solver"] = structured_routing
         routing.metadata["block_graph_edges"] = len(plan.graph.edges)
         routing.metadata["forecast_irrelevant_assignments"] = dict(forecast_irrelevant_assignments)
         routing.metadata["forecast_irrelevant_block_count"] = len(forecast_irrelevant_assignments)

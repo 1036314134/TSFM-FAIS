@@ -15,7 +15,12 @@ from tsfm_fais.data.audit import audit_dataset
 from tsfm_fais.data.catalog import DatasetManifest, DatasetSpec, load_manifest
 from tsfm_fais.data.episodes import build_episode, fit_prefix_end, rolling_origins
 from tsfm_fais.data.loaders import load_arrow, load_csv
-from tsfm_fais.data.masking import MaskingSpec, mask_time_series, stable_seed
+from tsfm_fais.data.masking import (
+    MaskingSpec,
+    mask_time_series,
+    no_complete_window_base_mask,
+    stable_seed,
+)
 from tsfm_fais.data.splits import family_folds
 
 
@@ -121,9 +126,7 @@ def test_arrow_loader_preserves_item_boundaries_and_marks_implicit_time(tmp_path
 
 def _write_arrow_rows(path, rows):
     table = pa.Table.from_pylist(rows)
-    with pa.OSFile(str(path), "wb") as sink, pa.ipc.new_stream(
-        sink, table.schema
-    ) as writer:
+    with pa.OSFile(str(path), "wb") as sink, pa.ipc.new_stream(sink, table.schema) as writer:
         writer.write_table(table)
 
 
@@ -183,9 +186,7 @@ def test_arrow_loader_strips_safe_suffix_and_preserves_raw_names(tmp_path):
         (("x", "y", "z"), "has length 3, expected D=2"),
     ],
 )
-def test_arrow_name_normalization_rejects_unsafe_or_ambiguous_names(
-    tmp_path, names, error
-):
+def test_arrow_name_normalization_rejects_unsafe_or_ambiguous_names(tmp_path, names, error):
     path = tmp_path / "invalid_names.arrow"
     _write_arrow_rows(
         path,
@@ -334,11 +335,131 @@ def test_synchronous_blocks_keep_channel_masks_aligned():
     assert np.array_equal(mask[:, 1], mask[:, 2])
 
 
+def test_complete_synchronous_mask_preserves_established_realization_identity():
+    values = _item().values
+    implicit = mask_time_series(values, MaskingSpec("synchronous_block", 0.2), 17)
+    explicit = mask_time_series(
+        values,
+        MaskingSpec("synchronous_block", 0.2),
+        17,
+        base_observed_mask=np.ones_like(values, dtype=bool),
+    )
+
+    assert implicit.realization_id == "410899768d79f483535f"
+    assert explicit.realization_id == implicit.realization_id
+    assert np.array_equal(explicit.observed_mask, implicit.observed_mask)
+
+
 def test_sequence_mask_supports_the_new_point_four_rate():
     values = _item(length=96).values
     result = mask_time_series(values, MaskingSpec("mixed_outage", 0.4), 3)
     assert int((~result.observed_mask).sum()) == round(values.size * 0.4)
     assert result.metadata["target_missing_rate"] == 0.4
+
+
+def test_persistent_base_mask_removes_every_complete_prefix_window():
+    values = _item(length=48, dimensions=3).values
+    first = no_complete_window_base_mask(values, 32, 8, 0.1, 19)
+    second = no_complete_window_base_mask(values, 32, 8, 0.1, 19)
+
+    assert np.array_equal(first, second)
+    assert all(not np.all(first[start : start + 8]) for start in range(25))
+    assert np.array_equal(first[32:], np.ones_like(first[32:], dtype=bool))
+    assert np.all(first[:32].sum(axis=0) >= 2)
+
+
+@pytest.mark.parametrize(
+    ("shape", "prefix_end", "window_length", "missing_rate", "seed", "expected_missing"),
+    (
+        (
+            (48, 3),
+            32,
+            8,
+            0.1,
+            19,
+            ((1, 2), (7, 1), (8, 1), (10, 0), (11, 2), (14, 0), (15, 1), (23, 1), (27, 2), (31, 2)),
+        ),
+        (
+            (12, 2),
+            10,
+            4,
+            0.5,
+            5,
+            ((0, 0), (0, 1), (2, 0), (3, 1), (4, 1), (5, 0), (6, 0), (7, 1), (8, 0), (9, 1)),
+        ),
+    ),
+)
+def test_persistent_base_mask_preserves_legacy_row_major_sampling(
+    shape,
+    prefix_end,
+    window_length,
+    missing_rate,
+    seed,
+    expected_missing,
+):
+    values = np.arange(np.prod(shape), dtype=float).reshape(shape)
+
+    observed = no_complete_window_base_mask(
+        values,
+        prefix_end,
+        window_length,
+        missing_rate,
+        seed,
+    )
+
+    assert tuple(map(tuple, np.argwhere(~observed))) == expected_missing
+
+
+def test_native_mask_preserves_only_source_observations():
+    values = _item(length=24, dimensions=3).values.copy()
+    values[3:6, 1] = np.nan
+    values[10, 2] = np.nan
+    source_observed = np.isfinite(values)
+
+    result = mask_time_series(
+        values,
+        MaskingSpec("native", 0.0),
+        0,
+        base_observed_mask=source_observed,
+    )
+
+    assert result.metadata["protocol"] == "native_observation_mask_v1"
+    assert np.array_equal(result.observed_mask, source_observed)
+    assert np.array_equal(result.base_observed_mask, source_observed)
+    assert np.isnan(result.values[~source_observed]).all()
+
+
+def test_native_dataset_audit_records_missingness_without_hidden_truth(tmp_path):
+    item = _item(length=24, dimensions=3)
+    values = item.values.copy()
+    values[2:5, 0] = np.nan
+    native_item = TimeSeriesItem(
+        item.item_id,
+        values,
+        item.variate_names,
+        item.start,
+        item.freq,
+        item.timestamps,
+        item.metadata,
+    )
+    spec = DatasetSpec(
+        dataset_id="native",
+        family_id="native",
+        format="csv",
+        path=tmp_path / "native.csv",
+        frequency="H",
+        period=24,
+        expected_num_variates=3,
+        missingness="native",
+        provenance="source_native_missing",
+    )
+
+    report = audit_dataset(spec, [native_item])
+
+    assert report.accepted
+    assert report.native_missing_values == 3
+    assert report.observed_values == values.size - 3
+    assert report.minimum_variate_observed_fraction == pytest.approx(21 / 24)
 
 
 def test_experiment_config_rejects_missing_rates_above_evaluation_scope():
@@ -366,9 +487,7 @@ def test_staggered_correlated_targets_the_strongest_variable_pair():
     ("independent_block", "staggered_correlated", "value_dependent", "mixed_outage"),
 )
 @pytest.mark.parametrize("missing_rate", (0.1, 0.5))
-def test_high_dimensional_block_mechanisms_do_not_degenerate_to_points(
-    mechanism, missing_rate
-):
+def test_high_dimensional_block_mechanisms_do_not_degenerate_to_points(mechanism, missing_rate):
     time = np.arange(128, dtype=float)[:, None]
     channels = np.arange(32, dtype=float)[None, :]
     values = np.sin(time / 7.0 + channels / 11.0) + channels * 0.001
@@ -449,6 +568,11 @@ def test_config_is_strict_resolves_paths_and_rejects_illegal_targets(tmp_path):
     config = load_config(config_path)
     assert config.registries.data_manifest == (tmp_path / "data.yaml").resolve()
     assert config.runtime.output_root == (tmp_path / "outputs").resolve()
+    assert config.experiment.feature_policy == "legacy"
+    assert config.experiment.include_family_ids == "all"
+    assert config.experiment.exclude_family_ids == ()
+    assert config.experiment.router_seed is None
+    assert config.protocol is None
 
     payload["unexpected"] = True
     config_path.write_text(yaml.safe_dump(payload), encoding="utf-8")
@@ -485,13 +609,10 @@ def test_local_manifest_contains_exactly_32_multivariate_versions():
     assert len(manifest.datasets) == 32
     assert "weather" not in {spec.dataset_id for spec in manifest.datasets}
     assert {
-        spec.dataset_id
-        for spec in manifest.datasets
-        if spec.variate_name_normalization != "none"
+        spec.dataset_id for spec in manifest.datasets if spec.variate_name_normalization != "none"
     } == {"azure2019_D_5T", "azure2019_I_5T", "azure2019_U_5T"}
     assert all(
-        "ori" not in {part.lower() for part in spec.path.parts}
-        for spec in manifest.datasets
+        "ori" not in {part.lower() for part in spec.path.parts} for spec in manifest.datasets
     )
 
 

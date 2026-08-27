@@ -4,9 +4,14 @@ import hashlib
 import json
 from pathlib import Path
 
+import numpy as np
 import pytest
 
-from tsfm_fais.main_results import summarize_multi_forecaster
+from tsfm_fais.main_results import (
+    _discrete_upper_tail_mean,
+    _hierarchical_family_bootstrap_statistics,
+    summarize_multi_forecaster,
+)
 
 
 def _sha256(path: Path) -> str:
@@ -74,7 +79,9 @@ def _evaluation(root: Path, forecaster_id: str, family_id: str) -> Path:
                     "mechanism": mechanism,
                     "missing_rate": missing_rate,
                     "item_id": f"item-{episode_id}",
+                    "forecast_origin": 10 if episode_id == "episode-0" else 20,
                     "mask_protocol": "sequence_mask_v2",
+                    "mask_seed": 101 if episode_id == "episode-0" else 102,
                     "mask_realization_id": f"mask-{episode_id}",
                     "contains_missing": episode_id == "episode-0",
                     "method": method,
@@ -203,6 +210,15 @@ def test_multi_forecaster_summary_is_paired_grouped_and_reproducible(
     assert locf["mase_mean_delta_ci95_low"] == -1.0
     assert locf["mase_mean_delta_ci95_high"] == -1.0
     assert locf["mase_win_rate"] == 1.0
+    assert locf["mase_delta_median"] == -1.0
+    assert locf["mase_delta_p90"] == -1.0
+    assert locf["mase_delta_p95"] == -1.0
+    assert locf["mase_delta_cvar90"] == -1.0
+    assert locf["mase_delta_cvar95"] == -1.0
+    assert locf["mase_max_degradation"] == -1.0
+    assert locf["mase_worse_rate"] == 0.0
+    assert locf["mase_degradation_threshold"] is None
+    assert locf["mase_threshold_exceedance_rate"] is None
     assert locf["imputation_mae_pair_count"] == 4
     assert locf["imputation_mae_mean_delta"] == -1.0
     assert locf["imputation_mae_mean_delta_ci95_low"] == -1.0
@@ -252,6 +268,14 @@ def test_multi_forecaster_summary_is_paired_grouped_and_reproducible(
     assert primary_locf["mase_family_macro_delta"] == -1.0
     assert primary_locf["mase_family_macro_delta_ci95_low"] == -1.0
     assert primary_locf["mase_family_macro_delta_ci95_high"] == -1.0
+    assert payload["bootstrap"] == {
+        "confidence_level": 0.95,
+        "method": "five-level paired hierarchical percentile bootstrap",
+        "minimum_pairs": 2,
+        "replicates": 100,
+        "seed": 7,
+        "unit": "family/dataset/item/forecast_origin/mask_realization",
+    }
     report = Path(result["report_markdown"]).read_text(encoding="utf-8")
     assert "does not claim statistical significance" in report
     assert "Oracle is the valid single imputer selected by minimum MASE" in report
@@ -513,4 +537,136 @@ def test_multi_forecaster_summary_rejects_forecast_call_protocol_mismatch(
             evaluation_inputs=(first, second),
             output_dir=tmp_path / "summary",
             bootstrap_replicates=10,
+        )
+
+
+def test_five_level_bootstrap_keeps_origin_as_a_distinct_level() -> None:
+    values: dict[tuple[str, str, str], float] = {}
+    metadata: dict[tuple[str, str, str], dict[str, object]] = {}
+    for index in range(100):
+        key = ("forecast", "dataset", f"origin-a-{index}")
+        values[key] = 0.0
+        metadata[key] = {
+            "family_id": "family",
+            "dataset_id": "dataset",
+            "item_id": "item",
+            "forecast_origin": "origin-a",
+            "mask_realization_id": f"mask-{index}",
+        }
+    key = ("forecast", "dataset", "origin-b")
+    values[key] = 10.0
+    metadata[key] = {
+        "family_id": "family",
+        "dataset_id": "dataset",
+        "item_id": "item",
+        "forecast_origin": "origin-b",
+        "mask_realization_id": "mask-b",
+    }
+
+    statistics = _hierarchical_family_bootstrap_statistics(
+        values,
+        metadata,
+        replicates=500,
+        seed=19,
+    )
+    repeated = _hierarchical_family_bootstrap_statistics(
+        values,
+        metadata,
+        replicates=500,
+        seed=19,
+    )
+    collapsed_metadata = {
+        episode_key: {**entry, "forecast_origin": "one-origin"}
+        for episode_key, entry in metadata.items()
+    }
+    collapsed = _hierarchical_family_bootstrap_statistics(
+        values,
+        collapsed_metadata,
+        replicates=500,
+        seed=19,
+    )
+
+    assert np.array_equal(statistics, repeated)
+    assert np.max(statistics) == 10.0
+    assert np.max(collapsed) < 1.0
+
+
+def test_five_level_bootstrap_averages_duplicate_mask_leaf_observations() -> None:
+    values = {
+        ("forecast-a", "dataset", "episode-a"): 0.0,
+        ("forecast-b", "dataset", "episode-b"): 10.0,
+    }
+    leaf = {
+        "family_id": "family",
+        "dataset_id": "dataset",
+        "item_id": "item",
+        "forecast_origin": "origin",
+        "mask_realization_id": "mask",
+    }
+    metadata = {episode_key: dict(leaf) for episode_key in values}
+
+    statistics = _hierarchical_family_bootstrap_statistics(
+        values,
+        metadata,
+        replicates=10,
+        seed=3,
+    )
+
+    assert np.array_equal(statistics, np.full(10, 5.0))
+
+
+def test_discrete_cvar_and_threshold_exceedance_are_reported(tmp_path: Path) -> None:
+    source = _evaluation(tmp_path, "forecast-a", "family-a")
+    metrics_path = source / "episode_metrics.jsonl"
+    rows = [json.loads(line) for line in metrics_path.read_text(encoding="utf-8").splitlines()]
+    for row in rows:
+        if row["method"] == "b_fais":
+            row["mase"] = 3.0 if row["episode_id"] == "episode-0" else 1.0
+        if row["method"] == "locf":
+            row["mase"] = 1.0 if row["episode_id"] == "episode-0" else 2.0
+    metrics_path.write_text(
+        "".join(json.dumps(row) + "\n" for row in rows),
+        encoding="utf-8",
+    )
+    _write_completed_manifest(source)
+
+    result = summarize_multi_forecaster(
+        evaluation_inputs=(source,),
+        output_dir=tmp_path / "summary",
+        bootstrap_replicates=10,
+        bootstrap_seed=7,
+        mase_degradation_threshold=0.5,
+    )
+    payload = json.loads(Path(result["main_summary_json"]).read_text(encoding="utf-8"))
+    locf = next(
+        row
+        for row in payload["comparison_summary"]
+        if row["scope"] == "overall" and row["comparator"] == "locf"
+    )
+
+    assert locf["mase_delta_median"] == pytest.approx(0.5)
+    assert locf["mase_delta_p90"] == pytest.approx(1.7)
+    assert locf["mase_delta_p95"] == pytest.approx(1.85)
+    assert locf["mase_delta_cvar90"] == pytest.approx(2.0)
+    assert locf["mase_delta_cvar95"] == pytest.approx(2.0)
+    assert locf["mase_max_degradation"] == pytest.approx(2.0)
+    assert locf["mase_worse_rate"] == pytest.approx(0.5)
+    assert locf["mase_degradation_threshold"] == pytest.approx(0.5)
+    assert locf["mase_threshold_exceedance_rate"] == pytest.approx(0.5)
+    assert _discrete_upper_tail_mean(range(1, 21), 0.90) == pytest.approx(19.5)
+    assert _discrete_upper_tail_mean(range(1, 21), 0.95) == pytest.approx(20.0)
+
+
+@pytest.mark.parametrize("threshold", [-0.1, float("inf"), float("nan")])
+def test_multi_forecaster_summary_rejects_invalid_degradation_threshold(
+    tmp_path: Path,
+    threshold: float,
+) -> None:
+    source = _evaluation(tmp_path, "forecast-a", "family-a")
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        summarize_multi_forecaster(
+            evaluation_inputs=(source,),
+            output_dir=tmp_path / "summary",
+            bootstrap_replicates=10,
+            mase_degradation_threshold=threshold,
         )

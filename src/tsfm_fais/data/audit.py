@@ -34,6 +34,10 @@ class DatasetAudit:
     dimensions: tuple[int, ...]
     time_axis_verification: str
     content_sha256: str | None
+    observed_values: int = 0
+    native_missing_values: int = 0
+    minimum_variate_observed_fraction: float = 1.0
+    maximum_variate_observed_fraction: float = 1.0
     issues: list[AuditIssue] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -124,6 +128,9 @@ def audit_dataset(spec: DatasetSpec, items: Iterable[TimeSeriesItem]) -> Dataset
     dimensions: set[int] = set()
     lengths: list[int] = []
     total_values = 0
+    observed_values = 0
+    native_missing_values = 0
+    variate_observed_fractions: list[float] = []
     time_axis_modes: set[str] = set()
     seen_item_ids: set[str] = set()
     reference_names: tuple[str, ...] | None = None
@@ -132,6 +139,11 @@ def audit_dataset(spec: DatasetSpec, items: Iterable[TimeSeriesItem]) -> Dataset
         lengths.append(values.shape[0])
         dimensions.add(values.shape[1])
         total_values += values.size
+        finite = np.isfinite(values)
+        observed_values += int(finite.sum())
+        native_missing_values += int(np.isnan(values).sum())
+        if values.shape[0] > 0:
+            variate_observed_fractions.extend(np.mean(finite, axis=0, dtype=float).tolist())
         if item.item_id in seen_item_ids:
             issues.append(
                 AuditIssue("duplicate_item_id", "item identifiers are not unique", item.item_id)
@@ -165,8 +177,19 @@ def audit_dataset(spec: DatasetSpec, items: Iterable[TimeSeriesItem]) -> Dataset
                         item.item_id,
                     )
                 )
-        if np.isnan(values).any():
+        if spec.missingness == "complete" and np.isnan(values).any():
             issues.append(AuditIssue("nan", "source values contain NaN", item.item_id))
+        if spec.missingness == "native":
+            insufficient = np.flatnonzero(np.sum(finite, axis=0) < 2)
+            if insufficient.size:
+                issues.append(
+                    AuditIssue(
+                        "insufficient_observed",
+                        "native-missing variates require at least two observed values: "
+                        f"{insufficient.tolist()}",
+                        item.item_id,
+                    )
+                )
         if np.isinf(values).any():
             issues.append(AuditIssue("infinite", "source values contain infinity", item.item_id))
         for sentinel in spec.sentinel_values:
@@ -179,8 +202,14 @@ def audit_dataset(spec: DatasetSpec, items: Iterable[TimeSeriesItem]) -> Dataset
                         item.item_id,
                     )
                 )
-        finite = np.isfinite(values)
-        if values.shape[0] > 0 and finite.all() and np.any(np.ptp(values, axis=0) == 0):
+        constant = False
+        if values.shape[0] > 0:
+            for channel in range(values.shape[1]):
+                visible = values[finite[:, channel], channel]
+                if visible.size >= 2 and np.ptp(visible) == 0:
+                    constant = True
+                    break
+        if constant:
             issues.append(AuditIssue("constant", "one or more variates are constant", item.item_id))
         if pd.isna(item.start):
             issues.append(AuditIssue("invalid_start", "start timestamp is missing", item.item_id))
@@ -234,9 +263,11 @@ def audit_dataset(spec: DatasetSpec, items: Iterable[TimeSeriesItem]) -> Dataset
                 )
     if not materialized:
         issues.append(AuditIssue("empty", "dataset contains no items"))
-    if spec.expected_num_variates is not None and dimensions and dimensions != {
-        spec.expected_num_variates
-    }:
+    if (
+        spec.expected_num_variates is not None
+        and dimensions
+        and dimensions != {spec.expected_num_variates}
+    ):
         issues.append(
             AuditIssue(
                 "dimension",
@@ -257,5 +288,9 @@ def audit_dataset(spec: DatasetSpec, items: Iterable[TimeSeriesItem]) -> Dataset
             else ("none" if not time_axis_modes else "mixed")
         ),
         content_sha256=_hash_paths(spec.path),
+        observed_values=observed_values,
+        native_missing_values=native_missing_values,
+        minimum_variate_observed_fraction=min(variate_observed_fractions, default=1.0),
+        maximum_variate_observed_fraction=max(variate_observed_fractions, default=1.0),
         issues=issues,
     )

@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from tsfm_fais.config import load_config
+from tsfm_fais.config import AppConfig, load_config
 from tsfm_fais.contracts import BudgetSpec, ForecastSpec, TimeSeriesItem
 from tsfm_fais.data import (
     MaskingSpec,
@@ -58,8 +58,20 @@ def _json_default(value):
     raise TypeError(type(value).__name__)
 
 
+def _apply_config_overrides(config: AppConfig, args: argparse.Namespace) -> AppConfig:
+    router_seed = getattr(args, "router_seed", None)
+    if router_seed is None:
+        return config
+    normalized = int(router_seed)
+    if config.protocol is not None and normalized not in config.protocol.router_seed_roots:
+        raise ValueError(f"router seed {normalized} is absent from protocol.router_seed_roots")
+    payload = config.model_dump(mode="python")
+    payload["experiment"]["router_seed"] = normalized
+    return AppConfig.model_validate(payload)
+
+
 def _config_validate(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
+    config = _apply_config_overrides(load_config(args.config), args)
     validate_project_configuration(config)
     print(json.dumps(config.model_dump(mode="json"), indent=2, ensure_ascii=False))
     return 0
@@ -130,7 +142,7 @@ class _MockJoint:
 
 
 def _smoke(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
+    config = _apply_config_overrides(load_config(args.config), args)
     time = np.arange(48, dtype=float)
     values = np.stack(
         [
@@ -231,12 +243,14 @@ def _run_stage(args: argparse.Namespace) -> int:
         )
     if args.resume and not args.run_id:
         raise ValueError("--resume requires an explicit --run-id")
-    config = load_config(args.config)
+    config = _apply_config_overrides(load_config(args.config), args)
     validate_project_configuration(config)
     preparation_inputs = StageInputs(
         audit_artifact=_optional_path(args.audit_artifact),
         imputer_artifacts=_optional_path(args.imputer_artifacts),
         labels_artifact=_optional_path(args.labels_artifact),
+        reconstruction_labels_artifact=_optional_path(args.reconstruction_labels_artifact),
+        episode_plan_artifact=_optional_path(args.episode_plan_artifact),
         router_artifact=_optional_path(args.router_artifact),
         forecaster_artifact=_optional_path(args.forecaster_artifact),
         candidate_source_impute_artifact=_optional_path(args.candidate_source_impute_artifact),
@@ -250,6 +264,11 @@ def _run_stage(args: argparse.Namespace) -> int:
         run_id=args.run_id,
         resume=args.resume,
     )
+    if args.router_seed is not None:
+        preparation.manifest["config_overrides"] = {
+            "router_seed": int(args.router_seed),
+            "protocol": "validated_cli_router_seed_override_v1",
+        }
     if args.execute:
         from tsfm_fais.stage_execution import execute_prepared_stage
 
@@ -262,7 +281,7 @@ def _run_stage(args: argparse.Namespace) -> int:
 
 
 def _evaluate(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
+    config = _apply_config_overrides(load_config(args.config), args)
     validate_project_configuration(config)
     result = evaluate_imputations(
         config=config,
@@ -296,6 +315,7 @@ def _summarize_main(args: argparse.Namespace) -> int:
         bootstrap_replicates=args.bootstrap_replicates,
         bootstrap_seed=args.bootstrap_seed,
         primary_comparator_roles=args.primary_comparator_role,
+        mase_degradation_threshold=args.mase_degradation_threshold,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
@@ -319,6 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
     config_commands = config.add_subparsers(dest="config_command", required=True)
     validate = config_commands.add_parser("validate")
     validate.add_argument("--config", required=True)
+    validate.add_argument("--router-seed", type=int)
     validate.set_defaults(handler=_config_validate)
 
     data = commands.add_parser("data")
@@ -362,9 +383,28 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("fit-imputers", "labels", "train-router", "impute"),
     )
     run.add_argument("--run-id")
+    run.add_argument(
+        "--router-seed",
+        type=int,
+        help="validated override for one seed in protocol.router_seed_roots",
+    )
     run.add_argument("--audit-artifact")
     run.add_argument("--imputer-artifacts")
     run.add_argument("--labels-artifact")
+    run.add_argument(
+        "--reconstruction-labels-artifact",
+        help=(
+            "imputation-only teacher_labels.jsonl joined strictly when an internal "
+            "control uses reconstruction supervision"
+        ),
+    )
+    run.add_argument(
+        "--episode-plan-artifact",
+        help=(
+            "completed labels_progress.json whose deterministic training episode "
+            "identities are reused by a forecaster-independent labels run"
+        ),
+    )
     run.add_argument("--router-artifact")
     run.add_argument(
         "--candidate-source-impute-artifact",
@@ -405,6 +445,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     evaluate = commands.add_parser("evaluate")
     evaluate.add_argument("--config", required=True)
+    evaluate.add_argument(
+        "--router-seed",
+        type=int,
+        help="validated override matching the imputation router seed",
+    )
     evaluate.add_argument(
         "--impute-artifact",
         required=True,
@@ -479,6 +524,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--bootstrap-seed",
         type=int,
         default=DEFAULT_BOOTSTRAP_SEED,
+    )
+    summarize_main.add_argument(
+        "--mase-degradation-threshold",
+        type=float,
+        help=("ETT-frozen positive MASE-delta threshold used for the paired tail exceedance rate"),
     )
     summarize_main.add_argument(
         "--primary-comparator-role",

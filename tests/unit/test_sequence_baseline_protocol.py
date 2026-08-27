@@ -428,6 +428,31 @@ def test_neuralucb_online_reward_matches_sequence_label_asymape() -> None:
     assert np.isclose(recorder.observed[2], expected_reward)
 
 
+def test_neuralucb_skips_feedback_when_native_missing_truth_is_unknown() -> None:
+    recorder = _RewardRecorder()
+    router = RouterBundle(
+        prior=recorder,
+        unary=None,
+        pairwise=PairwiseRiskModel(),
+        feature_names=("signal",),
+        candidate_ids=("locf",),
+        metadata={"selector_method": "neuralucb"},
+    )
+    pipeline = WholeSeriesSelectorFAIS(router=router)
+    pipeline._pending_online_feedback = {
+        "prediction": np.asarray([[3.0], [3.0]]),
+        "missing_mask": np.asarray([[True], [True]]),
+        "features": np.asarray([0.5]),
+        "candidate_id": "locf",
+    }
+
+    reward = pipeline.observe_outcome(np.asarray([[np.nan], [np.nan]]))
+
+    assert reward is None
+    assert recorder.observed is None
+    assert pipeline._pending_online_feedback is None
+
+
 def test_whole_series_prepare_route_bypasses_block_routing(monkeypatch) -> None:
     clean = np.column_stack((np.arange(8, dtype=float), np.arange(20, 28, dtype=float)))
     observed = np.ones_like(clean, dtype=bool)
@@ -503,8 +528,18 @@ def test_sequence_router_training_records_imputation_protocol(tmp_path) -> None:
                     "block_id": "__sequence__",
                     "candidate_id": candidate_id,
                     "label_scope": "whole_series",
-                    "prior_features": {"signal": signal},
-                    "unary_features": {"signal": signal},
+                    "prior_features": {
+                        "signal": signal,
+                        "dataset_id::dataset": 1.0,
+                        "forecast_model::chronos2": 1.0,
+                        f"candidate_id::{candidate_id}": 1.0,
+                    },
+                    "unary_features": {
+                        "signal": signal,
+                        "dataset_id::dataset": 1.0,
+                        "forecast_model::chronos2": 1.0,
+                        f"candidate_id::{candidate_id}": 1.0,
+                    },
                     "imputation_loss": loss,
                     "imputation_mae": loss,
                     "imputation_rmse": loss,
@@ -517,7 +552,11 @@ def test_sequence_router_training_records_imputation_protocol(tmp_path) -> None:
         rows,
         [],
         tmp_path / "router",
-        {"split": "rolling_origin", "ranker_target": "imputation_loss"},
+        {
+            "split": "rolling_origin",
+            "ranker_target": "imputation_loss",
+            "feature_policy": "identity_free",
+        },
         selector_method="random_valid_block",
         seed=11,
     )
@@ -527,4 +566,12 @@ def test_sequence_router_training_records_imputation_protocol(tmp_path) -> None:
     assert bundle.metadata["selector_training_target"] == "imputation_loss"
     assert bundle.metadata["uses_missing_block_graph"] is False
     assert bundle.metadata["forecaster_independent_selection"] is True
+    assert bundle.metadata["feature_policy"] == "identity_free"
+    assert bundle.metadata["removed_feature_names"] == [
+        "dataset_id::dataset",
+        "forecast_model::chronos2",
+    ]
+    assert "dataset_id::dataset" not in bundle.feature_names
+    assert "forecast_model::chronos2" not in bundle.feature_names
+    assert "candidate_id::locf" in bundle.feature_names
     assert bundle.candidate_ids == ("linear_interp", "locf")

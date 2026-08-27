@@ -96,9 +96,7 @@ class RoutingFeatureExtractor:
     def _graph_features(graph: BlockGraph | None, block_id: str) -> tuple[float, float]:
         if graph is None:
             return 0.0, 0.0
-        incident = [
-            edge for edge in graph.edges if edge.left == block_id or edge.right == block_id
-        ]
+        incident = [edge for edge in graph.edges if edge.left == block_id or edge.right == block_id]
         return float(len(incident)), float(sum(edge.weight for edge in incident))
 
     @staticmethod
@@ -120,14 +118,20 @@ class RoutingFeatureExtractor:
         mean = float(np.mean(finite)) if finite.size else 0.0
         std = float(np.std(finite)) if finite.size else 0.0
         jumps: list[float] = []
-        if block.start > 0 and batch.observed_mask[block.batch_index, block.start - 1, block.channel]:
+        if (
+            block.start > 0
+            and batch.observed_mask[block.batch_index, block.start - 1, block.channel]
+        ):
             jumps.append(
                 abs(
                     float(filled[0])
                     - float(batch.values[block.batch_index, block.start - 1, block.channel])
                 )
             )
-        if block.end < batch.shape[1] and batch.observed_mask[block.batch_index, block.end, block.channel]:
+        if (
+            block.end < batch.shape[1]
+            and batch.observed_mask[block.batch_index, block.end, block.channel]
+        ):
             jumps.append(
                 abs(
                     float(filled[-1])
@@ -259,9 +263,9 @@ def proxy_pairwise_scores(
         scale = max(float(np.std(scale_values)), 1.0)
         for left_candidate in candidates:
             for right_candidate in candidates:
-                disagreement = abs(
-                    left_means[left_candidate] - right_means[right_candidate]
-                ) / scale
+                disagreement = (
+                    abs(left_means[left_candidate] - right_means[right_candidate]) / scale
+                )
                 scores[(edge.left, left_candidate, edge.right, right_candidate)] = float(
                     disagreement
                 )
@@ -304,13 +308,11 @@ def pair_features(
     right_valid = np.asarray(right_candidate.native_valid_mask, dtype=bool)[right_selector]
     overlap = max(
         0,
-        min(left_block.end, right_block.end)
-        - max(left_block.start, right_block.start),
+        min(left_block.end, right_block.end) - max(left_block.start, right_block.start),
     )
     gap = max(
         0,
-        max(left_block.start, right_block.start)
-        - min(left_block.end, right_block.end),
+        max(left_block.start, right_block.start) - min(left_block.end, right_block.end),
     )
     scale = max(
         float(np.std(np.concatenate((left_values, right_values)))),
@@ -333,8 +335,7 @@ def pair_features(
             0.5 * (float(np.mean(left_valid)) + float(np.mean(right_valid)))
         ),
         "pair_runtime_seconds": float(
-            max(0.0, left_candidate.runtime_seconds)
-            + max(0.0, right_candidate.runtime_seconds)
+            max(0.0, left_candidate.runtime_seconds) + max(0.0, right_candidate.runtime_seconds)
         ),
     }
     features[f"pair_left_candidate::{left_candidate.imputer_id}"] = 1.0
@@ -374,12 +375,14 @@ def block_features(
         "local_missing_rate": local_rate,
         "observed_mean": float(np.mean(finite)) if finite.size else 0.0,
         "observed_std": float(np.std(finite)) if finite.size else 0.0,
-        "boundary_gap": float(abs(right - left)) if np.isfinite(left) and np.isfinite(right) else 0.0,
+        "boundary_gap": float(abs(right - left))
+        if np.isfinite(left) and np.isfinite(right)
+        else 0.0,
         "period_ratio": block.length / max(1, period or length),
     }
     forecast_origin = batch.metadata.get("forecast_origin")
     try:
-        numeric_origin = float(forecast_origin)
+        numeric_origin = float(str(forecast_origin))
     except (TypeError, ValueError):
         numeric_origin = -1.0
     if np.isfinite(numeric_origin) and numeric_origin >= 0:
@@ -454,17 +457,9 @@ def proxy_features(
     global_error = predicted[hidden] - truth[hidden]
     with np.errstate(over="ignore", invalid="ignore"):
         proxy_mae = float(np.mean(np.abs(error))) if error.size else 0.0
-        proxy_rmse = (
-            float(np.sqrt(np.mean(np.square(error)))) if error.size else 0.0
-        )
-        global_mae = (
-            float(np.mean(np.abs(global_error))) if global_error.size else 0.0
-        )
-        global_rmse = (
-            float(np.sqrt(np.mean(np.square(global_error))))
-            if global_error.size
-            else 0.0
-        )
+        proxy_rmse = float(np.sqrt(np.mean(np.square(error)))) if error.size else 0.0
+        global_mae = float(np.mean(np.abs(global_error))) if global_error.size else 0.0
+        global_rmse = float(np.sqrt(np.mean(np.square(global_error)))) if global_error.size else 0.0
         proxy_bias = float(np.mean(error)) if error.size else 0.0
     result: dict[str, float] = {
         "proxy_mae": proxy_mae,
@@ -479,9 +474,7 @@ def proxy_features(
         "runtime_seconds": float(candidate.runtime_seconds),
         "peak_memory_mb": candidate.peak_memory_bytes / (1024**2),
         "native_coverage": (
-            float(np.mean(candidate.native_valid_mask[selected_hidden]))
-            if error.size
-            else 1.0
+            float(np.mean(candidate.native_valid_mask[selected_hidden])) if error.size else 1.0
         ),
     }
     if source is not None:
@@ -494,15 +487,11 @@ def proxy_features(
                 np.asarray(source).reshape(-1, candidate.values.shape[-1]),
                 rowvar=False,
             )
-            result["covariance_drift"] = float(
-                np.linalg.norm(completed_cov - source_cov)
-            )
+            result["covariance_drift"] = float(np.linalg.norm(completed_cov - source_cov))
     else:
         result["covariance_drift"] = 0.0
     if candidate.uncertainty is not None:
-        selected_uncertainty = np.asarray(candidate.uncertainty, dtype=float)[
-            selected_hidden
-        ]
+        selected_uncertainty = np.asarray(candidate.uncertainty, dtype=float)[selected_hidden]
         if error.size and selected_uncertainty.size:
             # A stochastic candidate may return a finite point estimate while its
             # sample variance overflows.  Preserve that evidence as a large risk

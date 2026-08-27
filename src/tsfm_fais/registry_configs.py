@@ -349,6 +349,8 @@ class RouterConfig(_StrictModel):
         "routing_target",
         "imputation_loss",
     ] = "full_candidate_loss"
+    selection_granularity: Literal["sequence", "block"] = "block"
+    routing_structure: Literal["independent", "structured"] = "structured"
     evidence_tuning_family: str | None = None
     evidence_blend: dict[str, EvidenceBlendWeights] = Field(default_factory=dict)
     candidate_prior_min_support: int = Field(default=4, ge=1)
@@ -379,6 +381,16 @@ class RouterConfig(_StrictModel):
                 "block_fais cannot be mixed with sequence-level selector baselines; "
                 "generate and train their label protocols separately"
             )
+        if "block_fais" in self.selector_methods:
+            if self.selection_granularity == "sequence" and self.routing_structure != "independent":
+                raise ValueError("sequence selection requires routing_structure='independent'")
+            if self.ranker_target == "imputation_loss" and (
+                self.selection_granularity != "sequence" or self.routing_structure != "independent"
+            ):
+                raise ValueError(
+                    "block_fais reconstruction supervision is restricted to "
+                    "sequence selection with independent routing"
+                )
         if "block_fais" not in self.selector_methods and (
             self.forecast_consensus.mode != "disabled" or self.forecast_consensus.candidates
         ):
@@ -455,6 +467,18 @@ def validate_project_configuration(config: AppConfig) -> dict[str, Any]:
     )
     router = RouterConfig.model_validate(load_yaml(config.registries.router_config))
 
+    family_ids = {entry.family_id for entry in manifest.datasets if entry.enabled}
+    configured_family_ids = set(config.experiment.exclude_family_ids)
+    if config.experiment.include_family_ids != "all":
+        configured_family_ids.update(config.experiment.include_family_ids)
+    if config.protocol is not None:
+        configured_family_ids.update(config.protocol.development_family_ids)
+    unknown_family_ids = configured_family_ids - family_ids
+    if unknown_family_ids:
+        raise ValueError(
+            f"experiment family filters contain unknown family IDs: {sorted(unknown_family_ids)}"
+        )
+
     from tsfm_fais.forecasting import default_forecast_registry
     from tsfm_fais.imputers import DEFAULT_REGISTRY
 
@@ -496,6 +520,28 @@ def validate_project_configuration(config: AppConfig) -> dict[str, Any]:
             f"declared_only={sorted(set(declared_forecasters) - set(runtime_forecasters))}, "
             f"runtime_only={sorted(set(runtime_forecasters) - set(declared_forecasters))}"
         )
+    if config.protocol is not None:
+        protocol_forecasters = set(config.protocol.teacher_forecaster_ids)
+        if config.protocol.held_out_forecaster_id is not None:
+            protocol_forecasters.add(config.protocol.held_out_forecaster_id)
+        unknown_protocol_forecasters = protocol_forecasters - set(declared_forecasters)
+        if unknown_protocol_forecasters:
+            raise ValueError(
+                "revision protocol contains unknown forecaster IDs: "
+                f"{sorted(unknown_protocol_forecasters)}"
+            )
+        expected_ranker_target = {
+            "full_candidate_forecast_loss_v2": "full_candidate_loss",
+            "single_block_counterfactual_forecast_loss_v1": "forecast_loss",
+            "coherence_adjusted_marginal_v1": "routing_target",
+            "masked_context_reconstruction_asmape_v1": "imputation_loss",
+        }[config.protocol.target_protocol]
+        if router.ranker_target != expected_ranker_target:
+            raise ValueError(
+                "revision target protocol does not match router ranker_target: "
+                f"protocol={config.protocol.target_protocol!r}, "
+                f"router={router.ranker_target!r}"
+            )
     unknown_blend_models = set(router.evidence_blend) - set(runtime_forecasters)
     if unknown_blend_models:
         raise ValueError(

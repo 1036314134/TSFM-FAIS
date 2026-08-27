@@ -21,6 +21,13 @@ _COMPATIBLE_MANIFEST_FIELDS = (
     "max_pair_labels_per_episode",
     "csdi_num_samples",
     "routing_target_protocol",
+    "experiment_protocol_id",
+    "family_split_policy",
+    "feature_policy",
+    "target_protocol",
+    "active_mask_partition",
+    "active_mask_seeds",
+    "router_seed",
 )
 
 _UNARY_KEY_FIELDS = (
@@ -713,6 +720,18 @@ def merge_label_artifacts(
         "max_pair_labels_per_episode": reference.manifest.get("max_pair_labels_per_episode"),
         "csdi_num_samples": reference.manifest.get("csdi_num_samples"),
     }
+    for field in (
+        "experiment_protocol_id",
+        "family_split_policy",
+        "feature_policy",
+        "target_protocol",
+        "active_mask_partition",
+        "active_mask_seeds",
+        "router_seed",
+    ):
+        value = reference.manifest.get(field)
+        if value is not None:
+            summary[field] = value
     _write_json(output / "labels_manifest.json", summary)
     _write_json(
         output / "resolved_config.json",

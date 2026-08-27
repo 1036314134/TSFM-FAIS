@@ -9,6 +9,7 @@ from .masking import (
     MaskingSpec,
     extract_missing_blocks,
     mask_time_series,
+    no_complete_window_base_mask,
     stable_seed,
 )
 from .splits import FamilyFold, family_folds
@@ -30,6 +31,7 @@ __all__ = [
     "load_dataset",
     "load_manifest",
     "mask_time_series",
+    "no_complete_window_base_mask",
     "rolling_origins",
     "stable_seed",
 ]

@@ -25,7 +25,7 @@ import joblib
 import numpy as np
 from pandas.tseries.frequencies import to_offset
 
-from tsfm_fais.config import AppConfig
+from tsfm_fais.config import AppConfig, validate_forecaster_revision_binding
 from tsfm_fais.contracts import (
     BudgetSpec,
     CandidateResult,
@@ -43,6 +43,7 @@ from tsfm_fais.data import (
     load_dataset,
     load_manifest,
     mask_time_series,
+    no_complete_window_base_mask,
     rolling_origins,
     stable_seed,
 )
@@ -179,12 +180,32 @@ def _accepted_datasets(audit_path: Path) -> dict[str, str | None]:
     }
 
 
+def _family_is_selected(config: AppConfig, family_id: str) -> bool:
+    included = config.experiment.include_family_ids
+    if included != "all" and family_id not in included:
+        return False
+    return family_id not in config.experiment.exclude_family_ids
+
+
 def _datasets(config: AppConfig, audit_path: Path):
     accepted = _accepted_datasets(audit_path)
     manifest = load_manifest(config.registries.data_manifest)
+    expected_missingness = (
+        "native" if config.experiment.masking_protocol == "native_only" else "complete"
+    )
     for spec in manifest.datasets:
-        if not spec.enabled or spec.dataset_id not in accepted:
+        if (
+            not spec.enabled
+            or spec.dataset_id not in accepted
+            or not _family_is_selected(config, spec.family_id)
+        ):
             continue
+        if spec.missingness != expected_missingness:
+            raise ValueError(
+                f"dataset {spec.dataset_id} declares missingness={spec.missingness!r}, "
+                f"but masking_protocol={config.experiment.masking_protocol!r} requires "
+                f"{expected_missingness!r}"
+            )
         items = load_dataset(spec)
         report = audit_dataset(spec, items)
         if not report.accepted:
@@ -249,6 +270,8 @@ def _training_batch(
     configured_seeds: Iterable[int] = (20260710,),
     fit_fraction: float = 0.2,
     training_stride: int = 24,
+    training_base_mask: Literal["none", "no_complete_window"] = "none",
+    training_base_missing_rate: float = 0.0,
 ) -> SeriesBatch:
     selected = [item for item in items if len(item.values) >= context_length]
     if not selected:
@@ -277,35 +300,66 @@ def _training_batch(
     selected_descriptors = evenly_spaced_subset(tuple(descriptors), max_windows)
     windows: list[np.ndarray] = []
     masks: list[np.ndarray] = []
+    base_masks: list[np.ndarray] = []
     window_ids: list[str] = []
     active_key: tuple[int, MaskingSpec, int] | None = None
     active_realization: Any = None
+    base_observed_by_item: dict[tuple[int, int], np.ndarray] = {}
     for item_index, fit_end, spec, configured_seed, start in selected_descriptors:
         item = selected[item_index]
         realization_key = (item_index, spec, configured_seed)
         if realization_key != active_key:
             prefix = item.values[:fit_end]
+            base_key = (item_index, fit_end)
+            if base_key not in base_observed_by_item:
+                source_observed = np.isfinite(prefix)
+                if training_base_mask == "no_complete_window":
+                    base_observed_by_item[base_key] = no_complete_window_base_mask(
+                        prefix,
+                        prefix_end=len(prefix),
+                        window_length=context_length,
+                        missing_rate=training_base_missing_rate,
+                        seed=stable_seed(dataset_id, item.item_id, "training_base_mask_v1"),
+                        source_observed_mask=source_observed,
+                    )
+                else:
+                    base_observed_by_item[base_key] = source_observed
+            base_observed = base_observed_by_item[base_key]
             active_realization = mask_time_series(
                 prefix,
                 spec,
                 _sequence_mask_seed(dataset_id, item.item_id, spec, configured_seed),
-                calibration_values=prefix,
+                calibration_values=np.where(base_observed, prefix, np.nan),
+                base_observed_mask=base_observed,
             )
             active_key = realization_key
         stop = start + context_length
         windows.append(active_realization.values[start:stop])
         masks.append(active_realization.observed_mask[start:stop])
+        base_masks.append(active_realization.base_observed_mask[start:stop])
         window_ids.append(
             f"{item.item_id}@{start}|{spec.mechanism}|{spec.missing_rate:g}|{configured_seed}"
         )
     values = np.stack(windows)
+    stacked_base_masks = np.stack(base_masks)
     return SeriesBatch(
         values,
         np.stack(masks),
         item_ids=tuple(window_ids),
         metadata={
-            "mask_protocol": "sequence_mask_v2",
+            "mask_protocol": (
+                "base_plus_sequence_mask_v1" if np.any(~stacked_base_masks) else "sequence_mask_v2"
+            ),
             "training_sampling_protocol": "fit_prefix_descriptor_cap_v1",
+            "training_base_mask": training_base_mask,
+            "complete_base_window_fraction": float(
+                np.mean(np.all(stacked_base_masks, axis=(1, 2)))
+            ),
+            "base_observed_fraction_by_variate": np.mean(
+                stacked_base_masks,
+                axis=(0, 1),
+                dtype=float,
+            ).tolist(),
         },
     )
 
@@ -337,12 +391,25 @@ def _training_mase_scale(
     """Freeze one per-variate MASE scale from a historical training prefix."""
 
     history = np.asarray(values, dtype=float)
-    if history.ndim != 2 or history.shape[0] < 2 or not np.isfinite(history).all():
-        raise ValueError("MASE scaling requires a complete [T,D] training prefix")
+    if history.ndim != 2 or history.shape[0] < 2:
+        raise ValueError("MASE scaling requires a [T,D] training prefix")
     requested = max(1, int(period))
-    lag = requested if history.shape[0] > requested else 1
-    scale = np.mean(np.abs(history[lag:] - history[:-lag]), axis=0)
-    return np.maximum(scale, 1e-8), lag
+    lags = (requested, 1) if requested != 1 and history.shape[0] > requested else (1,)
+    for lag in lags:
+        paired = np.isfinite(history[lag:]) & np.isfinite(history[:-lag])
+        if np.any(np.sum(paired, axis=0) == 0):
+            continue
+        differences = np.abs(history[lag:] - history[:-lag])
+        scale = np.asarray(
+            [
+                np.mean(differences[paired[:, channel], channel])
+                for channel in range(history.shape[1])
+            ],
+            dtype=float,
+        )
+        if np.isfinite(scale).all():
+            return np.maximum(scale, 1e-8), lag
+    raise ValueError("MASE scaling has no observed lagged pair for at least one variate")
 
 
 def _selected_candidate_ids(config: AppConfig) -> tuple[str, ...]:
@@ -390,6 +457,38 @@ def _empty_cuda_cache(device: str) -> None:
     except ImportError:
         return
     torch.cuda.empty_cache()
+
+
+def _reset_cuda_peak_memory() -> bool:
+    try:
+        import torch
+    except ImportError:
+        return False
+    if not torch.cuda.is_available():
+        return False
+    torch.cuda.synchronize()
+    torch.cuda.reset_peak_memory_stats()
+    return True
+
+
+def _cuda_peak_memory() -> dict[str, int]:
+    try:
+        import torch
+    except ImportError:
+        return {
+            "peak_cuda_memory_allocated_bytes": 0,
+            "peak_cuda_memory_reserved_bytes": 0,
+        }
+    if not torch.cuda.is_available():
+        return {
+            "peak_cuda_memory_allocated_bytes": 0,
+            "peak_cuda_memory_reserved_bytes": 0,
+        }
+    torch.cuda.synchronize()
+    return {
+        "peak_cuda_memory_allocated_bytes": int(torch.cuda.max_memory_allocated()),
+        "peak_cuda_memory_reserved_bytes": int(torch.cuda.max_memory_reserved()),
+    }
 
 
 def _resident_memory_bytes() -> int:
@@ -463,14 +562,40 @@ def _execution_metadata(config: AppConfig) -> dict[str, Any]:
             "save_all_candidate_outputs": config.experiment.save_all_candidate_outputs,
         }
     )
-    return {
+    metadata = {
         "sampling_limits": limits,
+        "family_selection": {
+            "include_family_ids": (
+                config.experiment.include_family_ids
+                if config.experiment.include_family_ids == "all"
+                else list(config.experiment.include_family_ids)
+            ),
+            "exclude_family_ids": list(config.experiment.exclude_family_ids),
+        },
+        "feature_policy": config.experiment.feature_policy,
         "device_resolution": {
             "requested": config.runtime.device,
             "torch_device": _torch_device(config),
             "cuda_available": _cuda_available(),
             "allowed_candidate_devices": list(_allowed_devices(config)),
         },
+    }
+    if config.protocol is not None:
+        metadata["experiment_protocol"] = config.protocol.model_dump(mode="json")
+    return metadata
+
+
+def _protocol_manifest_metadata(config: AppConfig) -> dict[str, Any]:
+    if config.protocol is None:
+        return {}
+    return {
+        "experiment_protocol_id": config.protocol.protocol_id,
+        "family_split_policy": config.protocol.family_split_policy,
+        "feature_policy": config.experiment.feature_policy,
+        "target_protocol": config.protocol.target_protocol,
+        "active_mask_partition": config.protocol.active_mask_partition,
+        "active_mask_seeds": list(config.experiment.seeds),
+        "router_seed": config.experiment.router_seed,
     }
 
 
@@ -1012,6 +1137,7 @@ def execute_fit_imputers(
     registry = _selected_imputer_registry(config)
     runner = CandidateRunner(registry)
     allowed_devices = _allowed_devices(config)
+    cuda_peak_tracking = _reset_cuda_peak_memory()
     resume_identity = _fit_resume_identity(config, inputs.audit_artifact, registry)
     manifest_path = output / "manifest.json"
     base_manifest: dict[str, Any] = {
@@ -1026,7 +1152,12 @@ def execute_fit_imputers(
         "missforest_n_jobs": config.experiment.missforest_n_jobs,
         "max_items_per_dataset": config.experiment.max_items_per_dataset,
         "max_training_windows_per_dataset": (config.experiment.max_training_windows_per_dataset),
-        "mask_protocol": "sequence_mask_v2",
+        "mask_protocol": (
+            "base_plus_sequence_mask_v1"
+            if config.experiment.training_base_mask == "no_complete_window"
+            or config.experiment.masking_protocol == "native_only"
+            else "sequence_mask_v2"
+        ),
         "training_sampling_protocol": "fit_prefix_descriptor_cap_v1",
         "fit_prefix_fraction": config.experiment.fit_prefix_fraction,
         "training_window_stride": config.experiment.training_window_stride,
@@ -1104,6 +1235,8 @@ def execute_fit_imputers(
             configured_seeds=config.experiment.seeds,
             fit_fraction=config.experiment.fit_prefix_fraction,
             training_stride=config.experiment.training_window_stride,
+            training_base_mask=config.experiment.training_base_mask,
+            training_base_missing_rate=config.experiment.training_base_missing_rate,
         )
         dataset_dir = output / dataset.dataset_id
         dataset_dir.mkdir(parents=True, exist_ok=preparation.resuming)
@@ -1115,7 +1248,7 @@ def execute_fit_imputers(
                 "training_windows": batch.shape[0],
                 "dimension": batch.shape[2],
                 "context_length": batch.shape[1],
-                "mask_protocol": "sequence_mask_v2",
+                "mask_protocol": batch.metadata["mask_protocol"],
                 "training_sampling_protocol": "fit_prefix_descriptor_cap_v1",
                 "training_batch_seconds": perf_counter() - batch_started,
                 "status": "running",
@@ -1265,6 +1398,8 @@ def execute_fit_imputers(
         )
     manifest["status"] = "completed"
     manifest["completed_at"] = utc_now()
+    manifest["cuda_peak_tracking_enabled"] = cuda_peak_tracking
+    manifest.update(_cuda_peak_memory())
     manifest.pop("current_dataset_id", None)
     manifest.pop("current_phase", None)
     manifest.pop("current_candidate_id", None)
@@ -1772,30 +1907,313 @@ class _EpisodeDescriptor:
     source_index: int
 
 
+_EPISODE_PLAN_EXPERIMENT_FIELDS = (
+    "split",
+    "context_length",
+    "horizon",
+    "forecast_stride",
+    "fit_prefix_fraction",
+    "masking_protocol",
+    "training_base_mask",
+    "training_base_missing_rate",
+    "min_future_target_observed_fraction",
+    "missing_block_lengths",
+    "target_indices",
+    "missing_mechanisms",
+    "missing_rates",
+    "seeds",
+    "max_items_per_dataset",
+    "max_train_origins_per_item",
+    "max_eval_origins_per_item",
+    "max_train_episodes_per_dataset",
+    "include_family_ids",
+    "exclude_family_ids",
+)
+
+
+@dataclass(frozen=True)
+class _EpisodePlanReference:
+    dataset_episode_ids: Mapping[str, tuple[str, ...]]
+    dataset_plan_sha256s: Mapping[str, str]
+    episode_expectations: Mapping[tuple[str, str], Mapping[str, Any]]
+    lineage: Mapping[str, Any]
+
+
+def _require_matching_signature(
+    name: str,
+    observed: Any,
+    expected: Mapping[str, Any],
+) -> None:
+    if not isinstance(observed, Mapping) or observed.get("sha256") != expected.get("sha256"):
+        raise ValueError(f"episode-plan {name} content differs from the current input")
+
+
+def _load_episode_plan_reference(
+    path: Path,
+    config: AppConfig,
+    audit_artifact: Path,
+    imputer_manifest: Path,
+) -> _EpisodePlanReference:
+    progress_path = path.resolve()
+    if progress_path.name != "labels_progress.json":
+        raise ValueError("--episode-plan-artifact must name a completed labels_progress.json")
+    labels_manifest_path = progress_path.with_name("labels_manifest.json")
+    resolved_config_path = progress_path.with_name("resolved_config.json")
+    try:
+        progress = json.loads(progress_path.read_text(encoding="utf-8"))
+        labels_manifest = json.loads(labels_manifest_path.read_text(encoding="utf-8"))
+        resolved_config = json.loads(resolved_config_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ValueError(
+            f"cannot read completed episode-plan metadata: {type(error).__name__}: {error}"
+        ) from error
+    if not all(
+        isinstance(payload, Mapping) for payload in (progress, labels_manifest, resolved_config)
+    ):
+        raise ValueError("episode-plan metadata must contain JSON objects")
+    if progress.get("schema_version") != 1 or progress.get("status") != "rebuilt":
+        raise ValueError("episode-plan progress is not a completed rebuilt labels artifact")
+    if progress.get("resume_count") != 0 or progress.get("repair_count") != 0:
+        raise ValueError("episode-plan reference must have resume_count=0 and repair_count=0")
+
+    source_config = resolved_config.get("config")
+    if not isinstance(source_config, Mapping):
+        raise ValueError("episode-plan resolved config has no config mapping")
+    try:
+        normalized_source_config = AppConfig.model_validate(source_config).model_dump(mode="json")
+    except ValueError as error:
+        raise ValueError(f"episode-plan resolved config is invalid: {error}") from error
+    current_config = config.model_dump(mode="json")
+    if normalized_source_config.get("seed") != current_config.get("seed"):
+        raise ValueError("episode-plan root seed differs from the current config")
+    source_experiment = normalized_source_config.get("experiment")
+    current_experiment = current_config.get("experiment")
+    if not isinstance(source_experiment, Mapping) or not isinstance(current_experiment, Mapping):
+        raise ValueError("episode-plan resolved config has no experiment mapping")
+    mismatched_fields = [
+        field
+        for field in _EPISODE_PLAN_EXPERIMENT_FIELDS
+        if source_experiment.get(field) != current_experiment.get(field)
+    ]
+    if mismatched_fields:
+        raise ValueError(
+            "episode-plan sampling config differs for: " + ", ".join(mismatched_fields)
+        )
+
+    identity = progress.get("identity")
+    if not isinstance(identity, Mapping):
+        raise ValueError("episode-plan progress has no identity mapping")
+    _require_matching_signature(
+        "audit artifact",
+        identity.get("audit_artifact"),
+        _file_signature(audit_artifact),
+    )
+    _require_matching_signature(
+        "imputer manifest",
+        identity.get("imputer_manifest"),
+        _file_signature(imputer_manifest),
+    )
+    source_artifacts = identity.get("source_artifacts")
+    if not isinstance(source_artifacts, Mapping):
+        raise ValueError("episode-plan identity has no source-artifact mapping")
+    _require_matching_signature(
+        "data manifest",
+        source_artifacts.get("data_manifest"),
+        _file_signature(config.registries.data_manifest),
+    )
+    _require_matching_signature(
+        "imputer registry",
+        source_artifacts.get("imputer_registry"),
+        _file_signature(config.registries.imputer_registry),
+    )
+
+    if labels_manifest.get("split") != config.experiment.split:
+        raise ValueError("episode-plan split differs from the current config")
+    if labels_manifest.get("origin_partition") != "train":
+        raise ValueError("episode-plan reference must describe the training partition")
+    if labels_manifest.get("active_mask_seeds") != list(config.experiment.seeds):
+        raise ValueError("episode-plan active mask seeds differ from the current config")
+
+    raw_plans = progress.get("dataset_plans")
+    raw_entries = progress.get("entries")
+    if not isinstance(raw_plans, Mapping) or not isinstance(raw_entries, Mapping):
+        raise ValueError("episode-plan progress has invalid plans or entries")
+    dataset_episode_ids: dict[str, tuple[str, ...]] = {}
+    dataset_plan_sha256s: dict[str, str] = {}
+    all_episode_ids: set[str] = set()
+    for dataset_id, raw_plan in raw_plans.items():
+        if not isinstance(dataset_id, str) or not dataset_id or not isinstance(raw_plan, Mapping):
+            raise ValueError("episode-plan contains an invalid dataset plan")
+        raw_ids = raw_plan.get("episode_ids")
+        if (
+            raw_plan.get("dataset_id") != dataset_id
+            or not isinstance(raw_ids, list)
+            or not raw_ids
+            or any(not isinstance(episode_id, str) or not episode_id for episode_id in raw_ids)
+            or len(set(raw_ids)) != len(raw_ids)
+        ):
+            raise ValueError(f"episode-plan dataset entry is invalid: {dataset_id}")
+        normalized = {
+            "dataset_id": dataset_id,
+            "selection_summary": raw_plan.get("selection_summary"),
+            "episode_ids": raw_ids,
+        }
+        plan_sha256 = _canonical_sha256(normalized)
+        if raw_plan.get("sha256") != plan_sha256:
+            raise ValueError(f"episode-plan dataset signature is invalid: {dataset_id}")
+        overlap = all_episode_ids.intersection(raw_ids)
+        if overlap:
+            raise ValueError("episode-plan contains duplicate episode IDs across datasets")
+        all_episode_ids.update(raw_ids)
+        dataset_episode_ids[dataset_id] = tuple(raw_ids)
+        dataset_plan_sha256s[dataset_id] = plan_sha256
+
+    expected_episode_count = sum(len(ids) for ids in dataset_episode_ids.values())
+    manifest_count = labels_manifest.get("expected_episode_count")
+    if (
+        progress.get("completed_count") != expected_episode_count
+        or len(raw_entries) != expected_episode_count
+        or manifest_count != expected_episode_count
+    ):
+        raise ValueError("episode-plan completed counts do not match its dataset plans")
+    manifest_dataset_ids = labels_manifest.get("dataset_ids")
+    if manifest_dataset_ids is None:
+        manifest_sampling = labels_manifest.get("episode_sampling")
+        sampling_datasets = (
+            manifest_sampling.get("datasets") if isinstance(manifest_sampling, Mapping) else None
+        )
+        if isinstance(sampling_datasets, Mapping):
+            manifest_dataset_ids = list(sampling_datasets)
+    if not isinstance(manifest_dataset_ids, list) or set(manifest_dataset_ids) != set(
+        dataset_episode_ids
+    ):
+        raise ValueError("episode-plan dataset identities differ between progress and manifest")
+
+    episode_expectations: dict[tuple[str, str], Mapping[str, Any]] = {}
+    artifact_indices: set[int] = set()
+    for raw_entry in raw_entries.values():
+        if not isinstance(raw_entry, Mapping):
+            raise ValueError("episode-plan contains an invalid progress entry")
+        expectation = raw_entry.get("expectation")
+        artifact_index = raw_entry.get("artifact_index")
+        if not isinstance(expectation, Mapping) or not isinstance(artifact_index, int):
+            raise ValueError("episode-plan progress entry lacks its expectation or index")
+        dataset_id = expectation.get("dataset_id")
+        episode_id = expectation.get("episode_id")
+        if not isinstance(dataset_id, str) or not isinstance(episode_id, str):
+            raise ValueError("episode-plan progress entry has an invalid identity")
+        key = (dataset_id, episode_id)
+        if (
+            key in episode_expectations
+            or episode_id not in dataset_episode_ids.get(dataset_id, ())
+            or expectation.get("dataset_plan_sha256") != dataset_plan_sha256s.get(dataset_id)
+        ):
+            raise ValueError("episode-plan progress entries differ from its dataset plans")
+        episode_expectations[key] = expectation
+        artifact_indices.add(artifact_index)
+    if set(episode_expectations) != {
+        (dataset_id, episode_id)
+        for dataset_id, episode_ids in dataset_episode_ids.items()
+        for episode_id in episode_ids
+    } or artifact_indices != set(range(expected_episode_count)):
+        raise ValueError("episode-plan progress entries are incomplete or non-contiguous")
+
+    plan_digest_payload = [
+        {
+            "dataset_id": dataset_id,
+            "episode_ids": list(dataset_episode_ids[dataset_id]),
+            "dataset_plan_sha256": dataset_plan_sha256s[dataset_id],
+        }
+        for dataset_id in sorted(dataset_episode_ids)
+    ]
+    lineage = {
+        "protocol": "completed_label_episode_plan_binding_v1",
+        "progress": _file_signature(progress_path),
+        "labels_manifest": _file_signature(labels_manifest_path),
+        "resolved_config": _file_signature(resolved_config_path),
+        "dataset_count": len(dataset_episode_ids),
+        "episode_count": expected_episode_count,
+        "episode_plan_sha256": _canonical_sha256(plan_digest_payload),
+        "source_routing_target_protocol": labels_manifest.get("routing_target_protocol"),
+        "source_forecasters": labels_manifest.get("forecasters"),
+        "source_resume_count": progress.get("resume_count"),
+        "source_repair_count": progress.get("repair_count"),
+    }
+    return _EpisodePlanReference(
+        dataset_episode_ids=dataset_episode_ids,
+        dataset_plan_sha256s=dataset_plan_sha256s,
+        episode_expectations=episode_expectations,
+        lineage=lineage,
+    )
+
+
+def _episode_descriptor_id(dataset_id: str, descriptor: _EpisodeDescriptor) -> str:
+    return (
+        f"{dataset_id}__{descriptor.item.item_id}__{descriptor.forecast_origin}__"
+        f"{descriptor.masking.mechanism}__{descriptor.masking.missing_rate:g}__"
+        f"{descriptor.configured_seed}"
+    )
+
+
 def _episode_descriptor_grid(
     config: AppConfig,
     items: tuple[TimeSeriesItem, ...],
     partition: Literal["all", "train", "eval"],
 ) -> tuple[_EpisodeDescriptor, ...]:
     length = config.experiment.context_length
+    horizon = config.experiment.horizon
+    native_only = config.experiment.masking_protocol == "native_only"
     descriptors: list[_EpisodeDescriptor] = []
     for item in items:
-        if len(item.values) < length + config.experiment.horizon:
+        if len(item.values) < length + horizon:
             continue
         first_origin = fit_prefix_end(
             len(item.values),
             length,
-            config.experiment.horizon,
+            horizon,
             config.experiment.fit_prefix_fraction,
         )
         origins = rolling_origins(
             len(item.values),
             length,
-            config.experiment.horizon,
-            config.experiment.forecast_stride or config.experiment.horizon,
+            horizon,
+            config.experiment.forecast_stride or horizon,
             start=first_origin,
         )
         for origin in _capped_origins(config, origins, partition):
+            if native_only:
+                targets = (
+                    tuple(range(item.values.shape[1]))
+                    if config.experiment.target_indices == "all"
+                    else tuple(config.experiment.target_indices)
+                )
+                if not targets or any(
+                    target < 0 or target >= item.values.shape[1] for target in targets
+                ):
+                    raise ValueError("target indices are incompatible with a native-missing item")
+                context_observed = np.isfinite(item.values[origin - length : origin])
+                future_observed = np.isfinite(item.values[origin : origin + horizon, targets])
+                if context_observed.all() or np.any(np.sum(context_observed, axis=0) < 2):
+                    continue
+                if np.any(
+                    np.mean(future_observed, axis=0)
+                    < config.experiment.min_future_target_observed_fraction
+                ):
+                    continue
+                descriptors.append(
+                    _EpisodeDescriptor(
+                        item=item,
+                        forecast_origin=origin,
+                        masking=MaskingSpec(
+                            "native",
+                            0.0,
+                            config.experiment.missing_block_lengths,
+                        ),
+                        configured_seed=0,
+                        source_index=len(descriptors),
+                    )
+                )
+                continue
             for mechanism in config.experiment.missing_mechanisms:
                 for rate in config.experiment.missing_rates:
                     for configured_seed in config.experiment.seeds:
@@ -1822,11 +2240,11 @@ def _balanced_episode_subset(
 ) -> tuple[_EpisodeDescriptor, ...]:
     """Select a deterministic, coverage-seeking subset of an episode grid.
 
-    The greedy score first avoids repeating a mechanism/rate stratum, then
-    balances mechanism and rate marginals, followed by item, configured seed,
-    and origin. A stable hash resolves the remaining ties. Selected entries are
-    returned in source order so an episode keeps its pre-cap identifier and
-    execution ordering relative to other selected entries.
+    The greedy score first balances mechanism/rate strata, then avoids
+    repeating a configured-seed cell within each stratum. Global seed and item
+    marginals break the remaining coverage ties. A stable hash resolves exact
+    ties. Selected entries are returned in source order so an episode keeps its
+    pre-cap identifier and execution ordering relative to other selected entries.
     """
 
     if limit is None or len(descriptors) <= limit:
@@ -1834,56 +2252,104 @@ def _balanced_episode_subset(
     if limit < 1:
         raise ValueError("episode limit must be positive")
 
+    def cell(descriptor: _EpisodeDescriptor) -> tuple[str, float, int]:
+        return (
+            descriptor.masking.mechanism,
+            descriptor.masking.missing_rate,
+            descriptor.configured_seed,
+        )
+
+    grouped: dict[tuple[str, float, int], list[int]] = {}
+    for index, descriptor in enumerate(descriptors):
+        grouped.setdefault(cell(descriptor), []).append(index)
+    combination_levels = tuple(
+        sorted(
+            {(mechanism, rate) for mechanism, rate, _ in grouped},
+            key=lambda value: (
+                stable_seed(*seed_parts, value[0], f"{value[1]:.17g}", "combination_order"),
+                value,
+            ),
+        )
+    )
+    seed_levels = tuple(sorted({configured_seed for _, _, configured_seed in grouped}))
+    cell_counts: Counter[tuple[str, float, int]] = Counter()
     combination_counts: Counter[tuple[str, float]] = Counter()
-    mechanism_counts: Counter[str] = Counter()
-    rate_counts: Counter[float] = Counter()
     item_counts: Counter[str] = Counter()
     seed_counts: Counter[int] = Counter()
     origin_counts: Counter[tuple[str, int]] = Counter()
     remaining = set(range(len(descriptors)))
     selected: list[int] = []
 
-    while len(selected) < limit:
+    def take_cell(cell_key: tuple[str, float, int]) -> bool:
+        candidates = [index for index in grouped.get(cell_key, ()) if index in remaining]
+        if not candidates:
+            return False
 
-        def score(index: int) -> tuple[int, int, int, int, int, int, int, int]:
+        def descriptor_score(index: int) -> tuple[int, ...]:
             descriptor = descriptors[index]
-            mechanism = descriptor.masking.mechanism
-            rate = descriptor.masking.missing_rate
             item_id = descriptor.item.item_id
-            origin_key = (item_id, descriptor.forecast_origin)
-            tie_break = stable_seed(
-                *seed_parts,
-                item_id,
-                descriptor.forecast_origin,
-                mechanism,
-                f"{rate:.17g}",
-                descriptor.configured_seed,
-                "episode_descriptor",
-            )
             return (
-                combination_counts[(mechanism, rate)],
-                mechanism_counts[mechanism],
-                rate_counts[rate],
                 item_counts[item_id],
-                seed_counts[descriptor.configured_seed],
-                origin_counts[origin_key],
-                tie_break,
+                origin_counts[(item_id, descriptor.forecast_origin)],
+                stable_seed(
+                    *seed_parts,
+                    item_id,
+                    descriptor.forecast_origin,
+                    descriptor.masking.mechanism,
+                    f"{descriptor.masking.missing_rate:.17g}",
+                    descriptor.configured_seed,
+                    "episode_descriptor",
+                ),
                 descriptor.source_index,
             )
 
-        selected_index = min(remaining, key=score)
+        selected_index = min(candidates, key=descriptor_score)
         remaining.remove(selected_index)
         selected.append(selected_index)
         descriptor = descriptors[selected_index]
-        mechanism = descriptor.masking.mechanism
-        rate = descriptor.masking.missing_rate
         item_id = descriptor.item.item_id
-        combination_counts[(mechanism, rate)] += 1
-        mechanism_counts[mechanism] += 1
-        rate_counts[rate] += 1
+        combination = (descriptor.masking.mechanism, descriptor.masking.missing_rate)
+        cell_counts[cell_key] += 1
+        combination_counts[combination] += 1
         item_counts[item_id] += 1
         seed_counts[descriptor.configured_seed] += 1
         origin_counts[(item_id, descriptor.forecast_origin)] += 1
+        return True
+
+    cycle = 0
+    while len(selected) < limit and remaining:
+        progressed = False
+        rotation = cycle % len(combination_levels)
+        combinations = combination_levels[rotation:] + combination_levels[:rotation]
+        for seed_round in range(len(seed_levels)):
+            for position, combination in enumerate(combinations):
+                configured_seed = seed_levels[(position + seed_round + cycle) % len(seed_levels)]
+                progressed |= take_cell((*combination, configured_seed))
+                if len(selected) == limit:
+                    break
+            if len(selected) == limit:
+                break
+        if not progressed:
+            break
+        cycle += 1
+
+    while len(selected) < limit and remaining:
+        selected_index = min(
+            remaining,
+            key=lambda index: (
+                combination_counts[
+                    (
+                        descriptors[index].masking.mechanism,
+                        descriptors[index].masking.missing_rate,
+                    )
+                ],
+                cell_counts[cell(descriptors[index])],
+                seed_counts[descriptors[index].configured_seed],
+                item_counts[descriptors[index].item.item_id],
+                descriptors[index].source_index,
+            ),
+        )
+        take_cell(cell(descriptors[selected_index]))
 
     return tuple(descriptors[index] for index in sorted(selected))
 
@@ -1918,6 +2384,11 @@ def _episode_selection_summary(
             return tuple(
                 f"{entry.masking.mechanism}|{entry.masking.missing_rate:g}" for entry in descriptors
             )
+        if field == "mechanism_rate_seed":
+            return tuple(
+                f"{entry.masking.mechanism}|{entry.masking.missing_rate:g}|{entry.configured_seed}"
+                for entry in descriptors
+            )
         if field == "mechanism":
             return tuple(entry.masking.mechanism for entry in descriptors)
         if field == "rate":
@@ -1932,23 +2403,94 @@ def _episode_selection_summary(
 
     coverage = {
         field: _coverage_counts(values(eligible, field), values(selected, field))
-        for field in ("mechanism_rate", "mechanism", "rate", "item", "seed", "origin")
+        for field in (
+            "mechanism_rate_seed",
+            "mechanism_rate",
+            "mechanism",
+            "rate",
+            "item",
+            "seed",
+            "origin",
+        )
     }
     strata = coverage["mechanism_rate"]
+    seed_strata = coverage["mechanism_rate_seed"]
     full_coverage_required = limit is not None and limit >= strata["eligible_level_count"]
+    seed_full_coverage_required = seed_strata["eligible_level_count"] > 0 and (
+        limit is None or limit >= seed_strata["eligible_level_count"]
+    )
+    missing_seed_cells = [
+        cell for cell, count in seed_strata["selected_counts"].items() if count == 0
+    ]
     return {
         "partition": partition,
         "cap_per_dataset": limit,
         "eligible_episode_count": len(eligible),
         "selected_episode_count": len(selected),
         "truncated": len(selected) < len(eligible),
-        "selection_algorithm": "deterministic_stratified_greedy_v1",
+        "selection_algorithm": "deterministic_stratified_greedy_v2",
         "mechanism_rate_full_coverage_required": full_coverage_required,
         "mechanism_rate_full_coverage_achieved": (
             strata["selected_level_count"] == strata["eligible_level_count"]
         ),
+        "mechanism_rate_seed_full_coverage_required": seed_full_coverage_required,
+        "mechanism_rate_seed_full_coverage_achieved": (
+            seed_strata["selected_level_count"] == seed_strata["eligible_level_count"]
+        ),
+        "missing_mechanism_rate_seed_cells": missing_seed_cells,
         "coverage": coverage,
     }
+
+
+def _bind_revision_episode_sampling(
+    config: AppConfig,
+    summary: dict[str, Any],
+    limit: int | None,
+) -> dict[str, Any]:
+    """Record and enforce the active revision protocol's mask-cell coverage."""
+
+    if config.protocol is None:
+        return summary
+    expected_cells = (
+        1
+        if config.experiment.masking_protocol == "native_only"
+        else len(config.experiment.missing_mechanisms)
+        * len(config.experiment.missing_rates)
+        * len(config.experiment.seeds)
+    )
+    coverage = summary["coverage"]["mechanism_rate_seed"]
+    eligible_cells = int(coverage["eligible_level_count"])
+    selected_cells = int(coverage["selected_level_count"])
+    missing_cells = list(summary["missing_mechanism_rate_seed_cells"])
+    eligible_episodes = int(summary["eligible_episode_count"])
+    selected_episodes = int(summary["selected_episode_count"])
+
+    if eligible_episodes == 0:
+        status = "not_applicable_no_eligible_episodes"
+    else:
+        if eligible_cells != expected_cells:
+            raise RuntimeError(
+                "revision episode grid does not contain every configured mechanism-rate-seed cell"
+            )
+        cap_is_sufficient = limit is None or limit >= expected_cells
+        if cap_is_sufficient and (
+            selected_cells != expected_cells or selected_episodes < expected_cells or missing_cells
+        ):
+            raise RuntimeError(
+                "revision episode sampling failed complete mechanism-rate-seed coverage"
+            )
+        status = "complete" if not missing_cells else "incomplete_cap"
+
+    enriched = dict(summary)
+    enriched["revision_sampling_consistency"] = {
+        "expected_mechanism_rate_seed_cells": expected_cells,
+        "eligible_mechanism_rate_seed_cells": eligible_cells,
+        "selected_mechanism_rate_seed_cells": selected_cells,
+        "cap_per_dataset": limit,
+        "missing_mechanism_rate_seed_cells": missing_cells,
+        "status": status,
+    }
+    return enriched
 
 
 def _episode_plan(
@@ -1985,7 +2527,45 @@ def _episode_plan(
         dataset.dataset_id,
         partition,
     )
-    return selected, _episode_selection_summary(eligible, selected, partition, limit)
+    summary = _episode_selection_summary(eligible, selected, partition, limit)
+    return selected, _bind_revision_episode_sampling(config, summary, limit)
+
+
+def _episode_plan_from_reference(
+    config: AppConfig,
+    dataset: Any,
+    items: Iterable[TimeSeriesItem],
+    episode_ids: Sequence[str],
+    dataset_plan_sha256: str,
+) -> tuple[tuple[_EpisodeDescriptor, ...], dict[str, Any]]:
+    requested = tuple(episode_ids)
+    if not requested or len(set(requested)) != len(requested):
+        raise ValueError(f"referenced episode plan is empty or non-unique: {dataset.dataset_id}")
+    eligible = _episode_descriptor_grid(config, tuple(items), "train")
+    eligible_by_id = {
+        _episode_descriptor_id(dataset.dataset_id, descriptor): descriptor
+        for descriptor in eligible
+    }
+    if len(eligible_by_id) != len(eligible):
+        raise RuntimeError(f"eligible episode IDs are not unique: {dataset.dataset_id}")
+    missing = [episode_id for episode_id in requested if episode_id not in eligible_by_id]
+    if missing:
+        raise ValueError(
+            f"referenced episode plan contains unavailable identities for {dataset.dataset_id}: "
+            f"{missing[:10]}; missing_count={len(missing)}"
+        )
+    limit = config.experiment.max_train_episodes_per_dataset
+    if limit is not None and len(requested) > limit:
+        raise ValueError(
+            f"referenced episode plan exceeds the current cap for {dataset.dataset_id}"
+        )
+    selected = tuple(eligible_by_id[episode_id] for episode_id in requested)
+    summary = _episode_selection_summary(eligible, selected, "train", limit)
+    summary = _bind_revision_episode_sampling(config, summary, limit)
+    summary["selection_algorithm"] = "completed_label_episode_plan_binding_v1"
+    summary["reference_dataset_plan_sha256"] = dataset_plan_sha256
+    summary["reference_episode_ids_sha256"] = _canonical_sha256(list(requested))
+    return selected, summary
 
 
 def _episode_iter(
@@ -1994,8 +2574,21 @@ def _episode_iter(
     items: Iterable[TimeSeriesItem],
     partition: Literal["all", "train", "eval"] = "all",
     selection_summary: dict[str, Any] | None = None,
+    reference_episode_ids: Sequence[str] | None = None,
+    reference_dataset_plan_sha256: str | None = None,
 ):
-    descriptors, summary = _episode_plan(config, dataset, items, partition)
+    if reference_episode_ids is None:
+        descriptors, summary = _episode_plan(config, dataset, items, partition)
+    else:
+        if partition != "train" or reference_dataset_plan_sha256 is None:
+            raise ValueError("referenced episode plans require a signed training partition")
+        descriptors, summary = _episode_plan_from_reference(
+            config,
+            dataset,
+            items,
+            reference_episode_ids,
+            reference_dataset_plan_sha256,
+        )
     if selection_summary is not None:
         selection_summary.clear()
         selection_summary.update(summary)
@@ -2016,6 +2609,22 @@ def _episode_iter(
                 config.experiment.horizon,
                 config.experiment.fit_prefix_fraction,
             )
+            source_observed = np.isfinite(descriptor.item.values)
+            if config.experiment.training_base_mask == "no_complete_window":
+                base_observed = no_complete_window_base_mask(
+                    descriptor.item.values,
+                    prefix_end=fit_end,
+                    window_length=length,
+                    missing_rate=config.experiment.training_base_missing_rate,
+                    seed=stable_seed(
+                        dataset.dataset_id,
+                        descriptor.item.item_id,
+                        "training_base_mask_v1",
+                    ),
+                    source_observed_mask=source_observed,
+                )
+            else:
+                base_observed = source_observed
             realization = mask_time_series(
                 descriptor.item.values,
                 descriptor.masking,
@@ -2025,7 +2634,12 @@ def _episode_iter(
                     descriptor.masking,
                     descriptor.configured_seed,
                 ),
-                calibration_values=descriptor.item.values[:fit_end],
+                calibration_values=np.where(
+                    base_observed[:fit_end],
+                    descriptor.item.values[:fit_end],
+                    np.nan,
+                ),
+                base_observed_mask=base_observed,
             )
             realization_cache[cache_key] = realization
         episode = build_episode(
@@ -2036,12 +2650,24 @@ def _episode_iter(
             length,
             config.experiment.horizon,
         )
-        episode_id = (
-            f"{dataset.dataset_id}__{descriptor.item.item_id}__"
-            f"{descriptor.forecast_origin}__{descriptor.masking.mechanism}__"
-            f"{descriptor.masking.missing_rate:g}__{descriptor.configured_seed}"
-        )
+        episode_id = _episode_descriptor_id(dataset.dataset_id, descriptor)
         yield episode_id, episode
+
+
+def _episode_mask_protocol(episode: Any) -> str:
+    context = getattr(episode, "context", None)
+    if context is None:
+        # Candidate-source fixtures and pre-R2 episodes predate context metadata.
+        protocol = "sequence_mask_v2"
+    else:
+        protocol = context.metadata.get("mask_protocol")
+    if protocol not in {
+        "sequence_mask_v2",
+        "base_plus_sequence_mask_v1",
+        "native_observation_mask_v1",
+    }:
+        raise ValueError(f"episode has an invalid mask protocol: {protocol!r}")
+    return str(protocol)
 
 
 def _episode_parameters(episode_id: str) -> tuple[str | None, float | None, int | None]:
@@ -2404,6 +3030,72 @@ def _label_sampling_cell(episode_id: str, episode: Any) -> dict[str, Any]:
         "global_missing_rate": float(episode.global_missing_rate),
         "local_missing_rate": float(episode.local_missing_rate),
     }
+
+
+def _bind_episode_to_reference(
+    reference: Mapping[str, Any],
+    dataset: Any,
+    episode_id: str,
+    episode: Any,
+) -> Any:
+    reference_cell = reference.get("sampling_cell")
+    if not isinstance(reference_cell, Mapping):
+        raise ValueError(f"completed episode plan lacks a sampling cell for {episode_id}")
+    current_cell = _label_sampling_cell(episode_id, episode)
+    stable_fields = (
+        "mechanism",
+        "missing_rate",
+        "configured_seed",
+        "mask_seed",
+        "global_missing_rate",
+        "local_missing_rate",
+    )
+    mismatched_cell_fields = [
+        field for field in stable_fields if reference_cell.get(field) != current_cell.get(field)
+    ]
+    if mismatched_cell_fields:
+        raise ValueError(
+            f"bound episode mask differs from its completed reference for {episode_id}: "
+            + ", ".join(mismatched_cell_fields)
+        )
+    reference_seed = reference_cell.get("episode_seed")
+    reference_realization_id = reference_cell.get("mask_realization_id")
+    if (
+        not isinstance(reference_seed, int)
+        or isinstance(reference_seed, bool)
+        or not isinstance(reference_realization_id, str)
+        or not reference_realization_id
+    ):
+        raise ValueError(f"completed episode plan has an invalid seed identity for {episode_id}")
+    context = replace(
+        episode.context,
+        metadata={
+            **episode.context.metadata,
+            "mask_realization_id": reference_realization_id,
+        },
+    )
+    bound_episode = replace(
+        episode,
+        context=context,
+        seed=reference_seed,
+        mask_realization_id=reference_realization_id,
+    )
+    sampling_cell = _label_sampling_cell(episode_id, bound_episode)
+    current = {
+        "dataset_id": dataset.dataset_id,
+        "family_id": dataset.family_id,
+        "episode_id": episode_id,
+        "item_id": episode.item_id,
+        "forecast_origin": episode.forecast_origin,
+        "sampling_cell": dict(sampling_cell),
+    }
+    mismatched = [field for field, value in current.items() if reference.get(field) != value]
+    if mismatched:
+        raise ValueError(
+            f"bound episode differs from its completed reference for {episode_id}: "
+            + ", ".join(mismatched)
+        )
+    return bound_episode
 
 
 def _validate_label_expectation_core(
@@ -2922,6 +3614,8 @@ def _execute_sequence_labels(
 
     if inputs.audit_artifact is None or inputs.imputer_artifacts is None:
         raise ValueError("sequence labels require audit and imputer artifacts")
+    assert inputs.audit_artifact is not None
+    assert inputs.imputer_artifacts is not None
     selector_methods = _configured_selector_methods(config)
     imputer_registry = _selected_imputer_registry(config)
     candidate_runner = CandidateRunner(imputer_registry)
@@ -2929,8 +3623,16 @@ def _execute_sequence_labels(
     imputer_manifest = inputs.imputer_artifacts.resolve() / "manifest.json"
     if not imputer_manifest.is_file():
         raise FileNotFoundError(f"imputer artifact manifest does not exist: {imputer_manifest}")
-    progress_path = preparation.store.root / "labels_progress.json"
-    sidecar_root = preparation.store.root / "label_episode_records"
+    episode_plan_reference = (
+        _load_episode_plan_reference(
+            inputs.episode_plan_artifact,
+            config,
+            inputs.audit_artifact,
+            imputer_manifest,
+        )
+        if inputs.episode_plan_artifact is not None
+        else None
+    )
     identity = {
         "schema_version": 1,
         "routing_target_protocol": "sequence_imputation_quality_v1",
@@ -2941,50 +3643,20 @@ def _execute_sequence_labels(
         "selector_methods": list(selector_methods),
         "selected_candidates": list(imputer_registry.ids),
     }
-    if preparation.resuming and progress_path.is_file():
-        progress = json.loads(progress_path.read_text(encoding="utf-8"))
-        if not isinstance(progress, dict) or progress.get("schema_version") != 1:
-            raise LabelResumeError("sequence labels progress is invalid")
-        if progress.get("identity") != identity:
-            raise LabelResumeError(
-                "sequence labels resume identity differs from the current inputs"
-            )
-        if not isinstance(progress.get("dataset_plans"), dict) or not isinstance(
-            progress.get("entries"), dict
-        ):
-            raise LabelResumeError("sequence labels progress plans or entries are invalid")
-        progress["status"] = "running"
-        progress["resume_count"] = int(progress.get("resume_count", 0)) + 1
-    else:
-        if preparation.resuming:
-            residual = (
-                sidecar_root.exists() and sidecar_root.is_dir() and any(sidecar_root.iterdir())
-            )
-            if residual:
-                raise LabelResumeError("cannot resume sequence labels without labels_progress.json")
-        progress = {
-            "schema_version": 1,
-            "status": "running",
-            "identity": identity,
-            "dataset_plans": {},
-            "entries": {},
-            "completed_count": 0,
-            "resume_count": 0,
-            "repair_count": 0,
-            "created_at": utc_now(),
-        }
-    progress["updated_at"] = utc_now()
-    sidecar_root.mkdir(parents=True, exist_ok=True)
-    _write_json(progress_path, progress)
+    if episode_plan_reference is not None:
+        identity["episode_plan_reference"] = dict(episode_plan_reference.lineage)
+    progress_store = (
+        LabelProgressStore.open_existing(preparation.store.root, identity)
+        if preparation.resuming
+        else LabelProgressStore.create(preparation.store.root, identity)
+    )
     unary_rows: list[Mapping[str, Any]] = []
     episode_sampling: dict[str, dict[str, Any]] = {}
     artifact_loading_records: dict[str, dict[str, dict[str, Any]]] = {}
-    progress_plans: dict[str, Any] = progress["dataset_plans"]
-    progress_entries: dict[str, Any] = progress["entries"]
     episode_count = 0
-    labeled_episode_count = 0
     executed_episode_count = 0
     reused_episode_count = 0
+    referenced_datasets_seen: set[str] = set()
     for dataset, items in _datasets(config, inputs.audit_artifact):
         artifact_store = DatasetImputerArtifactStore(
             inputs.imputer_artifacts,
@@ -2999,6 +3671,20 @@ def _execute_sequence_labels(
         candidate_pool = artifact_manager.candidate_pool(allowed_devices)
         dataset_sampling: dict[str, Any] = {}
         try:
+            reference_episode_ids = None
+            reference_dataset_plan_sha256 = None
+            if episode_plan_reference is not None:
+                reference_episode_ids = episode_plan_reference.dataset_episode_ids.get(
+                    dataset.dataset_id
+                )
+                reference_dataset_plan_sha256 = episode_plan_reference.dataset_plan_sha256s.get(
+                    dataset.dataset_id
+                )
+                if reference_episode_ids is None or reference_dataset_plan_sha256 is None:
+                    raise ValueError(
+                        f"completed episode plan has no dataset entry for {dataset.dataset_id}"
+                    )
+                referenced_datasets_seen.add(dataset.dataset_id)
             episodes = tuple(
                 _episode_iter(
                     config,
@@ -3006,29 +3692,33 @@ def _execute_sequence_labels(
                     items,
                     partition="train",
                     selection_summary=dataset_sampling,
+                    reference_episode_ids=reference_episode_ids,
+                    reference_dataset_plan_sha256=reference_dataset_plan_sha256,
                 )
             )
             episode_ids = [episode_id for episode_id, _ in episodes]
-            unsigned_plan = {
-                "dataset_id": dataset.dataset_id,
-                "selection_summary": dataset_sampling,
-                "episode_ids": episode_ids,
-            }
-            plan_sha256 = _canonical_sha256(unsigned_plan)
-            dataset_plan = {
-                **unsigned_plan,
-                "sha256": plan_sha256,
-            }
-            previous_plan = progress_plans.get(dataset.dataset_id)
-            if previous_plan is not None and previous_plan != dataset_plan:
-                raise LabelResumeError(
-                    f"sequence label dataset plan changed for {dataset.dataset_id!r}"
-                )
-            progress_plans[dataset.dataset_id] = dataset_plan
-            progress["updated_at"] = utc_now()
-            _write_json(progress_path, progress)
+            plan_sha256 = progress_store.register_dataset_plan(
+                dataset.dataset_id,
+                dataset_sampling,
+                episode_ids,
+            )
             for episode_id, episode in episodes:
                 key = f"{episode_count:08d}"
+                if episode_plan_reference is not None:
+                    reference_expectation = episode_plan_reference.episode_expectations.get(
+                        (dataset.dataset_id, episode_id)
+                    )
+                    if reference_expectation is None:
+                        raise ValueError(
+                            f"completed episode plan lacks expectation for {episode_id}"
+                        )
+                    episode = _bind_episode_to_reference(
+                        reference_expectation,
+                        dataset,
+                        episode_id,
+                        episode,
+                    )
+                sampling_cell = _label_sampling_cell(episode_id, episode)
                 basic_expectation = {
                     "artifact_index": episode_count,
                     "forecaster_id": "imputation",
@@ -3037,12 +3727,14 @@ def _execute_sequence_labels(
                     "family_id": dataset.family_id,
                     "item_id": episode.item_id,
                     "forecast_origin": episode.forecast_origin,
-                    "sampling_cell": _label_sampling_cell(episode_id, episode),
+                    "sampling_cell": sampling_cell,
                     "dataset_plan_sha256": plan_sha256,
                 }
-                existing = progress_entries.get(key)
+                existing = progress_store.payload["entries"].get(key)
                 recovered_rows: tuple[Mapping[str, Any], ...] | None = None
                 recovered_outcome: Literal["labeled", "no_labels"] | None = None
+                if existing is not None and not isinstance(existing, Mapping):
+                    raise LabelResumeError(f"sequence label progress entry {key} is invalid")
                 if isinstance(existing, Mapping):
                     stored_expectation = existing.get("expectation")
                     if not isinstance(stored_expectation, Mapping) or any(
@@ -3050,37 +3742,11 @@ def _execute_sequence_labels(
                         for field, value in basic_expectation.items()
                     ):
                         raise LabelResumeError(f"sequence label episode identity changed at {key}")
-                    try:
-                        relative = Path(str(existing["sidecar_file"]))
-                        expected_relative = Path("label_episode_records") / f"{key}.json"
-                        if relative != expected_relative:
-                            raise ValueError("unexpected sidecar path")
-                        sidecar_path = preparation.store.root / relative
-                        if _file_sha256(sidecar_path) != existing.get("sidecar_sha256"):
-                            raise ValueError("sidecar hash mismatch")
-                        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
-                        if not isinstance(sidecar, Mapping):
-                            raise ValueError("sidecar must be an object")
-                        expectation = LabelEpisodeExpectation.from_payload(sidecar["expectation"])
-                        if expectation.to_payload() != dict(stored_expectation):
-                            raise ValueError("sidecar expectation differs")
-                        raw_rows = sidecar.get("unary_rows")
-                        raw_pairs = sidecar.get("pair_rows")
-                        outcome_value = sidecar.get("outcome")
-                        if not isinstance(raw_rows, list) or raw_pairs != []:
-                            raise ValueError("sidecar rows are invalid")
-                        if outcome_value not in {"labeled", "no_labels"}:
-                            raise ValueError("sidecar outcome is invalid")
-                        validated = validate_label_rows(
-                            expectation,
-                            raw_rows,
-                            (),
-                            outcome=outcome_value,
-                        )
-                        recovered_rows = tuple(validated["unary_rows"])
-                        recovered_outcome = outcome_value
-                    except (KeyError, OSError, TypeError, ValueError, LabelResumeError):
-                        recovered_rows = None
+                    expectation = LabelEpisodeExpectation.from_payload(stored_expectation)
+                    validation = progress_store.validate_episode(expectation)
+                    if validation.status == "valid" and validation.sidecar is not None:
+                        recovered_rows = tuple(validation.sidecar["unary_rows"])
+                        recovered_outcome = validation.sidecar["outcome"]
                 if recovered_rows is None:
                     built = _build_sequence_label_episode_rows(
                         config,
@@ -3106,40 +3772,17 @@ def _execute_sequence_labels(
                     )
                     recovered_rows = tuple(validated["unary_rows"])
                     recovered_outcome = built.outcome
-                    sidecar_relative = Path("label_episode_records") / f"{key}.json"
-                    sidecar_path = preparation.store.root / sidecar_relative
-                    _write_json(
-                        sidecar_path,
-                        {
-                            "schema_version": 1,
-                            "expectation": expectation.to_payload(),
-                            "outcome": recovered_outcome,
-                            "unary_rows": list(recovered_rows),
-                            "pair_rows": [],
-                            "created_at": utc_now(),
-                        },
+                    progress_store.commit_episode(
+                        expectation,
+                        recovered_rows,
+                        (),
+                        outcome=recovered_outcome,
+                        replace=existing is not None,
                     )
-                    if existing is not None:
-                        progress["repair_count"] = int(progress.get("repair_count", 0)) + 1
-                    progress_entries[key] = {
-                        "artifact_index": episode_count,
-                        "expectation": expectation.to_payload(),
-                        "outcome": recovered_outcome,
-                        "sidecar_file": sidecar_relative.as_posix(),
-                        "sidecar_sha256": _file_sha256(sidecar_path),
-                        "unary_rows": len(recovered_rows),
-                        "pair_rows": 0,
-                        "ranking_groups": len({str(row["group_id"]) for row in recovered_rows}),
-                        "completed_at": utc_now(),
-                    }
-                    progress["completed_count"] = len(progress_entries)
-                    progress["updated_at"] = utc_now()
-                    _write_json(progress_path, progress)
                     executed_episode_count += 1
                 else:
                     reused_episode_count += 1
                 unary_rows.extend(recovered_rows)
-                labeled_episode_count += recovered_outcome == "labeled"
                 episode_count += 1
         finally:
             artifact_manager.close()
@@ -3151,9 +3794,19 @@ def _execute_sequence_labels(
         artifact_loading_records.setdefault(dataset.dataset_id, {})["imputation"] = (
             artifact_manager.audit()
         )
+    if episode_plan_reference is not None and referenced_datasets_seen != set(
+        episode_plan_reference.dataset_episode_ids
+    ):
+        missing = sorted(set(episode_plan_reference.dataset_episode_ids) - referenced_datasets_seen)
+        extra = sorted(referenced_datasets_seen - set(episode_plan_reference.dataset_episode_ids))
+        raise ValueError(
+            "completed episode-plan datasets differ from the current run; "
+            f"missing={missing}; extra={extra}"
+        )
     if not unary_rows:
         raise ValueError("no sequence-imputation label rows were generated")
     expected_keys = {f"{index:08d}" for index in range(episode_count)}
+    progress_entries = progress_store.payload["entries"]
     extra_entries = set(progress_entries).difference(expected_keys)
     missing_entries = expected_keys.difference(progress_entries)
     if extra_entries or missing_entries:
@@ -3162,57 +3815,51 @@ def _execute_sequence_labels(
         )
     labels_path = preparation.store.root / "teacher_labels.jsonl"
     pairs_path = preparation.store.root / "pair_labels.jsonl"
-    _write_jsonl_atomic(labels_path, unary_rows)
-    _write_jsonl_atomic(pairs_path, ())
-    progress.update(
-        {
-            "status": "rebuilt",
-            "episode_count": episode_count,
-            "completed_count": episode_count,
-            "updated_at": utc_now(),
-        }
+    rebuilt = progress_store.rebuild_outputs(
+        labels_path,
+        pairs_path,
+        expected_episode_count=episode_count,
     )
-    _write_json(progress_path, progress)
+    if int(rebuilt["unary_rows"]) != len(unary_rows) or int(rebuilt["pair_rows"]) != 0:
+        raise LabelResumeError("rebuilt sequence-label totals differ from the executed rows")
     sampling_manifest = _episode_sampling_manifest(
         "train",
         config.experiment.max_train_episodes_per_dataset,
         episode_sampling,
         episode_count,
     )
-    ranking_groups = len({str(row["group_id"]) for row in unary_rows})
     summary = {
         "teacher_labels": str(labels_path),
         "pair_labels": str(pairs_path),
-        "teacher_labels_sha256": _file_sha256(labels_path),
-        "pair_labels_sha256": _file_sha256(pairs_path),
+        "teacher_labels_sha256": rebuilt["teacher_labels_sha256"],
+        "pair_labels_sha256": rebuilt["pair_labels_sha256"],
         "forecasters": ["imputation"],
         "imputer_artifacts": str(inputs.imputer_artifacts.resolve()),
         "split": config.experiment.split,
         "origin_partition": "train",
         "episode_count": episode_count,
         "expected_episode_count": episode_count,
-        "labeled_episode_count": labeled_episode_count,
-        "no_label_episode_count": episode_count - labeled_episode_count,
+        "labeled_episode_count": rebuilt["labeled_episode_count"],
+        "no_label_episode_count": rebuilt["no_label_episode_count"],
         "episodes_executed_last_invocation": executed_episode_count,
         "episodes_reused_last_invocation": reused_episode_count,
-        "resume_count": int(progress.get("resume_count", 0)),
-        "repair_count": int(progress.get("repair_count", 0)),
+        "resume_count": int(progress_store.payload.get("resume_count", 0)),
+        "repair_count": int(progress_store.payload.get("repair_count", 0)),
         "unique_episode_count": sampling_manifest["selected_episode_count"],
         "max_train_episodes_per_dataset": config.experiment.max_train_episodes_per_dataset,
         "episode_sampling": sampling_manifest,
+        "dataset_ids": sorted(episode_sampling),
         "artifact_loading": _artifact_loading_manifest(artifact_loading_records),
-        "ranking_groups": ranking_groups,
-        "unary_rows": len(unary_rows),
+        "ranking_groups": rebuilt["ranking_groups"],
+        "unary_rows": rebuilt["unary_rows"],
         "pair_rows": 0,
-        "progress": str(progress_path),
+        "progress": str(progress_store.progress_path),
         "routing_target_protocol": "sequence_imputation_quality_v1",
         "selection_unit": (
             "method_specific" if "hybrid_lstm" in selector_methods else "whole_corrupted_episode"
         ),
         "selection_units_by_method": {
-            method: (
-                "paper_fixed_window" if method == "hybrid_lstm" else "whole_corrupted_episode"
-            )
+            method: ("paper_fixed_window" if method == "hybrid_lstm" else "whole_corrupted_episode")
             for method in selector_methods
         },
         "selection_target": "masked_context_reconstruction",
@@ -3235,7 +3882,10 @@ def _execute_sequence_labels(
         ),
         "max_teacher_candidates_per_episode": len(imputer_registry.ids),
         "forecasters_loaded_sequentially": False,
+        **_protocol_manifest_metadata(config),
     }
+    if episode_plan_reference is not None:
+        summary["episode_plan_reference"] = dict(episode_plan_reference.lineage)
     _write_json(preparation.store.root / "labels_manifest.json", summary)
     return summary
 
@@ -3600,6 +4250,7 @@ def _execute_labels_legacy(
         "csdi_num_samples": config.experiment.csdi_num_samples,
         "torch_device": torch_device,
         "forecasters_loaded_sequentially": True,
+        **_protocol_manifest_metadata(config),
     }
     _write_json(preparation.store.root / "labels_manifest.json", summary)
     return summary
@@ -3924,6 +4575,7 @@ def _execute_labels_resumable_single(
         "csdi_num_samples": config.experiment.csdi_num_samples,
         "torch_device": _torch_device(config),
         "forecasters_loaded_sequentially": True,
+        **_protocol_manifest_metadata(config),
     }
     _write_json(preparation.store.root / "labels_manifest.json", summary)
     return summary
@@ -3944,6 +4596,15 @@ def execute_labels(
     ):
         raise ValueError("labels stage is missing a required input")
     selected_forecasters = _forecaster_artifacts(inputs)
+    if config.protocol is not None:
+        teacher_ids = set(config.protocol.teacher_forecaster_ids)
+        selected_ids = {model_id for model_id, _ in selected_forecasters}
+        unexpected = selected_ids - teacher_ids
+        if unexpected:
+            raise ValueError(
+                "R2 labels may use only declared teacher forecasters: "
+                f"unexpected={sorted(unexpected)}, declared={sorted(teacher_ids)}"
+            )
     if preparation.resuming and len(selected_forecasters) != 1:
         raise ValueError("labels resume requires exactly one forecaster ID")
     if len(selected_forecasters) != 1:
@@ -4333,6 +4994,7 @@ def _router_ranker_targets(
         "forecast_loss",
         "routing_target",
         "full_candidate_loss",
+        "reconstruction_loss",
     }:
         raise ValueError(f"unknown router ranker target {target_field!r}")
     field = (
@@ -4346,6 +5008,7 @@ def _router_ranker_targets(
         "forecast_loss": "single_block_counterfactual_forecast_loss_v1",
         "routing_target": "coherence_adjusted_marginal_v1",
         "full_candidate_loss": "full_candidate_forecast_loss_v2",
+        "reconstruction_loss": "masked_context_reconstruction_asmape_v1",
     }[field]
     try:
         targets = np.asarray([float(row[field]) for row in rows], dtype=float)
@@ -4646,6 +5309,53 @@ def _fit_sequence_router_bundle(
     return bundle
 
 
+_DEPLOYMENT_UNAVAILABLE_FEATURE_PREFIXES = (
+    "dataset_id::",
+    "family_id::",
+    "missing_mechanism::",
+)
+
+
+def _feature_allowed_by_policy(name: str, policy: str) -> bool:
+    if policy == "legacy":
+        return True
+    if policy not in {"deployment_available", "identity_free"}:
+        raise ValueError(f"unsupported feature policy: {policy!r}")
+    if name == "target_missing_rate" or name.startswith(_DEPLOYMENT_UNAVAILABLE_FEATURE_PREFIXES):
+        return False
+    if policy == "identity_free" and name.startswith("forecast_model::"):
+        return False
+    return True
+
+
+def _apply_router_feature_policy(
+    rows: list[dict[str, Any]],
+    pair_rows: list[dict[str, Any]],
+    policy: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], tuple[str, ...]]:
+    removed: set[str] = set()
+
+    def filtered(values: Mapping[str, Any]) -> dict[str, Any]:
+        output: dict[str, Any] = {}
+        for name, value in values.items():
+            if _feature_allowed_by_policy(str(name), policy):
+                output[str(name)] = value
+            else:
+                removed.add(str(name))
+        return output
+
+    filtered_rows = [
+        {
+            **row,
+            "prior_features": filtered(row.get("prior_features", {})),
+            "unary_features": filtered(row.get("unary_features", {})),
+        }
+        for row in rows
+    ]
+    filtered_pairs = [{**row, "features": filtered(row.get("features", {}))} for row in pair_rows]
+    return filtered_rows, filtered_pairs, tuple(sorted(removed))
+
+
 def _fit_router_bundle(
     rows: list[dict[str, Any]],
     pair_rows: list[dict[str, Any]],
@@ -4666,26 +5376,50 @@ def _fit_router_bundle(
         raise ValueError(f"unsupported selector method {selector_method!r}")
     if not rows:
         raise ValueError("router fitting requires non-empty unary rows")
-    if selector_method == "block_fais" and not pair_rows:
-        raise ValueError("block_fais fitting requires non-empty pair rows")
+    source_pair_rows = len(pair_rows)
+    selection_granularity = str(metadata.get("selection_granularity", "block"))
+    routing_structure = str(metadata.get("routing_structure", "structured"))
+    if selection_granularity not in {"sequence", "block"}:
+        raise ValueError("unknown router selection granularity")
+    if routing_structure not in {"independent", "structured"}:
+        raise ValueError("unknown router structure")
+    uses_pairwise = selector_method == "block_fais" and routing_structure == "structured"
+    if uses_pairwise and not pair_rows:
+        raise ValueError("structured block_fais fitting requires non-empty pair rows")
     selector_params = dict(selector_params or {})
     sequence_rows = any(row.get("label_scope") in {"whole_series", "hybrid_window"} for row in rows)
     if selector_method != "block_fais" and sequence_rows:
+        feature_policy = str(metadata.get("feature_policy", "legacy"))
+        rows, _, removed_feature_names = _apply_router_feature_policy(
+            rows,
+            [],
+            feature_policy,
+        )
         return _fit_sequence_router_bundle(
             rows,
             output,
-            metadata,
+            {
+                **dict(metadata),
+                "feature_policy": feature_policy,
+                "removed_feature_names": list(removed_feature_names),
+            },
             selector_method=selector_method,
             selector_params=selector_params,
             seed=seed,
         )
     rows = _augment_label_context_features(rows)
+    feature_policy = str(metadata.get("feature_policy", "legacy"))
+    rows, pair_rows, removed_feature_names = _apply_router_feature_policy(
+        rows,
+        pair_rows if uses_pairwise else [],
+        feature_policy,
+    )
     source_unary_rows = len(rows)
     ranker_target = str(metadata.get("ranker_target", "full_candidate_loss"))
     if ranker_target == "imputation_loss":
-        # Legacy block-adapted baseline artifacts remain readable, while the
-        # formal baseline suite always takes the sequence-protocol branch.
-        ranker_target = "forecast_loss"
+        ranker_target = (
+            "reconstruction_loss" if selector_method == "block_fais" else "forecast_loss"
+        )
     eligible_target = (
         "routing_target"
         if ranker_target == "auto" and all("routing_target" in row for row in rows)
@@ -4760,17 +5494,17 @@ def _fit_router_bundle(
 
     pair_feature_names = (
         tuple(sorted(set().union(*(set(row["features"]) for row in pair_rows))))
-        if selector_method == "block_fais"
+        if uses_pairwise
         else ()
     )
     pair_matrix = (
         _matrix(pair_rows, "features", pair_feature_names)
-        if selector_method == "block_fais"
+        if uses_pairwise
         else np.empty((0, 0), dtype=float)
     )
     pair_labels = (
         np.asarray([row["interaction"] for row in pair_rows], dtype=float)
-        if selector_method == "block_fais"
+        if uses_pairwise
         else np.empty(0, dtype=float)
     )
     runtime_floor = min(
@@ -4808,7 +5542,11 @@ def _fit_router_bundle(
     shortlist_anchor_candidates: tuple[str, ...] = ()
     candidate_anchor_calibrations: dict[str, Any] = {}
     if selector_method == "block_fais":
-        bundle = RouterTrainer().fit(
+        bundle = RouterTrainer(
+            prior_params={"random_state": int(seed)},
+            unary_params={"random_state": int(seed)},
+            pairwise_params={"random_state": int(seed)},
+        ).fit(
             prior,
             unary,
             labels,
@@ -4818,6 +5556,7 @@ def _fit_router_bundle(
             feature_names,
             candidates,
             pair_feature_names,
+            train_pairwise=uses_pairwise,
         )
     else:
         selector_model = fit_baseline_selector(
@@ -4872,8 +5611,8 @@ def _fit_router_bundle(
             "unary_rows": len(ordered_rows),
             "source_unary_rows": source_unary_rows,
             "excluded_unary_rows": source_unary_rows - len(ordered_rows),
-            "pair_rows": len(pair_rows) if selector_method == "block_fais" else 0,
-            "source_pair_rows": len(pair_rows),
+            "pair_rows": len(pair_rows) if uses_pairwise else 0,
+            "source_pair_rows": source_pair_rows,
             "candidate_runtime_seconds": candidate_runtime_seconds,
             "candidate_peak_memory_mb": candidate_peak_memory_mb,
             "candidate_operational_feature_protocol": "training_median_v1",
@@ -4914,9 +5653,20 @@ def _fit_router_bundle(
             "selector_seed": int(seed),
             "selector_feature_source": feature_field,
             "selector_training_target": eligible_target,
+            "selection_granularity": selection_granularity,
+            "routing_structure": routing_structure,
+            "uses_pairwise_model": uses_pairwise,
+            "uses_missing_block_graph": routing_structure == "structured",
+            "configured_solver": {
+                "sequence": "sequence_candidate_mean",
+                "independent": "independent_block_argmin",
+                "structured": "beam_search",
+            }["sequence" if selection_granularity == "sequence" else routing_structure],
             "selector_training_rows": len(ordered_rows),
             "selector_training_groups": len(groups),
             "selector_candidate_support": candidate_support,
+            "feature_policy": feature_policy,
+            "removed_feature_names": list(removed_feature_names),
             "requires_pseudo_candidates": selector_method == "block_fais",
             **effective_metadata,
         }
@@ -4933,6 +5683,7 @@ _ROUTER_LABEL_PROTOCOL_FIELDS = (
     "missing_block_lengths",
     "missing_mechanisms",
     "missing_rates",
+    "forecast_num_samples",
     "forecast_batch_size",
 )
 
@@ -4948,11 +5699,33 @@ def _protocol_value(value: Any) -> Any:
     return value
 
 
+def _router_label_experiment_field_matches(field: str, source: Any, expected: Any) -> bool:
+    if field == "feature_policy":
+        source_policy = str(source)
+        expected_policy = str(expected)
+        return source_policy == expected_policy or (
+            source_policy == "deployment_available" and expected_policy == "identity_free"
+        )
+    return _protocol_value(source) == _protocol_value(expected)
+
+
+def _router_label_split_matches(label_split: str, router_split: str) -> bool:
+    return label_split == router_split or (
+        label_split == "rolling_origin" and router_split == "leave_family_out"
+    )
+
+
 def _validate_router_label_protocol(
     config: AppConfig,
     labels_artifact: Path,
+    *,
+    expected_sequence_protocol: bool | None = None,
 ) -> dict[str, Any]:
     """Reject teacher labels generated under an incompatible time protocol."""
+
+    revision_protocol = config.protocol
+    if revision_protocol is not None and revision_protocol.active_mask_partition != "train":
+        raise ValueError("R2 train-router requires the train mask partition")
 
     manifest_path = labels_artifact.with_name("labels_manifest.json")
     manifest: Mapping[str, Any] = {}
@@ -4966,11 +5739,26 @@ def _validate_router_label_protocol(
         sampling = manifest.get("episode_sampling")
         if isinstance(sampling, Mapping) and sampling.get("partition") != "train":
             raise ValueError("label episode sampling must use the train partition")
+    elif revision_protocol is not None:
+        raise ValueError("R2 train-router requires labels_manifest.json")
 
     sequence_protocol = manifest.get("routing_target_protocol") == "sequence_imputation_quality_v1"
+    if (
+        expected_sequence_protocol is not None
+        and (revision_protocol is not None or manifest_path.is_file())
+        and sequence_protocol is not expected_sequence_protocol
+    ):
+        expected = (
+            "sequence_imputation_quality_v1"
+            if expected_sequence_protocol
+            else "forecast-aware block labels"
+        )
+        raise ValueError(f"router labels do not use the required protocol: {expected}")
 
     resolved_path = labels_artifact.with_name("resolved_config.json")
+    source_config: Mapping[str, Any] = {}
     source_experiment: Mapping[str, Any] = {}
+    source_protocol: Mapping[str, Any] = {}
     if resolved_path.is_file():
         resolved = json.loads(resolved_path.read_text(encoding="utf-8"))
         if not isinstance(resolved, Mapping):
@@ -4982,6 +5770,12 @@ def _validate_router_label_protocol(
         if not isinstance(loaded_experiment, Mapping):
             raise ValueError("resolved label config is missing its experiment object")
         source_experiment = loaded_experiment
+        loaded_protocol = source_config.get("protocol", {})
+        if loaded_protocol is not None and not isinstance(loaded_protocol, Mapping):
+            raise ValueError("resolved label config has an invalid protocol object")
+        source_protocol = loaded_protocol or {}
+    elif revision_protocol is not None:
+        raise ValueError("R2 train-router requires resolved_config.json beside labels")
 
     expected_experiment = config.experiment.model_dump()
     recorded_splits = tuple(
@@ -4989,7 +5783,10 @@ def _validate_router_label_protocol(
         for value in (manifest.get("split"), source_experiment.get("split"))
         if value is not None
     )
-    if any(value != config.experiment.split for value in recorded_splits):
+    if len(set(recorded_splits)) > 1:
+        raise ValueError(f"label split records differ: {sorted(set(recorded_splits))}")
+    label_split = recorded_splits[0] if recorded_splits else config.experiment.split
+    if not _router_label_split_matches(label_split, config.experiment.split):
         raise ValueError(
             "label split does not match train-router config: "
             f"labels={sorted(set(recorded_splits))}, "
@@ -4999,7 +5796,7 @@ def _validate_router_label_protocol(
         tuple(
             field
             for field in _ROUTER_LABEL_PROTOCOL_FIELDS
-            if field not in {"target_indices", "forecast_batch_size"}
+            if field not in {"target_indices", "forecast_num_samples", "forecast_batch_size"}
         )
         if sequence_protocol
         else _ROUTER_LABEL_PROTOCOL_FIELDS
@@ -5010,20 +5807,338 @@ def _validate_router_label_protocol(
         if source_experiment
         and (
             field not in source_experiment
-            or _protocol_value(source_experiment[field])
-            != _protocol_value(expected_experiment[field])
+            or not _router_label_experiment_field_matches(
+                field,
+                source_experiment[field],
+                expected_experiment[field],
+            )
         )
     ]
     if mismatches:
         raise ValueError(
             "label experiment protocol does not match train-router config: " + ", ".join(mismatches)
         )
+    if revision_protocol is not None:
+        if not source_protocol:
+            raise ValueError("R2 teacher labels must originate from an R2 protocol config")
+        r2_experiment_fields: tuple[str, ...] = (
+            "seeds",
+            "include_family_ids",
+            "exclude_family_ids",
+            "feature_policy",
+            "candidate_ids",
+            "fit_prefix_fraction",
+            "max_items_per_dataset",
+            "max_train_origins_per_item",
+            "max_train_episodes_per_dataset",
+            "csdi_num_samples",
+        )
+        if not sequence_protocol:
+            r2_experiment_fields += (
+                "max_teacher_blocks_per_episode",
+                "max_teacher_candidates_per_episode",
+                "max_pair_labels_per_episode",
+            )
+        if source_config.get("seed") != config.seed:
+            raise ValueError("R2 label root seed differs from train-router config")
+        r2_mismatches = [
+            field
+            for field in r2_experiment_fields
+            if field not in source_experiment
+            or not _router_label_experiment_field_matches(
+                field,
+                source_experiment[field],
+                expected_experiment[field],
+            )
+        ]
+        if r2_mismatches:
+            raise ValueError(
+                "R2 label experiment binding differs from train-router config: "
+                + ", ".join(r2_mismatches)
+            )
+        expected_protocol = revision_protocol.model_dump(mode="json")
+        if source_protocol.get("active_mask_partition") != "train":
+            raise ValueError("R2 teacher labels must use the train mask partition")
+        for field in (
+            "mask_seeds",
+            "held_out_forecaster_id",
+            "held_out_forecaster_revision",
+        ):
+            if _protocol_value(source_protocol.get(field)) != _protocol_value(
+                expected_protocol[field]
+            ):
+                raise ValueError(f"R2 label protocol field {field!r} differs")
+        if manifest.get("active_mask_partition") != "train":
+            raise ValueError("R2 labels manifest must record the train mask partition")
+        if _protocol_value(manifest.get("active_mask_seeds")) != _protocol_value(
+            config.experiment.seeds
+        ):
+            raise ValueError("R2 labels manifest mask seeds differ from train-router config")
+        raw_forecasters = manifest.get("forecasters")
+        if not isinstance(raw_forecasters, list) or any(
+            not isinstance(value, str) or not value for value in raw_forecasters
+        ):
+            raise ValueError("R2 labels manifest has an invalid forecaster list")
+        label_forecasters = tuple(raw_forecasters)
+        if len(set(label_forecasters)) != len(label_forecasters):
+            raise ValueError("R2 labels manifest forecasters must be unique")
+        expected_forecasters = set(revision_protocol.teacher_forecaster_ids)
+        if sequence_protocol and label_forecasters != ("imputation",):
+            raise ValueError("R2 reconstruction labels must use the imputation-only identity")
+        source_teacher_forecasters = source_protocol.get("teacher_forecaster_ids")
+        if sequence_protocol and _protocol_value(source_teacher_forecasters) != ():
+            raise ValueError("R2 reconstruction label protocol must declare no teacher forecasters")
+        if (
+            sequence_protocol
+            and source_protocol.get("target_protocol") != "masked_context_reconstruction_asmape_v1"
+        ):
+            raise ValueError(
+                "R2 reconstruction labels must declare the masked-context target protocol"
+            )
+        if not sequence_protocol and (
+            set(label_forecasters) != expected_forecasters
+            or _protocol_value(source_teacher_forecasters)
+            != _protocol_value(revision_protocol.teacher_forecaster_ids)
+        ):
+            raise ValueError(
+                "R2 labels forecasters differ from the declared teacher set: "
+                f"labels={sorted(label_forecasters)}, "
+                f"declared={sorted(expected_forecasters)}"
+            )
+        if revision_protocol.held_out_forecaster_id in label_forecasters:
+            raise ValueError("held-out forecaster cannot occur in R2 teacher labels")
+    source_registries = source_config.get("registries", {})
+    source_signatures: dict[str, Mapping[str, Any] | None] = {
+        "data_manifest": None,
+        "imputer_registry": None,
+    }
+    if isinstance(source_registries, Mapping):
+        for field in source_signatures:
+            raw_path = source_registries.get(field)
+            if isinstance(raw_path, str) and raw_path:
+                path = Path(raw_path)
+                if not path.is_absolute():
+                    path = (resolved_path.parent / path).resolve()
+                if path.is_file():
+                    source_signatures[field] = _file_signature(path)
+
+    imputer_artifact_manifest: Mapping[str, Any] | None = None
+    raw_imputer_artifacts = manifest.get("imputer_artifacts")
+    if isinstance(raw_imputer_artifacts, str) and raw_imputer_artifacts:
+        imputer_root = Path(raw_imputer_artifacts)
+        if not imputer_root.is_absolute():
+            imputer_root = (manifest_path.parent / imputer_root).resolve()
+        imputer_manifest = imputer_root / "manifest.json"
+        if imputer_manifest.is_file():
+            imputer_artifact_manifest = _file_signature(imputer_manifest)
+
+    raw_dataset_ids = manifest.get("dataset_ids")
+    if not isinstance(raw_dataset_ids, list):
+        sampling = manifest.get("episode_sampling")
+        datasets = sampling.get("datasets") if isinstance(sampling, Mapping) else None
+        raw_dataset_ids = sorted(map(str, datasets)) if isinstance(datasets, Mapping) else []
+    raw_candidates = manifest.get("selected_candidates")
+    selected_candidates = list(map(str, raw_candidates)) if isinstance(raw_candidates, list) else []
     return {
-        "label_split": config.experiment.split,
+        "label_split": label_split,
+        "router_split": config.experiment.split,
+        "split_transition": f"{label_split}->{config.experiment.split}",
         "label_origin_partition": "train",
         "label_protocol_fields": list(protocol_fields),
+        "label_feature_policy": source_experiment.get("feature_policy"),
+        "router_feature_policy": config.experiment.feature_policy,
+        "feature_policy_transition": (
+            f"{source_experiment.get('feature_policy')}->{config.experiment.feature_policy}"
+        ),
         "routing_target_protocol": manifest.get("routing_target_protocol"),
         "forecaster_independent_labels": sequence_protocol,
+        "label_mask_seeds": list(config.experiment.seeds),
+        "teacher_forecasters": list(manifest.get("forecasters", [])),
+        "source_target_protocol": source_protocol.get("target_protocol"),
+        "source_teacher_forecasters": list(source_protocol.get("teacher_forecaster_ids", [])),
+        "label_dataset_ids": sorted(map(str, raw_dataset_ids)),
+        "label_episode_count": manifest.get("episode_count"),
+        "selected_candidates": selected_candidates,
+        "data_manifest": source_signatures["data_manifest"],
+        "imputer_registry": source_signatures["imputer_registry"],
+        "imputer_artifact_manifest": imputer_artifact_manifest,
+    }
+
+
+def _validate_reconstruction_label_lineage(
+    forecast: Mapping[str, Any],
+    reconstruction: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Require matching data/fits and reconstruction coverage of forecast candidates."""
+
+    compared_fields = (
+        "label_mask_seeds",
+        "label_dataset_ids",
+        "label_episode_count",
+        "data_manifest",
+        "imputer_registry",
+        "imputer_artifact_manifest",
+    )
+    for field in compared_fields:
+        left = forecast.get(field)
+        right = reconstruction.get(field)
+        if left is None or right is None or left == [] or right == []:
+            raise ValueError(f"label lineage lacks required {field!r} binding")
+        if _protocol_value(left) != _protocol_value(right):
+            raise ValueError(f"forecast and reconstruction label lineage differs at {field!r}")
+
+    forecast_candidates = tuple(map(str, forecast.get("selected_candidates", ())))
+    reconstruction_candidates = tuple(map(str, reconstruction.get("selected_candidates", ())))
+    if not forecast_candidates or not reconstruction_candidates:
+        raise ValueError("label lineage lacks required 'selected_candidates' binding")
+    if len(set(forecast_candidates)) != len(forecast_candidates):
+        raise ValueError("forecast label lineage has duplicate selected_candidates")
+    if len(set(reconstruction_candidates)) != len(reconstruction_candidates):
+        raise ValueError("reconstruction label lineage has duplicate selected_candidates")
+    reconstruction_set = set(reconstruction_candidates)
+    missing_candidates = tuple(
+        candidate for candidate in forecast_candidates if candidate not in reconstruction_set
+    )
+    if missing_candidates:
+        raise ValueError(
+            "reconstruction label lineage lacks forecast selected_candidates: "
+            + ", ".join(missing_candidates)
+        )
+    forecast_set = set(forecast_candidates)
+    extra_candidates = tuple(
+        candidate for candidate in reconstruction_candidates if candidate not in forecast_set
+    )
+    return {
+        "protocol": "same_data_candidate_fit_forecast_subset_v2",
+        "compared_fields": [*compared_fields, "selected_candidates:forecast_subset"],
+        "dataset_count": len(forecast["label_dataset_ids"]),
+        "candidate_count": len(forecast_candidates),
+        "forecast_candidate_count": len(forecast_candidates),
+        "reconstruction_candidate_count": len(reconstruction_candidates),
+        "reconstruction_extra_candidate_count": len(extra_candidates),
+        "reconstruction_extra_candidates": list(extra_candidates),
+        "episode_count": forecast["label_episode_count"],
+    }
+
+
+def _filter_router_training_families(
+    config: AppConfig,
+    rows: list[dict[str, Any]],
+    pair_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    observed_before = {
+        str(row.get("family_id"))
+        for row in (*rows, *pair_rows)
+        if isinstance(row.get("family_id"), str) and row.get("family_id")
+    }
+    filtered_rows = [
+        row
+        for row in rows
+        if isinstance(row.get("family_id"), str)
+        and _family_is_selected(config, str(row["family_id"]))
+    ]
+    filtered_pairs = [
+        row
+        for row in pair_rows
+        if isinstance(row.get("family_id"), str)
+        and _family_is_selected(config, str(row["family_id"]))
+    ]
+    retained = {
+        str(row["family_id"])
+        for row in (*filtered_rows, *filtered_pairs)
+        if isinstance(row.get("family_id"), str)
+    }
+    manifest = {
+        "include_family_ids": (
+            config.experiment.include_family_ids
+            if config.experiment.include_family_ids == "all"
+            else list(config.experiment.include_family_ids)
+        ),
+        "exclude_family_ids": list(config.experiment.exclude_family_ids),
+        "observed_family_ids": sorted(observed_before),
+        "retained_family_ids": sorted(retained),
+        "filtered_family_ids": sorted(observed_before - retained),
+        "unary_rows_before": len(rows),
+        "unary_rows_after": len(filtered_rows),
+        "pair_rows_before": len(pair_rows),
+        "pair_rows_after": len(filtered_pairs),
+    }
+    return filtered_rows, filtered_pairs, manifest
+
+
+_RECONSTRUCTION_JOIN_FIELDS = ("dataset_id", "episode_id", "candidate_id")
+
+
+def _join_reconstruction_targets(
+    forecast_rows: list[dict[str, Any]],
+    reconstruction_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Join one imputation-only loss to every matching forecast-label row."""
+
+    if not forecast_rows:
+        raise ValueError("reconstruction join requires non-empty forecast labels")
+    whole_series_rows = [
+        row for row in reconstruction_rows if str(row.get("label_scope", "")) == "whole_series"
+    ]
+    if not whole_series_rows:
+        raise ValueError("reconstruction labels contain no whole_series rows")
+
+    def identity(row: Mapping[str, Any]) -> tuple[str, str, str]:
+        key = tuple(str(row.get(field, "")) for field in _RECONSTRUCTION_JOIN_FIELDS)
+        if not all(key):
+            raise ValueError("reconstruction join encountered an empty identity field")
+        return key  # type: ignore[return-value]
+
+    reconstruction_index: dict[tuple[str, str, str], float] = {}
+    for row in whole_series_rows:
+        if str(row.get("forecaster_id", "")) != "imputation":
+            raise ValueError("reconstruction labels must use forecaster_id='imputation'")
+        key = identity(row)
+        if key in reconstruction_index:
+            raise ValueError("duplicate reconstruction label for " + "/".join(key))
+        try:
+            loss = float(row["imputation_loss"])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("reconstruction labels contain an invalid imputation_loss") from error
+        if not np.isfinite(loss) or loss < 0.0:
+            raise ValueError("reconstruction losses must be finite and non-negative")
+        reconstruction_index[key] = loss
+
+    forecast_keys = {identity(row) for row in forecast_rows}
+    reconstruction_keys = set(reconstruction_index)
+    missing = sorted(forecast_keys - reconstruction_keys)
+    forecast_episodes = {(dataset_id, episode_id) for dataset_id, episode_id, _ in forecast_keys}
+    reconstruction_episodes = {
+        (dataset_id, episode_id) for dataset_id, episode_id, _ in reconstruction_keys
+    }
+    extra_episodes = sorted(reconstruction_episodes - forecast_episodes)
+    missing_episodes = sorted(forecast_episodes - reconstruction_episodes)
+    if missing or extra_episodes or missing_episodes:
+        raise ValueError(
+            "reconstruction label identities differ from forecast labels; "
+            f"missing={missing[:10]}; extra_episodes={extra_episodes[:10]}; "
+            f"missing_episodes={missing_episodes[:10]}; "
+            f"missing_count={len(missing)}"
+        )
+    unused_reconstruction_keys = reconstruction_keys - forecast_keys
+    joined = [
+        {
+            **row,
+            "reconstruction_loss": reconstruction_index[identity(row)],
+        }
+        for row in forecast_rows
+    ]
+    return joined, {
+        "protocol": "strict_dataset_episode_candidate_join_v1",
+        "join_fields": list(_RECONSTRUCTION_JOIN_FIELDS),
+        "forecast_row_count": len(forecast_rows),
+        "forecast_key_count": len(forecast_keys),
+        "reconstruction_source_row_count": len(reconstruction_rows),
+        "reconstruction_whole_series_row_count": len(whole_series_rows),
+        "reconstruction_key_count": len(reconstruction_keys),
+        "unused_reconstruction_key_count": len(unused_reconstruction_keys),
+        "joined_row_count": len(joined),
+        "ignored_non_sequence_rows": len(reconstruction_rows) - len(whole_series_rows),
     }
 
 
@@ -5034,21 +6149,104 @@ def execute_train_router(
 ) -> Mapping[str, Any]:
     if inputs.labels_artifact is None:
         raise ValueError("train-router requires teacher labels")
-    label_protocol = _validate_router_label_protocol(config, inputs.labels_artifact)
-    rows = _read_jsonl(inputs.labels_artifact)
-    if not rows:
-        raise ValueError("teacher label file is empty")
     from tsfm_fais.config import load_yaml
     from tsfm_fais.registry_configs import RouterConfig
 
     router_config = RouterConfig.model_validate(load_yaml(config.registries.router_config))
     selector_methods = router_config.selector_methods
+    reconstruction_required = (
+        "block_fais" in selector_methods and router_config.ranker_target == "imputation_loss"
+    )
+    label_protocol = _validate_router_label_protocol(
+        config,
+        inputs.labels_artifact,
+        expected_sequence_protocol="block_fais" not in selector_methods,
+    )
+    rows = _read_jsonl(inputs.labels_artifact)
+    if not rows:
+        raise ValueError("teacher label file is empty")
+    reconstruction_protocol: Mapping[str, Any] | None = None
+    reconstruction_join: Mapping[str, Any] | None = None
+    reconstruction_lineage: Mapping[str, Any] | None = None
+    if reconstruction_required:
+        if inputs.reconstruction_labels_artifact is None:
+            raise ValueError(
+                "reconstruction-supervised router training requires "
+                "--reconstruction-labels-artifact"
+            )
+        reconstruction_protocol = _validate_router_label_protocol(
+            config,
+            inputs.reconstruction_labels_artifact,
+            expected_sequence_protocol=True,
+        )
+        if (
+            reconstruction_protocol.get("routing_target_protocol")
+            != "sequence_imputation_quality_v1"
+        ):
+            raise ValueError("reconstruction labels must use sequence_imputation_quality_v1")
+        reconstruction_rows = _read_jsonl(inputs.reconstruction_labels_artifact)
+        reconstruction_lineage = _validate_reconstruction_label_lineage(
+            label_protocol,
+            reconstruction_protocol,
+        )
+        rows, reconstruction_join = _join_reconstruction_targets(
+            rows,
+            reconstruction_rows,
+        )
+    elif inputs.reconstruction_labels_artifact is not None:
+        raise ValueError(
+            "reconstruction labels were provided to a router that does not use "
+            "reconstruction supervision"
+        )
     pair_path = inputs.labels_artifact.with_name("pair_labels.jsonl")
     pair_rows = _read_jsonl(pair_path) if pair_path.is_file() else []
-    if "block_fais" in selector_methods and not pair_rows:
+    rows, pair_rows, family_filter = _filter_router_training_families(
+        config,
+        rows,
+        pair_rows,
+    )
+    if config.protocol is not None:
+        selected_development = [
+            family_id
+            for family_id in config.protocol.development_family_ids
+            if _family_is_selected(config, family_id)
+        ]
+        if selected_development:
+            raise ValueError(
+                f"R2 router training includes development families: {sorted(selected_development)}"
+            )
+    preparation.manifest["router_training_family_filter"] = family_filter
+    if not rows:
+        raise ValueError("family filtering removed all teacher label rows")
+    if (
+        "block_fais" in selector_methods
+        and router_config.routing_structure == "structured"
+        and not pair_rows
+    ):
         raise ValueError("block_fais training requires a non-empty pair label file")
 
     lineage: dict[str, Any] = dict(label_protocol)
+    lineage.update(
+        {
+            "family_filter": family_filter,
+            "feature_policy": config.experiment.feature_policy,
+            "router_seed": config.experiment.router_seed,
+            "selection_granularity": router_config.selection_granularity,
+            "routing_structure": router_config.routing_structure,
+        }
+    )
+    if reconstruction_required:
+        assert inputs.reconstruction_labels_artifact is not None
+        lineage.update(
+            {
+                "reconstruction_labels": _file_signature(inputs.reconstruction_labels_artifact),
+                "reconstruction_label_protocol": dict(reconstruction_protocol or {}),
+                "reconstruction_label_lineage": dict(reconstruction_lineage or {}),
+                "reconstruction_join": dict(reconstruction_join or {}),
+            }
+        )
+    if config.protocol is not None:
+        lineage["experiment_protocol"] = config.protocol.model_dump(mode="json")
     labels_manifest = inputs.labels_artifact.with_name("labels_manifest.json")
     if labels_manifest.is_file():
         label_metadata = json.loads(labels_manifest.read_text(encoding="utf-8"))
@@ -5084,6 +6282,8 @@ def execute_train_router(
         return dict(router_config.selector_params.get(method, {}))
 
     def method_seed(method: str) -> int:
+        if config.experiment.router_seed is not None:
+            return int(config.experiment.router_seed)
         return int(stable_seed(config.seed, "selector", method))
 
     def fit_method(
@@ -5276,6 +6476,7 @@ def _validate_router_bundle(
     router: RouterBundle,
     expected_split: str,
     *,
+    config: AppConfig | None = None,
     held_out: str | None = None,
     held_out_field: str | None = None,
 ) -> None:
@@ -5285,6 +6486,69 @@ def _validate_router_bundle(
             "router split does not match the experiment configuration: "
             f"{metadata.get('split')!r} != {expected_split!r}"
         )
+    if config is not None and config.protocol is not None:
+        from tsfm_fais.config import load_yaml
+        from tsfm_fais.registry_configs import RouterConfig
+
+        runtime_router_config = RouterConfig.model_validate(
+            load_yaml(config.registries.router_config)
+        )
+        expected_protocol = config.protocol.model_dump(mode="json")
+        stored_protocol = metadata.get("experiment_protocol")
+        if not isinstance(stored_protocol, Mapping):
+            raise ValueError("R2 router artifact lacks experiment protocol metadata")
+        for field in (
+            "protocol_id",
+            "target_protocol",
+            "mask_seeds",
+            "teacher_forecaster_ids",
+            "held_out_forecaster_id",
+            "held_out_forecaster_revision",
+        ):
+            if _protocol_value(stored_protocol.get(field)) != _protocol_value(
+                expected_protocol[field]
+            ):
+                raise ValueError(f"R2 router protocol field {field!r} differs")
+        if stored_protocol.get("active_mask_partition") != "train":
+            raise ValueError("R2 router must be trained with the train mask partition")
+        if metadata.get("feature_policy") != config.experiment.feature_policy:
+            raise ValueError("R2 router feature policy differs from evaluation config")
+        if metadata.get("router_seed") != config.experiment.router_seed:
+            raise ValueError("R2 router seed differs from evaluation config")
+        if "block_fais" in runtime_router_config.selector_methods:
+            if metadata.get("selection_granularity") != runtime_router_config.selection_granularity:
+                raise ValueError("R2 router selection granularity differs from evaluation config")
+            if metadata.get("routing_structure") != runtime_router_config.routing_structure:
+                raise ValueError("R2 router structure differs from evaluation config")
+            if bool(metadata.get("uses_pairwise_model")) != (
+                runtime_router_config.routing_structure == "structured"
+            ):
+                raise ValueError("R2 router pairwise-model usage differs from evaluation config")
+        if metadata.get("ranker_target_protocol") != config.protocol.target_protocol:
+            raise ValueError("R2 router target differs from evaluation config")
+        family_filter = metadata.get("family_filter")
+        if not isinstance(family_filter, Mapping):
+            raise ValueError("R2 router artifact lacks its training family filter")
+        included = family_filter.get("include_family_ids")
+        excluded = family_filter.get("exclude_family_ids")
+        if not (
+            included == "all"
+            or isinstance(included, list)
+            and all(isinstance(value, str) for value in included)
+        ) or not isinstance(excluded, list):
+            raise ValueError("R2 router artifact has an invalid training family filter")
+        excluded_set = set(excluded)
+        included_set = None if included == "all" else set(included)
+        leaked_development = {
+            family_id
+            for family_id in config.protocol.development_family_ids
+            if (included_set is None or family_id in included_set) and family_id not in excluded_set
+        }
+        if leaked_development:
+            raise ValueError(
+                "R2 router training did not exclude development families: "
+                f"{sorted(leaked_development)}"
+            )
     if held_out is None:
         return
     if str(metadata.get("held_out")) != held_out:
@@ -5475,7 +6739,7 @@ def _validate_resumable_imputation(
     if progress_method != assembled_method_id or assignment_method != assembled_method_id:
         return False, "assembled method ID differs from the router", None
     assignment_mask_identity = {
-        "mask_protocol": "sequence_mask_v2",
+        "mask_protocol": _episode_mask_protocol(episode),
         "mask_seed": int(episode.mask_seed),
         "mask_realization_id": str(episode.mask_realization_id),
     }
@@ -5494,7 +6758,7 @@ def _validate_resumable_imputation(
             actual = float(raw_rate)
         except (TypeError, ValueError):
             return False, f"assignment mask rate is invalid: {field}", None
-        if not np.isclose(actual, float(expected), rtol=0.0, atol=1e-15):
+        if not np.isclose(actual, float(str(expected)), rtol=0.0, atol=1e-15):
             return False, f"assignment mask rate mismatch: {field}", None
     raw_scale = assignment.get("mase_scale")
     raw_lag = assignment.get("mase_scale_lag")
@@ -5559,6 +6823,9 @@ def _validate_resumable_imputation(
     }
     if forecaster_independent_selection:
         required_arrays.add("forecaster_independent_selection")
+    expected_mask_protocol = _episode_mask_protocol(episode)
+    if expected_mask_protocol != "sequence_mask_v2":
+        required_arrays.update({"context_truth_mask", "future_observed_mask", "base_observed_mask"})
     try:
         with np.load(output_path, allow_pickle=False) as archive:
             missing = required_arrays.difference(archive.files)
@@ -5573,7 +6840,7 @@ def _validate_resumable_imputation(
                 "forecaster_id": model_id,
                 "forecast_mode": forecast_mode,
                 "period": int(period),
-                "mask_protocol": "sequence_mask_v2",
+                "mask_protocol": expected_mask_protocol,
                 "mask_seed": int(episode.mask_seed),
                 "mask_realization_id": str(episode.mask_realization_id),
             }
@@ -5602,7 +6869,7 @@ def _validate_resumable_imputation(
                 ("local_missing_rate", episode.local_missing_rate),
             ):
                 actual = float(_npz_scalar(archive, field))
-                if not np.isclose(actual, float(expected), rtol=0.0, atol=1e-15):
+                if not np.isclose(actual, float(str(expected)), rtol=0.0, atol=1e-15):
                     return False, f"imputation NPZ mask rate mismatch: {field}", None
             stored_scale = np.asarray(archive["mase_scale"], dtype=float).reshape(-1)
             expected_scale = np.asarray(mase_scale, dtype=float).reshape(-1)
@@ -5617,6 +6884,24 @@ def _validate_resumable_imputation(
             expected_context = np.asarray(episode.clean_context, dtype=float)
             expected_future = np.asarray(episode.clean_future, dtype=float)
             expected_mask = np.asarray(episode.context.observed_mask[0], dtype=bool)
+            expected_context_truth = np.asarray(
+                episode.context_truth_mask
+                if episode.context_truth_mask is not None
+                else np.isfinite(expected_context),
+                dtype=bool,
+            )
+            expected_future_observed = np.asarray(
+                episode.future_observed_mask
+                if episode.future_observed_mask is not None
+                else np.isfinite(expected_future),
+                dtype=bool,
+            )
+            expected_base_observed = np.asarray(
+                episode.base_observed_mask
+                if episode.base_observed_mask is not None
+                else expected_context_truth,
+                dtype=bool,
+            )
             if not (
                 values.shape == observed_mask.shape == clean_context.shape == expected_context.shape
             ):
@@ -5625,16 +6910,24 @@ def _validate_resumable_imputation(
                 return False, "imputation NPZ future shape differs", None
             if not np.array_equal(observed_mask, expected_mask):
                 return False, "imputation NPZ observed mask differs", None
-            if not np.array_equal(clean_context, expected_context) or not np.array_equal(
-                clean_future, expected_future
-            ):
+            if not np.array_equal(
+                clean_context, expected_context, equal_nan=True
+            ) or not np.array_equal(clean_future, expected_future, equal_nan=True):
                 return False, "imputation NPZ clean episode content differs", None
-            if not (
-                np.isfinite(values).all()
-                and np.isfinite(clean_context).all()
-                and np.isfinite(clean_future).all()
-            ):
+            if not np.isfinite(values).all():
                 return False, "imputation NPZ contains non-finite primary values", None
+            if np.any(~np.isfinite(clean_context[expected_context_truth])) or np.any(
+                ~np.isfinite(clean_future[expected_future_observed])
+            ):
+                return False, "imputation NPZ truth masks expose non-finite values", None
+            if expected_mask_protocol != "sequence_mask_v2":
+                for field, expected in (
+                    ("context_truth_mask", expected_context_truth),
+                    ("future_observed_mask", expected_future_observed),
+                    ("base_observed_mask", expected_base_observed),
+                ):
+                    if not np.array_equal(np.asarray(archive[field], dtype=bool), expected):
+                        return False, f"imputation NPZ {field} differs", None
             if not np.array_equal(values[observed_mask], clean_context[observed_mask]):
                 return False, "imputation NPZ changed observed values", None
             stored_candidate_ids = tuple(
@@ -5958,7 +7251,7 @@ def _load_reused_actual_candidates(
             ("dataset_id", dataset.dataset_id),
             ("family_id", dataset.family_id),
             ("item_id", work.episode.item_id),
-            ("mask_protocol", "sequence_mask_v2"),
+            ("mask_protocol", _episode_mask_protocol(work.episode)),
             ("mask_seed", int(work.episode.mask_seed)),
             ("mask_realization_id", str(work.episode.mask_realization_id)),
         ):
@@ -5969,9 +7262,9 @@ def _load_reused_actual_candidates(
         clean_future = np.asarray(archive["clean_future"], dtype=float)
         if not np.array_equal(observed_mask, work.plan.batch.observed_mask[0]):
             raise ValueError("candidate source observed mask differs")
-        if not np.array_equal(clean_context, work.episode.clean_context):
+        if not np.array_equal(clean_context, work.episode.clean_context, equal_nan=True):
             raise ValueError("candidate source clean context differs")
-        if not np.array_equal(clean_future, work.episode.clean_future):
+        if not np.array_equal(clean_future, work.episode.clean_future, equal_nan=True):
             raise ValueError("candidate source clean future differs")
         candidate_ids = tuple(str(value) for value in np.asarray(archive["candidate_ids"]).tolist())
         if len(set(candidate_ids)) != len(candidate_ids):
@@ -6543,6 +7836,25 @@ def _commit_imputation_output(
         candidate_values = np.empty((0, *result.values.shape), dtype=float)
         candidate_native_valid = np.empty((0, *result.values.shape), dtype=bool)
     mechanism, missing_rate, configured_seed = _episode_parameters(work.episode_id)
+    mask_protocol = _episode_mask_protocol(work.episode)
+    context_truth_mask = np.asarray(
+        work.episode.context_truth_mask
+        if work.episode.context_truth_mask is not None
+        else np.isfinite(work.episode.clean_context),
+        dtype=bool,
+    )
+    future_observed_mask = np.asarray(
+        work.episode.future_observed_mask
+        if work.episode.future_observed_mask is not None
+        else np.isfinite(work.episode.clean_future),
+        dtype=bool,
+    )
+    base_observed_mask = np.asarray(
+        work.episode.base_observed_mask
+        if work.episode.base_observed_mask is not None
+        else context_truth_mask,
+        dtype=bool,
+    )
     target = output / work.relative
     assignment_target = preparation.store.root / work.relative_assignment
     _write_npz_atomic(
@@ -6560,7 +7872,10 @@ def _commit_imputation_output(
         observed_mask=result.observed_mask,
         clean_context=work.episode.clean_context,
         clean_future=work.episode.clean_future,
-        mask_protocol=np.asarray(["sequence_mask_v2"], dtype=str),
+        context_truth_mask=context_truth_mask,
+        future_observed_mask=future_observed_mask,
+        base_observed_mask=base_observed_mask,
+        mask_protocol=np.asarray([mask_protocol], dtype=str),
         mask_seed=np.asarray([work.episode.mask_seed], dtype=np.uint64),
         mask_realization_id=np.asarray([work.episode.mask_realization_id], dtype=str),
         target_missing_rate=np.asarray([work.episode.target_missing_rate], dtype=np.float64),
@@ -6606,12 +7921,15 @@ def _commit_imputation_output(
         "missing_rate": missing_rate,
         "seed": configured_seed,
         "episode_seed": work.episode.seed,
-        "mask_protocol": "sequence_mask_v2",
+        "mask_protocol": mask_protocol,
         "mask_seed": work.episode.mask_seed,
         "mask_realization_id": work.episode.mask_realization_id,
         "target_missing_rate": work.episode.target_missing_rate,
         "global_missing_rate": work.episode.global_missing_rate,
         "local_missing_rate": work.episode.local_missing_rate,
+        "context_truth_fraction": float(context_truth_mask.mean()),
+        "future_observed_fraction": float(future_observed_mask.mean()),
+        "base_observed_fraction": float(base_observed_mask.mean()),
         "mase_scale": list(map(float, work.mase_scale)),
         "mase_scale_lag": work.mase_scale_lag,
         "file": str(work.relative),
@@ -6676,6 +7994,7 @@ def execute_impute(
     from tsfm_fais.registry_configs import RouterConfig
 
     runtime_router_config = RouterConfig.model_validate(load_yaml(config.registries.router_config))
+    cuda_peak_tracking = _reset_cuda_peak_memory()
     runtime_consensus = runtime_router_config.forecast_consensus
     runtime_consensus_mode = runtime_consensus.mode
     split = config.experiment.split
@@ -6686,7 +8005,7 @@ def execute_impute(
     if fold_index is None:
         direct_router = RouterBundle.load(inputs.router_artifact)
         if split == "rolling_origin":
-            _validate_router_bundle(direct_router, split)
+            _validate_router_bundle(direct_router, split, config=config)
         elif split == "leave_family_out":
             raw_family = direct_router.metadata.get("held_out")
             if not isinstance(raw_family, str) or not raw_family:
@@ -6695,6 +8014,7 @@ def execute_impute(
             _validate_router_bundle(
                 direct_router,
                 split,
+                config=config,
                 held_out=direct_family,
                 held_out_field="family_id",
             )
@@ -6710,6 +8030,7 @@ def execute_impute(
             _validate_router_bundle(
                 fold_router,
                 split,
+                config=config,
                 held_out=held_out,
                 held_out_field=held_out_field,
             )
@@ -6751,6 +8072,7 @@ def execute_impute(
         _validate_router_bundle(
             direct_router,
             split,
+            config=config,
             held_out=model_id,
             held_out_field="forecaster_id",
         )
@@ -6789,6 +8111,11 @@ def execute_impute(
         selected_forecasters = _forecaster_artifacts(inputs)
         if len(selected_forecasters) != 1 or selected_forecasters[0][0] != model_id:
             raise ValueError("impute forecast-consensus artifact does not match model ID")
+        validate_forecaster_revision_binding(
+            config,
+            selected_forecasters[0][0],
+            selected_forecasters[0][1],
+        )
         forecast_registry = default_forecast_registry()
         forecast_adapter = _preflight_forecaster(
             forecast_registry,
@@ -7239,6 +8566,8 @@ def execute_impute(
         "pipeline_runtime_total_seconds": pipeline_runtime_total,
         "pipeline_rss_delta_max_bytes": pipeline_rss_delta_max,
         "pipeline_memory_measurement": "endpoint_rss_delta_approximation",
+        "cuda_peak_tracking_enabled": cuda_peak_tracking,
+        **_cuda_peak_memory(),
         "artifact_loading": artifact_loading,
         "candidate_source_impute_artifact": candidate_source_summary,
         "forecast_consensus_artifact": resume_identity.get("forecast_consensus_artifact"),

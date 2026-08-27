@@ -14,7 +14,7 @@ from typing import Any, Protocol
 
 import numpy as np
 
-from tsfm_fais.config import AppConfig
+from tsfm_fais.config import AppConfig, validate_forecaster_revision_binding
 from tsfm_fais.contracts import ForecastResult, ForecastSpec, SeriesBatch
 from tsfm_fais.data import stable_seed
 from tsfm_fais.forecasting import ForecastRunner, default_forecast_registry
@@ -97,6 +97,23 @@ FORECAST_CALL_PROTOCOL = "batched_common_contexts_v1"
 
 class ForecastPredictor(Protocol):
     def predict(self, contexts: np.ndarray, forecast_spec: ForecastSpec) -> ForecastResult: ...
+
+
+def _forecast_resource_metrics(predictor: ForecastPredictor | None) -> dict[str, int | float]:
+    getter = getattr(predictor, "resource_metrics", None)
+    if not callable(getter):
+        return {
+            "forecast_call_count": 0,
+            "forecast_context_count": 0,
+            "forecast_underlying_series_count": 0,
+            "forecast_runtime_seconds": 0.0,
+            "peak_cuda_memory_allocated_bytes": 0,
+            "peak_cuda_memory_reserved_bytes": 0,
+        }
+    metrics = getter()
+    if not isinstance(metrics, Mapping):
+        raise TypeError("forecast resource metrics must be a mapping")
+    return dict(metrics)
 
 
 def _write_json(path: Path, payload: Mapping[str, Any]) -> Path:
@@ -254,6 +271,7 @@ def forecast_metrics(
     *,
     seasonality: int,
     mase_scale: np.ndarray | None = None,
+    future_observed_mask: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     """Return one MASE/MAE/RMSE value for each forecast batch member."""
 
@@ -267,18 +285,44 @@ def forecast_metrics(
     prediction = np.asarray(forecast.point, dtype=float)
     if prediction.shape[1:] != (future.shape[0], len(targets)):
         raise ValueError("forecast point shape does not match future and target indices")
+    if not np.isfinite(prediction).all():
+        raise ValueError("forecast point values must be finite")
     truth = future[:, targets][None, :, :]
-    error = prediction - truth
+    future_mask = (
+        np.isfinite(future)
+        if future_observed_mask is None
+        else np.asarray(future_observed_mask, dtype=bool)
+    )
+    if future_mask.shape != future.shape:
+        raise ValueError("future_observed_mask must match the clean future")
+    target_mask = future_mask[:, targets]
+    if np.any(np.sum(target_mask, axis=0) == 0):
+        raise ValueError("every forecast target needs an observed future value")
+    if np.any(~np.isfinite(future[future_mask])):
+        raise ValueError("future_observed_mask exposes non-finite target values")
+    error = prediction - np.where(target_mask[None, :, :], truth, 0.0)
     absolute = np.abs(error)
-    mae_values = np.mean(absolute, axis=(1, 2))
-    rmse_values = np.sqrt(np.mean(error**2, axis=(1, 2)))
+    target_mask_3d = target_mask[None, :, :]
+    observed_count = int(target_mask.sum())
+    mae_values = np.sum(absolute * target_mask_3d, axis=(1, 2)) / observed_count
+    rmse_values = np.sqrt(np.sum(error**2 * target_mask_3d, axis=(1, 2)) / observed_count)
 
     if mase_scale is None:
         requested_lag = max(1, int(seasonality))
         lag = requested_lag if context.shape[0] > requested_lag else 1
         history = context[:, targets]
+        paired = np.isfinite(history[lag:]) & np.isfinite(history[:-lag])
+        if np.any(np.sum(paired, axis=0) == 0):
+            raise ValueError("MASE scaling has no observed pair for a forecast target")
         differences = np.abs(history[lag:] - history[:-lag])
-        scales = np.maximum(np.mean(differences, axis=0), 1e-8)
+        scales = np.asarray(
+            [
+                np.mean(differences[paired[:, channel], channel])
+                for channel in range(history.shape[1])
+            ],
+            dtype=float,
+        )
+        scales = np.maximum(scales, 1e-8)
     else:
         supplied = np.asarray(mase_scale, dtype=float).reshape(-1)
         if supplied.shape == (context.shape[1],):
@@ -289,7 +333,9 @@ def forecast_metrics(
             raise ValueError("mase_scale must align with all variates or forecast targets")
         if not np.isfinite(scales).all() or np.any(scales <= 0):
             raise ValueError("mase_scale must contain finite positive values")
-    mase_values = np.mean(np.mean(absolute, axis=1) / scales[None, :], axis=1)
+    target_counts = np.sum(target_mask, axis=0)
+    target_mae = np.sum(absolute * target_mask_3d, axis=1) / target_counts[None, :]
+    mase_values = np.mean(target_mae / scales[None, :], axis=1)
     return {"mase": mase_values, "mae": mae_values, "rmse": rmse_values}
 
 
@@ -297,14 +343,25 @@ def _imputation_metrics(
     clean_context: np.ndarray,
     candidate_context: np.ndarray,
     observed_mask: np.ndarray,
-) -> tuple[float, float]:
-    missing = ~np.asarray(observed_mask, dtype=bool)
-    if not missing.any():
-        return 0.0, 0.0
-    error = (
-        np.asarray(candidate_context, dtype=float)[missing]
-        - np.asarray(clean_context, dtype=float)[missing]
+    context_truth_mask: np.ndarray | None = None,
+) -> tuple[float | None, float | None]:
+    observed = np.asarray(observed_mask, dtype=bool)
+    truth = np.asarray(clean_context, dtype=float)
+    truth_mask = (
+        np.isfinite(truth)
+        if context_truth_mask is None
+        else np.asarray(context_truth_mask, dtype=bool)
     )
+    if truth_mask.shape != observed.shape or truth.shape != observed.shape:
+        raise ValueError("imputation truth and observation masks must align")
+    missing = ~observed & truth_mask
+    if not missing.any():
+        if (~observed).any():
+            return None, None
+        return 0.0, 0.0
+    error = np.asarray(candidate_context, dtype=float)[missing] - truth[missing]
+    if not np.isfinite(error).all():
+        raise ValueError("imputation metrics require finite values where truth is available")
     return float(np.mean(np.abs(error))), float(np.sqrt(np.mean(error**2)))
 
 
@@ -419,6 +476,14 @@ def _forecast_spec(config: AppConfig, model_id: str, dimensions: int) -> Forecas
         target_indices=targets,
         num_samples=config.experiment.forecast_num_samples,
     )
+
+
+def _expected_mask_protocol(config: AppConfig) -> str:
+    if config.experiment.masking_protocol == "native_only":
+        return "native_observation_mask_v1"
+    if config.experiment.training_base_mask == "no_complete_window":
+        return "base_plus_sequence_mask_v1"
+    return "sequence_mask_v2"
 
 
 def _resolve_forecast_device(config: AppConfig) -> str:
@@ -876,6 +941,8 @@ def _prepare_shared_evaluation(
     if not isinstance(signature, Mapping):
         raise ValueError("shared evaluation manifest has no evaluation signature")
     for field, expected in expected_spec.items():
+        if shared_reference_only and field == "router_seed":
+            continue
         if signature.get(field) != expected:
             raise ValueError(f"shared evaluation spec differs for {field}")
     if manifest.get("forecaster_artifact") != expected_spec["forecaster_artifact"]:
@@ -1102,23 +1169,34 @@ def _evaluate_episode(
     observed_mask = np.asarray(archive["observed_mask"], dtype=bool)
     clean_context = np.asarray(archive["clean_context"], dtype=float)
     clean_future = np.asarray(archive["clean_future"], dtype=float)
+    context_truth_mask = np.asarray(
+        archive.get("context_truth_mask", np.isfinite(clean_context)), dtype=bool
+    )
+    future_observed_mask = np.asarray(
+        archive.get("future_observed_mask", np.isfinite(clean_future)), dtype=bool
+    )
     schema_version = int(np.asarray(archive["schema_version"]).reshape(-1)[0])
     mask_protocol = str(np.asarray(archive["mask_protocol"]).reshape(-1)[0])
-    if schema_version != 3 or mask_protocol != "sequence_mask_v2":
-        raise ValueError("imputation artifact does not use sequence_mask_v2 schema 3")
+    expected_mask_protocol = _expected_mask_protocol(config)
+    if schema_version != 3 or mask_protocol != expected_mask_protocol:
+        raise ValueError(
+            "imputation artifact mask protocol or schema differs from the evaluation config"
+        )
     mase_scale = np.asarray(archive["mase_scale"], dtype=float).reshape(-1)
     if not (
-        assembled.shape == observed_mask.shape == clean_context.shape
+        assembled.shape == observed_mask.shape == clean_context.shape == context_truth_mask.shape
         and clean_future.ndim == 2
         and clean_future.shape[1] == clean_context.shape[1]
+        and future_observed_mask.shape == clean_future.shape
     ):
         raise ValueError("imputation artifact contains incompatible episode shapes")
     if (
         not np.isfinite(assembled).all()
-        or not np.isfinite(clean_context).all()
-        or not np.isfinite(clean_future).all()
+        or np.any(observed_mask & ~context_truth_mask)
+        or np.any(~np.isfinite(clean_context[context_truth_mask]))
+        or np.any(~np.isfinite(clean_future[future_observed_mask]))
     ):
-        raise ValueError("evaluation contexts must be finite")
+        raise ValueError("evaluation masks expose unavailable source values")
 
     period = int(np.asarray(archive.get("period", 1)).reshape(-1)[0])
     candidates = _load_saved_candidates(archive, observed_mask)
@@ -1153,18 +1231,20 @@ def _evaluate_episode(
             )
         )
     )
-    method_ids = ("clean", assembled_method_id, *candidate_ids)
+    clean_reference_available = bool(context_truth_mask.all())
+    reference_ids = ("clean",) if clean_reference_available else ()
+    method_ids = (*reference_ids, assembled_method_id, *candidate_ids)
     valid_candidate_ids = tuple(
         candidate_id for candidate_id in candidate_ids if candidates[candidate_id]["native_valid"]
     )
     forecast_method_ids = (
-        "clean",
+        *reference_ids,
         *((assembled_method_id,) if assembled_native_valid else ()),
         *valid_candidate_ids,
     )
     contexts = np.stack(
         (
-            clean_context,
+            *((clean_context,) if clean_reference_available else ()),
             *((assembled,) if assembled_native_valid else ()),
             *(candidates[key]["values"] for key in valid_candidate_ids),
         )
@@ -1186,6 +1266,7 @@ def _evaluate_episode(
         forecast,
         seasonality=max(1, period),
         mase_scale=mase_scale,
+        future_observed_mask=future_observed_mask,
     )
 
     metadata = _episode_metadata(record)
@@ -1198,6 +1279,9 @@ def _evaluate_episode(
             "global_missing_rate": float(np.asarray(archive["global_missing_rate"]).reshape(-1)[0]),
             "local_missing_rate": float(np.asarray(archive["local_missing_rate"]).reshape(-1)[0]),
             "contains_missing": bool((~observed_mask).any()),
+            "context_truth_fraction": float(context_truth_mask.mean()),
+            "future_observed_fraction": float(future_observed_mask.mean()),
+            "clean_reference_available": clean_reference_available,
             "mase_scale_lag": int(np.asarray(archive["mase_scale_lag"]).reshape(-1)[0]),
         }
     )
@@ -1208,8 +1292,8 @@ def _evaluate_episode(
         }
         for index, method_id in enumerate(forecast_method_ids)
     }
-    clean_mase = metrics_by_method["clean"]["mase"]
-    clean_denominator = max(abs(clean_mase), 1e-8)
+    clean_mase = metrics_by_method["clean"]["mase"] if clean_reference_available else None
+    clean_denominator = None if clean_mase is None else max(abs(clean_mase), 1e-8)
     pipeline_runtime = float(
         np.asarray(archive.get("pipeline_runtime_seconds", 0.0)).reshape(-1)[0]
     )
@@ -1260,11 +1344,17 @@ def _evaluate_episode(
                 else candidates[method_id]["values"]
             )
             imputation_mae, imputation_rmse = _imputation_metrics(
-                clean_context, context, observed_mask
+                clean_context,
+                context,
+                observed_mask,
+                context_truth_mask,
             )
             assert method_metrics is not None
-            degradation = method_metrics["mase"] - clean_mase
-            relative_degradation = degradation / clean_denominator
+            if clean_mase is None or clean_denominator is None:
+                degradation = relative_degradation = None
+            else:
+                degradation = method_metrics["mase"] - clean_mase
+                relative_degradation = degradation / clean_denominator
         else:
             imputation_mae = imputation_rmse = None
             degradation = relative_degradation = None
@@ -1387,21 +1477,34 @@ def _evaluate_episode_with_shared_rows(
     observed_mask = np.asarray(archive["observed_mask"], dtype=bool)
     clean_context = np.asarray(archive["clean_context"], dtype=float)
     clean_future = np.asarray(archive["clean_future"], dtype=float)
+    context_truth_mask = np.asarray(
+        archive.get("context_truth_mask", np.isfinite(clean_context)), dtype=bool
+    )
+    future_observed_mask = np.asarray(
+        archive.get("future_observed_mask", np.isfinite(clean_future)), dtype=bool
+    )
     schema_version = int(np.asarray(archive["schema_version"]).reshape(-1)[0])
     mask_protocol = str(np.asarray(archive["mask_protocol"]).reshape(-1)[0])
-    if schema_version != 3 or mask_protocol != "sequence_mask_v2":
-        raise ValueError("imputation artifact does not use sequence_mask_v2 schema 3")
+    expected_mask_protocol = _expected_mask_protocol(config)
+    if expected_mask_protocol == "native_observation_mask_v1":
+        raise ValueError("native-missing evaluation cannot reuse clean-reference rows")
+    if schema_version != 3 or mask_protocol != expected_mask_protocol:
+        raise ValueError(
+            "imputation artifact mask protocol or schema differs from the evaluation config"
+        )
     mase_scale = np.asarray(archive["mase_scale"], dtype=float).reshape(-1)
     if not (
-        assembled.shape == observed_mask.shape == clean_context.shape
+        assembled.shape == observed_mask.shape == clean_context.shape == context_truth_mask.shape
         and clean_future.ndim == 2
         and clean_future.shape[1] == clean_context.shape[1]
+        and future_observed_mask.shape == clean_future.shape
     ):
         raise ValueError("imputation artifact contains incompatible episode shapes")
     if (
         not np.isfinite(assembled).all()
-        or not np.isfinite(clean_context).all()
-        or not np.isfinite(clean_future).all()
+        or not context_truth_mask.all()
+        or np.any(~np.isfinite(clean_context[context_truth_mask]))
+        or np.any(~np.isfinite(clean_future[future_observed_mask]))
     ):
         raise ValueError("evaluation contexts must be finite")
 
@@ -1472,6 +1575,7 @@ def _evaluate_episode_with_shared_rows(
             forecast,
             seasonality=max(1, period),
             mase_scale=mase_scale,
+            future_observed_mask=future_observed_mask,
         )
         assembled_metrics = {
             metric_name: float(metric_values[1])
@@ -1539,6 +1643,7 @@ def _evaluate_episode_with_shared_rows(
             clean_context,
             assembled,
             observed_mask,
+            context_truth_mask,
         )
         degradation = assembled_metrics["mase"] - clean_mase
         relative_degradation = degradation / clean_denominator
@@ -1626,6 +1731,11 @@ def evaluate_imputations(
         if forecaster_artifact is None
         else _resolve_forecaster_artifact(forecaster_artifact, forecaster_id)
     )
+    validate_forecaster_revision_binding(
+        config,
+        forecaster_id,
+        resolved_forecaster_artifact,
+    )
     if predictor is None and resolved_forecaster_artifact is not None:
         if not resolved_forecaster_artifact.exists():
             raise FileNotFoundError(
@@ -1656,7 +1766,8 @@ def evaluate_imputations(
         "forecast_num_samples": config.experiment.forecast_num_samples,
         "forecast_batch_size": config.experiment.forecast_batch_size,
         "seed": config.seed,
-        "mask_protocol": "sequence_mask_v2",
+        "router_seed": config.experiment.router_seed,
+        "mask_protocol": _expected_mask_protocol(config),
         "resolved_device": resolved_device,
         "forecast_call_protocol": FORECAST_CALL_PROTOCOL,
     }
@@ -1805,13 +1916,21 @@ def evaluate_imputations(
                             if "candidate_ids" in archive
                             else ()
                         )
+                        context_truth_mask = np.asarray(
+                            archive.get(
+                                "context_truth_mask",
+                                np.isfinite(np.asarray(archive["clean_context"], dtype=float)),
+                            ),
+                            dtype=bool,
+                        )
                         expected_methods = {
-                            "clean",
                             assembled_method_id,
                             "oracle",
                             *saved_ids,
                             *baseline_tuple,
                         }
+                        if context_truth_mask.all():
+                            expected_methods.add("clean")
                     if all(
                         (forecaster_id, episode_id, method_id) in completed
                         for method_id in expected_methods
@@ -1889,6 +2008,7 @@ def evaluate_imputations(
                 "rows_written": rows_written,
                 "total_rows": len(completed),
                 "routing_forecaster_ids": sorted(routing_forecaster_ids),
+                "forecast_resources": _forecast_resource_metrics(predictor),
                 "error": f"{type(error).__name__}: {error}",
             }
         )
@@ -1906,6 +2026,7 @@ def evaluate_imputations(
             "rows_written": rows_written,
             "total_rows": len(completed),
             "routing_forecaster_ids": sorted(routing_forecaster_ids),
+            "forecast_resources": _forecast_resource_metrics(predictor),
             "episode_metrics_jsonl": str(jsonl_path),
             "episode_metrics_jsonl_sha256": metrics_sha256,
             "episode_metrics_jsonl_size_bytes": metrics_size,

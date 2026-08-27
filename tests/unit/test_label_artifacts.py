@@ -32,6 +32,7 @@ def _make_source(
     dataset_overrides: dict[str, tuple[str, str]] | None = None,
     duplicate_unary: bool = False,
     block_prefix: str = "block",
+    manifest_overrides: dict[str, object] | None = None,
 ) -> Path:
     root.mkdir()
     dataset_overrides = dataset_overrides or {}
@@ -104,41 +105,40 @@ def _make_source(
             },
         },
     )
-    _write_json(
-        root / "labels_manifest.json",
-        {
-            "teacher_labels": str(root / "teacher_labels.jsonl"),
-            "pair_labels": str(root / "pair_labels.jsonl"),
-            "forecasters": [model_id],
-            "imputer_artifacts": str(lineage),
-            "origin_partition": "train",
-            "episode_count": len(episodes),
-            "unique_episode_count": len(episodes),
-            "expected_episode_count": len(episodes),
-            "labeled_episode_count": len(labeled_episodes),
-            "no_label_episode_count": len(episodes) - len(labeled_episodes),
-            "max_train_episodes_per_dataset": 12,
-            "episode_sampling": {
-                "partition": "train",
-                "cap_per_dataset": 12,
-                "selected_episode_count": len(episodes),
-                "episode_execution_count": len(episodes),
-            },
-            "artifact_loading": {
-                "strategy": "candidate_filtered_with_structured_dataset_cache_v1",
-                "dataset_count": 1,
-            },
-            "ranking_groups": 2 * len(labeled_episodes),
-            "unary_rows": len(unary_rows),
-            "pair_rows": len(pair_rows),
-            "routing_target_protocol": "coherence_adjusted_marginal_v1",
-            "selected_candidates": ["locf", "linear_interp"],
-            "max_teacher_blocks_per_episode": 2,
-            "max_teacher_candidates_per_episode": 2,
-            "max_pair_labels_per_episode": 1,
-            "csdi_num_samples": 5,
+    labels_manifest = {
+        "teacher_labels": str(root / "teacher_labels.jsonl"),
+        "pair_labels": str(root / "pair_labels.jsonl"),
+        "forecasters": [model_id],
+        "imputer_artifacts": str(lineage),
+        "origin_partition": "train",
+        "episode_count": len(episodes),
+        "unique_episode_count": len(episodes),
+        "expected_episode_count": len(episodes),
+        "labeled_episode_count": len(labeled_episodes),
+        "no_label_episode_count": len(episodes) - len(labeled_episodes),
+        "max_train_episodes_per_dataset": 12,
+        "episode_sampling": {
+            "partition": "train",
+            "cap_per_dataset": 12,
+            "selected_episode_count": len(episodes),
+            "episode_execution_count": len(episodes),
         },
-    )
+        "artifact_loading": {
+            "strategy": "candidate_filtered_with_structured_dataset_cache_v1",
+            "dataset_count": 1,
+        },
+        "ranking_groups": 2 * len(labeled_episodes),
+        "unary_rows": len(unary_rows),
+        "pair_rows": len(pair_rows),
+        "routing_target_protocol": "coherence_adjusted_marginal_v1",
+        "selected_candidates": ["locf", "linear_interp"],
+        "max_teacher_blocks_per_episode": 2,
+        "max_teacher_candidates_per_episode": 2,
+        "max_pair_labels_per_episode": 1,
+        "csdi_num_samples": 5,
+    }
+    labels_manifest.update(manifest_overrides or {})
+    _write_json(root / "labels_manifest.json", labels_manifest)
     plans: dict[str, dict[str, object]] = {}
     for episode_id in episodes:
         dataset_id, _ = dataset_overrides.get(
@@ -266,6 +266,37 @@ def test_merge_accepts_forecaster_specific_teacher_blocks(tmp_path):
 
     assert summary["forecasters"] == ["chronos2", "timesfm2p5"]
     assert summary["ranking_groups"] == 8
+
+
+def test_merge_preserves_r2_mask_and_protocol_metadata(tmp_path):
+    lineage = tmp_path / "fit" / "imputer_artifacts"
+    lineage.mkdir(parents=True)
+    protocol_metadata = {
+        "experiment_protocol_id": "iclr27-r2-target-full-candidate-v1",
+        "family_split_policy": "non_ett_rolling_train_v1",
+        "feature_policy": "deployment_available",
+        "target_protocol": "full_candidate_forecast_loss_v2",
+        "active_mask_partition": "train",
+        "active_mask_seeds": [1101, 1102, 1103],
+        "router_seed": 4101,
+    }
+    chronos = _make_source(
+        tmp_path / "labels-chronos",
+        "chronos2",
+        lineage,
+        manifest_overrides=protocol_metadata,
+    )
+    timesfm = _make_source(
+        tmp_path / "labels-timesfm",
+        "timesfm2p5",
+        lineage,
+        manifest_overrides=protocol_metadata,
+    )
+
+    summary = merge_label_artifacts([chronos, timesfm], tmp_path / "merged")
+
+    for field, value in protocol_metadata.items():
+        assert summary[field] == value
 
 
 def test_merge_accepts_forecaster_specific_no_label_episodes(tmp_path):

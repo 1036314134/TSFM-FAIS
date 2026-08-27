@@ -31,7 +31,9 @@ class MockJoint:
 
 def _registry():
     registry = ForecastRegistry()
-    registry.register(ForecastAdapterSpec("uni", "independent_univariate", "x:y", "mock", "none", 16))
+    registry.register(
+        ForecastAdapterSpec("uni", "independent_univariate", "x:y", "mock", "none", 16)
+    )
     registry.register(ForecastAdapterSpec("joint", "joint_multivariate", "x:y", "mock", "none", 16))
     return registry
 
@@ -45,6 +47,12 @@ def test_univariate_runner_expands_targets_and_reassembles():
     )
     assert result.point.shape == (2, 4, 2)
     assert result.quantiles.shape == (2, 4, 2, 3)
+    metrics = runner.resource_metrics()
+    assert metrics["forecast_call_count"] == 1
+    assert metrics["forecast_context_count"] == 2
+    assert metrics["forecast_underlying_series_count"] == 4
+    assert metrics["forecast_runtime_seconds"] >= 0.0
+    assert metrics["peak_cuda_memory_allocated_bytes"] >= 0
 
 
 def test_joint_runner_selects_target_columns_after_prediction():
@@ -63,4 +71,3 @@ def test_forecaster_refuses_missing_context():
     runner = ForecastRunner(_registry(), {"uni": MockUnivariate()})
     with pytest.raises(ValueError, match="complete finite"):
         runner.predict(values, ForecastSpec("uni", "independent_univariate", horizon=2))
-

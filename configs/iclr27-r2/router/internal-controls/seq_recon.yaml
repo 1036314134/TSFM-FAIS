@@ -1,0 +1,27 @@
+schema_version: 1
+selector_methods: [block_fais]
+shortlist_size: 6
+forced_candidates: [locf, linear_interp]
+pseudo_blocks: 8
+beam_width: 32
+beta: 1.0
+cost_weight: 0.0
+beta_grid: [0.0, 0.25, 0.5, 1.0]
+cost_weight_grid: [0.0, 0.01, 0.05, 0.1]
+prior_model: lightgbm_lambdarank
+unary_model: lightgbm_lambdarank
+pairwise_model: lightgbm_huber
+ranker_target: imputation_loss
+selection_granularity: sequence
+routing_structure: independent
+evidence_tuning_family: ett
+evidence_blend:
+  chronos2: {r0: 0.0, r1: 1.0, proxy: 0.0, global_prior: 0.0}
+  timesfm2p5: {r0: 0.0, r1: 1.0, proxy: 0.0, global_prior: 0.0}
+candidate_switch_penalty: 0.0
+forecast_consensus:
+  mode: disabled
+  candidates: []
+fallback:
+  internal: [linear_interp, locf, train_median]
+  tail: [locf, train_median]

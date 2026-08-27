@@ -30,9 +30,16 @@ SUMMARY_SCOPES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("missing_rate", ("missing_rate",)),
     ("family", ("family_id",)),
 )
-DEFAULT_BOOTSTRAP_REPLICATES = 2_000
-DEFAULT_BOOTSTRAP_SEED = 20260710
+DEFAULT_BOOTSTRAP_REPLICATES = 5_000
+DEFAULT_BOOTSTRAP_SEED = 20260806
 SMALL_SAMPLE_THRESHOLD = 30
+_HIERARCHICAL_BOOTSTRAP_FIELDS: tuple[str, ...] = (
+    "family_id",
+    "dataset_id",
+    "item_id",
+    "forecast_origin",
+    "mask_realization_id",
+)
 _STUDY_SIGNATURE_FIELDS: tuple[str, ...] = (
     "context_length",
     "horizon",
@@ -338,7 +345,9 @@ def _read_sources(
         "mechanism",
         "missing_rate",
         "item_id",
+        "forecast_origin",
         "mask_protocol",
+        "mask_seed",
         "mask_realization_id",
         "contains_missing",
     )
@@ -677,48 +686,147 @@ def _hierarchical_family_interval(
     replicates: int,
     seed: int,
 ) -> tuple[float | None, float | None]:
-    """Bootstrap family, dataset, and item/mask-realization clusters in order."""
+    """Bootstrap family, dataset, item, origin, and mask levels in order."""
 
-    hierarchy: dict[str, dict[str, dict[str, list[float]]]] = defaultdict(
-        lambda: defaultdict(lambda: defaultdict(list))
-    )
-    for key, value in values.items():
-        entry = metadata[key]
-        family = str(entry.get("family_id", ""))
-        dataset = str(entry.get("dataset_id", ""))
-        cluster = "|".join(
-            (
-                str(entry.get("item_id", "")),
-                str(entry.get("mask_realization_id", "")),
-            )
-        )
-        hierarchy[family][dataset][cluster].append(float(value))
-    families = tuple(sorted(hierarchy))
-    if len(families) < 2:
+    family_count = len({str(metadata[key].get("family_id", "")) for key in values})
+    if family_count < 2:
         return None, None
+    statistics = _hierarchical_family_bootstrap_statistics(
+        values,
+        metadata,
+        replicates=replicates,
+        seed=seed,
+    )
+    low, high = np.quantile(statistics, (0.025, 0.975))
+    return float(low), float(high)
+
+
+def _hierarchical_family_bootstrap_statistics(
+    values: Mapping[EpisodeKey, float],
+    metadata: Mapping[EpisodeKey, Mapping[str, Any]],
+    *,
+    replicates: int,
+    seed: int,
+) -> np.ndarray:
+    """Generate family-equal statistics from exact five-level resampling."""
+
+    if replicates < 1:
+        raise ValueError("bootstrap_replicates must be positive")
+    hierarchy = _build_hierarchical_tree(values, metadata)
+
     rng = np.random.default_rng(seed)
     statistics = np.empty(replicates, dtype=float)
     for replicate in range(replicates):
-        sampled_family_names = rng.choice(families, size=len(families), replace=True)
-        sampled_family_values: list[float] = []
-        for family in sampled_family_names:
-            datasets = hierarchy[str(family)]
-            dataset_names = tuple(sorted(datasets))
-            sampled_dataset_names = rng.choice(dataset_names, size=len(dataset_names), replace=True)
-            sampled_dataset_values: list[float] = []
-            for dataset in sampled_dataset_names:
-                clusters = datasets[str(dataset)]
-                cluster_names = tuple(sorted(clusters))
-                sampled_clusters = rng.choice(cluster_names, size=len(cluster_names), replace=True)
-                sampled_dataset_values.append(
-                    float(
-                        np.mean([np.mean(clusters[str(cluster)]) for cluster in sampled_clusters])
-                    )
-                )
-            sampled_family_values.append(float(np.mean(sampled_dataset_values)))
-        statistics[replicate] = float(np.mean(sampled_family_values))
-    low, high = np.quantile(statistics, (0.025, 0.975))
-    return float(low), float(high)
+        statistics[replicate] = _sample_hierarchical_mean(hierarchy, 0, rng)
+    return statistics
+
+
+def _build_hierarchical_tree(
+    values: Mapping[EpisodeKey, float],
+    metadata: Mapping[EpisodeKey, Mapping[str, Any]],
+) -> dict[str, Any]:
+    if not values:
+        raise ValueError("hierarchical bootstrap values must not be empty")
+    hierarchy: dict[str, Any] = {}
+    for key, value in values.items():
+        if key not in metadata:
+            raise ValueError(f"missing hierarchical metadata for episode {key!r}")
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            raise ValueError("hierarchical bootstrap values must be finite")
+        entry = metadata[key]
+        path = tuple(str(entry.get(field, "")) for field in _HIERARCHICAL_BOOTSTRAP_FIELDS)
+        node = hierarchy
+        for identity in path[:-1]:
+            node = node.setdefault(identity, {})
+        node.setdefault(path[-1], []).append(numeric)
+    return hierarchy
+
+
+def _sample_hierarchical_mean(
+    node: Any,
+    depth: int,
+    rng: np.random.Generator,
+) -> float:
+    if depth == len(_HIERARCHICAL_BOOTSTRAP_FIELDS):
+        leaf = np.asarray(node, dtype=float)
+        if leaf.size == 0 or not np.isfinite(leaf).all():
+            raise ValueError("hierarchical bootstrap encountered an invalid mask leaf")
+        return float(np.mean(leaf))
+    identities = tuple(sorted(node))
+    if not identities:
+        raise ValueError("hierarchical bootstrap encountered an empty hierarchy level")
+    sampled = rng.choice(identities, size=len(identities), replace=True)
+    sampled_values = [
+        _sample_hierarchical_mean(node[str(identity)], depth + 1, rng) for identity in sampled
+    ]
+    return float(np.mean(sampled_values))
+
+
+def _hierarchical_family_means(
+    values: Mapping[EpisodeKey, float],
+    metadata: Mapping[EpisodeKey, Mapping[str, Any]],
+) -> dict[str, float]:
+    hierarchy = _build_hierarchical_tree(values, metadata)
+
+    def equal_mean(node: Any, depth: int) -> float:
+        if depth == len(_HIERARCHICAL_BOOTSTRAP_FIELDS):
+            return float(np.mean(np.asarray(node, dtype=float)))
+        return float(np.mean([equal_mean(node[key], depth + 1) for key in sorted(node)]))
+
+    return {family: equal_mean(hierarchy[family], 1) for family in sorted(hierarchy)}
+
+
+def _discrete_upper_tail_mean(values: Sequence[float] | np.ndarray, level: float) -> float:
+    """Return the mean of the largest ceil((1-level) * n) observations."""
+
+    array = np.asarray(values, dtype=float)
+    if array.ndim != 1 or array.size == 0 or not np.isfinite(array).all():
+        raise ValueError("tail values must be a non-empty finite vector")
+    if not 0.0 <= level < 1.0:
+        raise ValueError("tail level must be in [0, 1)")
+    tail_size = round((1.0 - level) * array.size, 12)
+    count = max(1, int(math.ceil(tail_size)))
+    return float(np.mean(np.sort(array)[-count:]))
+
+
+def _mase_tail_summary(
+    delta: np.ndarray,
+    *,
+    degradation_threshold: float | None,
+) -> dict[str, float | None]:
+    values = np.asarray(delta, dtype=float)
+    if values.ndim != 1:
+        raise ValueError("MASE deltas must be a vector")
+    if values.size == 0:
+        return {
+            "mase_delta_median": None,
+            "mase_delta_p90": None,
+            "mase_delta_p95": None,
+            "mase_delta_cvar90": None,
+            "mase_delta_cvar95": None,
+            "mase_max_degradation": None,
+            "mase_worse_rate": None,
+            "mase_degradation_threshold": degradation_threshold,
+            "mase_threshold_exceedance_rate": None,
+        }
+    if not np.isfinite(values).all():
+        raise ValueError("MASE deltas must be finite")
+    return {
+        "mase_delta_median": float(np.median(values)),
+        "mase_delta_p90": float(np.quantile(values, 0.90)),
+        "mase_delta_p95": float(np.quantile(values, 0.95)),
+        "mase_delta_cvar90": _discrete_upper_tail_mean(values, 0.90),
+        "mase_delta_cvar95": _discrete_upper_tail_mean(values, 0.95),
+        "mase_max_degradation": float(np.max(values)),
+        "mase_worse_rate": float(np.mean(values > 0.0)),
+        "mase_degradation_threshold": degradation_threshold,
+        "mase_threshold_exceedance_rate": (
+            None
+            if degradation_threshold is None
+            else float(np.mean(values > degradation_threshold))
+        ),
+    }
 
 
 def _family_macro_primary(
@@ -769,21 +877,15 @@ def _family_macro_primary(
                         key: float(episodes[key][comparator]["mase"]) for key in pair_keys
                     }
                     deltas = {key: b_values[key] - comparator_values[key] for key in pair_keys}
-                    families: dict[str, list[EpisodeKey]] = defaultdict(list)
-                    for key in pair_keys:
-                        families[str(metadata[key]["family_id"])].append(key)
-                    family_b = {
-                        family: float(np.mean([b_values[key] for key in keys]))
-                        for family, keys in families.items()
-                    }
-                    family_comparator = {
-                        family: float(np.mean([comparator_values[key] for key in keys]))
-                        for family, keys in families.items()
-                    }
+                    family_b = _hierarchical_family_means(b_values, metadata)
+                    family_comparator = _hierarchical_family_means(
+                        comparator_values,
+                        metadata,
+                    )
                     family_delta = np.asarray(
                         [
                             family_b[family] - family_comparator[family]
-                            for family in sorted(families)
+                            for family in sorted(family_b)
                         ],
                         dtype=float,
                     )
@@ -819,7 +921,7 @@ def _family_macro_primary(
                         **_group_prefix(scope, fields, group_values),
                         "comparator": comparator,
                         "comparator_role": method_roles[comparator],
-                        "family_count": len(families),
+                        "family_count": len(family_delta),
                         "dataset_count": len(
                             {str(metadata[key]["dataset_id"]) for key in pair_keys}
                         ),
@@ -869,6 +971,7 @@ def _comparison_summaries(
     *,
     bootstrap_replicates: int,
     bootstrap_seed: int,
+    mase_degradation_threshold: float | None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     episode_keys = sorted(episodes)
@@ -949,6 +1052,12 @@ def _comparison_summaries(
                 "small_sample": len(mase_pairs) < SMALL_SAMPLE_THRESHOLD,
                 "bootstrap_replicates": (bootstrap_replicates if len(mase_pairs) >= 2 else 0),
             }
+            result.update(
+                _mase_tail_summary(
+                    paired[(comparator, "mase")]["delta"],
+                    degradation_threshold=mase_degradation_threshold,
+                )
+            )
             for metric in PAIRED_METRICS:
                 metric_pair = paired[(comparator, metric)]
                 pair_keys = metric_pair["keys"]
@@ -1096,9 +1205,10 @@ def _write_markdown(
     lines[4:4] = [
         "## Primary family-macro MASE comparisons",
         "",
-        "Families receive equal weight. Intervals resample family, dataset, then "
-        "item/mask-realization clusters. Holm-adjusted values correct all comparators "
-        "within the displayed stratum.",
+        "Families receive equal weight. Intervals resample family, dataset, item, "
+        "forecast origin, then mask realization. Repeated observations at a mask leaf "
+        "are averaged. Holm-adjusted values correct all comparators within the displayed "
+        "stratum.",
         "",
         *_markdown_table(
             (
@@ -1357,6 +1467,7 @@ def summarize_multi_forecaster(
     bootstrap_replicates: int = DEFAULT_BOOTSTRAP_REPLICATES,
     bootstrap_seed: int = DEFAULT_BOOTSTRAP_SEED,
     primary_comparator_roles: Sequence[str] | None = None,
+    mase_degradation_threshold: float | None = None,
 ) -> dict[str, Any]:
     """Aggregate evaluation directories into paired, grouped main-result tables."""
 
@@ -1364,6 +1475,10 @@ def summarize_multi_forecaster(
         raise ValueError("bootstrap_replicates must be positive")
     if bootstrap_seed < 0:
         raise ValueError("bootstrap_seed must be non-negative")
+    if mase_degradation_threshold is not None and (
+        not math.isfinite(mase_degradation_threshold) or mase_degradation_threshold < 0.0
+    ):
+        raise ValueError("mase_degradation_threshold must be finite and non-negative")
     normalized_primary_roles = (
         _DEFAULT_PRIMARY_COMPARATOR_ROLES
         if primary_comparator_roles is None
@@ -1387,6 +1502,7 @@ def summarize_multi_forecaster(
         ranks,
         bootstrap_replicates=bootstrap_replicates,
         bootstrap_seed=bootstrap_seed,
+        mase_degradation_threshold=mase_degradation_threshold,
     )
     primary_rows = _family_macro_primary(
         episodes,
@@ -1420,8 +1536,8 @@ def summarize_multi_forecaster(
         ),
         "scopes": [scope for scope, _ in SUMMARY_SCOPES],
         "bootstrap": {
-            "unit": "forecaster/dataset/episode",
-            "method": "paired nonparametric percentile bootstrap of the mean delta",
+            "unit": "family/dataset/item/forecast_origin/mask_realization",
+            "method": "five-level paired hierarchical percentile bootstrap",
             "confidence_level": 0.95,
             "replicates": bootstrap_replicates,
             "seed": bootstrap_seed,
@@ -1431,13 +1547,21 @@ def summarize_multi_forecaster(
             "metric": "mase",
             "weighting": "family_macro",
             "views": ["all_windows", "windows_with_missing"],
-            "interval": "family/dataset/item-mask hierarchical percentile bootstrap",
+            "interval": (
+                "family/dataset/item/forecast-origin/mask-realization "
+                "hierarchical percentile bootstrap"
+            ),
             "multiple_comparison_adjustment": "Holm within view and stratum",
             "comparator_roles": list(normalized_primary_roles),
         },
         "definitions": {
             "loss_direction": "lower is better",
             "mean_delta": "B-FAIS metric minus comparator metric on paired episodes",
+            "mase_tail_risk": (
+                "tail statistics use paired MASE deltas; CVaR90 and CVaR95 average the "
+                "largest ceil(10%) and ceil(5%) observations"
+            ),
+            "mase_degradation_threshold": mase_degradation_threshold,
             "win_rate": (
                 "strict fraction of paired episodes where B-FAIS has lower loss; "
                 "ties are reported separately"
@@ -1471,9 +1595,9 @@ def summarize_multi_forecaster(
                 "method_summary and comparison_summary are episode-weighted diagnostics; "
                 "family_macro_comparison_summary is the primary family-equal analysis"
             ),
-            "bootstrap_dependence_caveat": (
-                "episode bootstrap intervals do not adjust for dependence among rows that "
-                "share an item, forecast origin, family, or imputed context"
+            "bootstrap_leaf_rule": (
+                "repeated observations within one mask-realization leaf are averaged before "
+                "resampling"
             ),
             "inference": (
                 "the primary table reports two-sided family-level Wilcoxon p-values with "

@@ -22,6 +22,7 @@ from tsfm_fais.imputers import (
 )
 from tsfm_fais.stage_execution import (
     _allowed_devices,
+    _apply_router_feature_policy,
     _artifact_loading_manifest,
     _candidate_anchor_calibrations,
     _candidate_dataset_prior_statistics,
@@ -29,6 +30,7 @@ from tsfm_fais.stage_execution import (
     _context_item,
     _episode_iter,
     _execution_metadata,
+    _filter_router_training_families,
     _fit_candidate_params,
     _fit_resource_exclusion,
     _forecast_spec,
@@ -44,6 +46,7 @@ from tsfm_fais.stage_execution import (
     _supplement_candidate_outputs,
     _torch_device,
     _training_batch,
+    _training_mase_scale,
     _training_prefix_end,
 )
 from tsfm_fais.stages import StageInputs
@@ -97,6 +100,65 @@ def _item(length: int = 24) -> TimeSeriesItem:
         start=pd.Timestamp("2026-01-01"),
         freq="h",
     )
+
+
+def test_router_feature_policies_remove_only_declared_identity_inputs() -> None:
+    row = {
+        "prior_features": {
+            "dataset_id::toy": 1.0,
+            "family_id::family": 1.0,
+            "missing_mechanism::mixed_outage": 1.0,
+            "target_missing_rate": 0.4,
+            "forecast_model::chronos2": 1.0,
+            "candidate_id::locf": 1.0,
+            "candidate_family::statistical": 1.0,
+            "observed_std": 2.0,
+        },
+        "unary_features": {
+            "dataset_id::toy": 1.0,
+            "forecast_model::chronos2": 1.0,
+            "candidate_id::locf": 1.0,
+        },
+    }
+
+    deployment, _, deployment_removed = _apply_router_feature_policy(
+        [row], [], "deployment_available"
+    )
+    assert "forecast_model::chronos2" in deployment[0]["prior_features"]
+    assert "candidate_id::locf" in deployment[0]["prior_features"]
+    assert "candidate_family::statistical" in deployment[0]["prior_features"]
+    assert "dataset_id::toy" not in deployment[0]["prior_features"]
+    assert "target_missing_rate" not in deployment[0]["prior_features"]
+    assert "forecast_model::chronos2" not in deployment_removed
+
+    identity_free, _, identity_removed = _apply_router_feature_policy([row], [], "identity_free")
+    assert "forecast_model::chronos2" not in identity_free[0]["prior_features"]
+    assert "candidate_id::locf" in identity_free[0]["prior_features"]
+    assert "candidate_family::statistical" in identity_free[0]["prior_features"]
+    assert "forecast_model::chronos2" in identity_removed
+
+
+def test_router_family_filter_records_retained_and_removed_rows(tmp_path: Path) -> None:
+    config = _config(tmp_path, "  exclude_family_ids: [ett]")
+    rows = [
+        {"family_id": "ett", "row": 1},
+        {"family_id": "electricity", "row": 2},
+    ]
+    pairs = [
+        {"family_id": "ett", "row": 3},
+        {"family_id": "electricity", "row": 4},
+    ]
+
+    filtered_rows, filtered_pairs, manifest = _filter_router_training_families(config, rows, pairs)
+
+    assert [row["row"] for row in filtered_rows] == [2]
+    assert [row["row"] for row in filtered_pairs] == [4]
+    assert manifest["retained_family_ids"] == ["electricity"]
+    assert manifest["filtered_family_ids"] == ["ett"]
+    assert manifest["unary_rows_before"] == 2
+    assert manifest["unary_rows_after"] == 1
+    assert manifest["pair_rows_before"] == 2
+    assert manifest["pair_rows_after"] == 1
 
 
 def test_router_label_protocol_rejects_split_mismatch(tmp_path):
@@ -157,6 +219,36 @@ def test_router_label_protocol_accepts_matching_rolling_config(tmp_path):
     assert "forecast_batch_size" in protocol["label_protocol_fields"]
 
 
+def test_router_label_protocol_accepts_rolling_labels_for_leave_family_out(tmp_path):
+    base = _config(tmp_path)
+    config = base.model_copy(
+        update={"experiment": base.experiment.model_copy(update={"split": "leave_family_out"})}
+    )
+    labels = tmp_path / "teacher_labels.jsonl"
+    labels.write_text("", encoding="utf-8")
+    source_experiment = base.experiment.model_dump(mode="json")
+    (tmp_path / "labels_manifest.json").write_text(
+        json.dumps(
+            {
+                "split": "rolling_origin",
+                "origin_partition": "train",
+                "episode_sampling": {"partition": "train"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "resolved_config.json").write_text(
+        json.dumps({"config": {"experiment": source_experiment}}),
+        encoding="utf-8",
+    )
+
+    protocol = stage_execution._validate_router_label_protocol(config, labels)
+
+    assert protocol["label_split"] == "rolling_origin"
+    assert protocol["router_split"] == "leave_family_out"
+    assert protocol["split_transition"] == "rolling_origin->leave_family_out"
+
+
 def test_router_label_protocol_rejects_forecast_batch_mismatch(tmp_path):
     config = _config(tmp_path)
     labels = tmp_path / "teacher_labels.jsonl"
@@ -180,6 +272,255 @@ def test_router_label_protocol_rejects_forecast_batch_mismatch(tmp_path):
 
     with pytest.raises(ValueError, match="forecast_batch_size"):
         stage_execution._validate_router_label_protocol(config, labels)
+
+
+def _write_r2_label_metadata(
+    root: Path,
+    *,
+    source_config,
+    forecasters: list[str] | None = None,
+    active_mask_seeds: list[int] | None = None,
+    routing_target_protocol: str | None = None,
+) -> Path:
+    labels = root / "teacher_labels.jsonl"
+    labels.write_text("", encoding="utf-8")
+    manifest = {
+        "split": source_config.experiment.split,
+        "origin_partition": "train",
+        "episode_sampling": {"partition": "train"},
+        "active_mask_partition": "train",
+        "active_mask_seeds": (
+            list(source_config.experiment.seeds) if active_mask_seeds is None else active_mask_seeds
+        ),
+        "forecasters": (["chronos2", "timesfm2p5"] if forecasters is None else forecasters),
+    }
+    if routing_target_protocol is not None:
+        manifest["routing_target_protocol"] = routing_target_protocol
+    (root / "labels_manifest.json").write_text(
+        json.dumps(manifest),
+        encoding="utf-8",
+    )
+    (root / "resolved_config.json").write_text(
+        json.dumps({"config": source_config.model_dump(mode="json")}),
+        encoding="utf-8",
+    )
+    return labels
+
+
+def test_r2_reconstruction_labels_allow_only_the_sequence_protocol(tmp_path):
+    source_config = load_config(
+        "configs/iclr27-r2/internal-controls/reconstruction_labels_non_ett_train.yaml"
+    )
+    router_config = load_config("configs/iclr27-r2/internal-controls/seq_recon_train.yaml")
+    labels = _write_r2_label_metadata(
+        tmp_path,
+        source_config=source_config,
+        forecasters=["imputation"],
+        routing_target_protocol="sequence_imputation_quality_v1",
+    )
+
+    result = stage_execution._validate_router_label_protocol(
+        router_config,
+        labels,
+        expected_sequence_protocol=True,
+    )
+
+    assert result["forecaster_independent_labels"] is True
+    assert result["source_target_protocol"] == "masked_context_reconstruction_asmape_v1"
+    assert result["source_teacher_forecasters"] == []
+    with pytest.raises(ValueError, match="forecast-aware block labels"):
+        stage_execution._validate_router_label_protocol(
+            router_config,
+            labels,
+            expected_sequence_protocol=False,
+        )
+
+
+def test_r2_router_labels_allow_shared_targets_with_bound_train_partition(tmp_path):
+    source_config = load_config("configs/iclr27-r2/target-audit/full_candidate_non_ett_train.yaml")
+    router_config = load_config("configs/iclr27-r2/target-audit/block_local_non_ett_train.yaml")
+    labels = _write_r2_label_metadata(tmp_path, source_config=source_config)
+
+    result = stage_execution._validate_router_label_protocol(router_config, labels)
+
+    assert result["label_mask_seeds"] == [1101, 1102, 1103]
+    assert result["teacher_forecasters"] == ["chronos2", "timesfm2p5"]
+
+
+def test_r2_router_labels_allow_router_seed_repeats_to_share_labels(tmp_path):
+    source_config = load_config("configs/iclr27-r2/target-audit/full_candidate_non_ett_train.yaml")
+    router_config = load_config("configs/iclr27-r2/target-audit/block_local_non_ett_train.yaml")
+    labels = _write_r2_label_metadata(tmp_path, source_config=source_config)
+    source_payload = source_config.model_dump(mode="json")
+    source_payload["experiment"]["router_seed"] = 4102
+    (tmp_path / "resolved_config.json").write_text(
+        json.dumps({"config": source_payload}),
+        encoding="utf-8",
+    )
+
+    result = stage_execution._validate_router_label_protocol(router_config, labels)
+
+    assert result["label_mask_seeds"] == [1101, 1102, 1103]
+
+
+def test_r2_router_labels_allow_identity_free_filter_from_deployment_labels(tmp_path):
+    source_config = load_config("configs/iclr27-r2/target-audit/full_candidate_non_ett_train.yaml")
+    router_config = load_config(
+        "configs/iclr27-r2/target-audit/full_candidate_identity_free_non_ett_train.yaml"
+    )
+    labels = _write_r2_label_metadata(tmp_path, source_config=source_config)
+
+    result = stage_execution._validate_router_label_protocol(router_config, labels)
+
+    assert result["label_feature_policy"] == "deployment_available"
+    assert result["router_feature_policy"] == "identity_free"
+    assert result["feature_policy_transition"] == "deployment_available->identity_free"
+
+
+def test_r2_router_labels_reject_identity_free_labels_for_deployment_router(tmp_path):
+    source_config = load_config("configs/iclr27-r2/target-audit/full_candidate_non_ett_train.yaml")
+    router_config = load_config("configs/iclr27-r2/target-audit/full_candidate_non_ett_train.yaml")
+    labels = _write_r2_label_metadata(tmp_path, source_config=source_config)
+    source_payload = source_config.model_dump(mode="json")
+    source_payload["experiment"]["feature_policy"] = "identity_free"
+    (tmp_path / "resolved_config.json").write_text(
+        json.dumps({"config": source_payload}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="feature_policy"):
+        stage_execution._validate_router_label_protocol(router_config, labels)
+
+
+@pytest.mark.parametrize(
+    ("scope", "field", "value"),
+    (
+        ("root", "seed", 999),
+        ("experiment", "fit_prefix_fraction", 0.25),
+        ("experiment", "max_items_per_dataset", 3),
+        ("experiment", "max_train_origins_per_item", 3),
+        ("experiment", "max_train_episodes_per_dataset", 89),
+        ("experiment", "max_teacher_blocks_per_episode", 3),
+        ("experiment", "max_teacher_candidates_per_episode", 5),
+        ("experiment", "max_pair_labels_per_episode", 3),
+        ("experiment", "csdi_num_samples", 4),
+        ("experiment", "forecast_num_samples", 19),
+    ),
+)
+def test_r2_router_labels_reject_label_generation_mismatch(
+    tmp_path,
+    scope,
+    field,
+    value,
+):
+    source_config = load_config("configs/iclr27-r2/target-audit/full_candidate_non_ett_train.yaml")
+    router_config = load_config("configs/iclr27-r2/target-audit/block_local_non_ett_train.yaml")
+    labels = _write_r2_label_metadata(tmp_path, source_config=source_config)
+    source_payload = source_config.model_dump(mode="json")
+    if scope == "root":
+        source_payload[field] = value
+    else:
+        source_payload["experiment"][field] = value
+    (tmp_path / "resolved_config.json").write_text(
+        json.dumps({"config": source_payload}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="protocol|binding|root seed"):
+        stage_execution._validate_router_label_protocol(router_config, labels)
+
+
+def test_r2_router_labels_reject_non_train_mask_seeds(tmp_path):
+    source_config = load_config("configs/iclr27-r2/target-audit/full_candidate_non_ett_train.yaml")
+    router_config = load_config("configs/iclr27-r2/target-audit/block_local_non_ett_train.yaml")
+    source_payload = source_config.model_dump(mode="json")
+    source_payload["experiment"]["seeds"] = [3101, 3102, 3103]
+    labels = _write_r2_label_metadata(tmp_path, source_config=source_config)
+    (tmp_path / "resolved_config.json").write_text(
+        json.dumps({"config": source_payload}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="seeds"):
+        stage_execution._validate_router_label_protocol(router_config, labels)
+
+
+def test_r2_router_labels_reject_incomplete_teacher_set(tmp_path):
+    source_config = load_config("configs/iclr27-r2/target-audit/full_candidate_non_ett_train.yaml")
+    router_config = load_config("configs/iclr27-r2/target-audit/block_local_non_ett_train.yaml")
+    labels = _write_r2_label_metadata(
+        tmp_path,
+        source_config=source_config,
+        forecasters=["chronos2"],
+    )
+
+    with pytest.raises(ValueError, match="declared teacher set"):
+        stage_execution._validate_router_label_protocol(router_config, labels)
+
+
+def _r2_router_metadata(config) -> dict[str, object]:
+    assert config.protocol is not None
+    return {
+        "split": "rolling_origin",
+        "experiment_protocol": config.protocol.model_copy(
+            update={"active_mask_partition": "train"}
+        ).model_dump(mode="json"),
+        "feature_policy": config.experiment.feature_policy,
+        "router_seed": config.experiment.router_seed,
+        "selection_granularity": "block",
+        "routing_structure": "structured",
+        "uses_pairwise_model": True,
+        "ranker_target_protocol": config.protocol.target_protocol,
+        "family_filter": {
+            "include_family_ids": "all",
+            "exclude_family_ids": ["ett"],
+        },
+    }
+
+
+def test_r2_router_bundle_accepts_matching_train_artifact_for_development():
+    config = load_config("configs/iclr27-r2/target-audit/block_local_ett_development.yaml")
+    train_config = load_config("configs/iclr27-r2/target-audit/block_local_non_ett_train.yaml")
+    router = SimpleNamespace(metadata=_r2_router_metadata(train_config))
+
+    stage_execution._validate_router_bundle(
+        router,
+        "rolling_origin",
+        config=config,
+    )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    (
+        ("protocol", "protocol_id"),
+        ("target", "target_protocol"),
+        ("feature", "feature policy"),
+        ("seed", "router seed"),
+    ),
+)
+def test_r2_router_bundle_rejects_incompatible_artifact(mutation, message):
+    config = load_config("configs/iclr27-r2/target-audit/block_local_ett_development.yaml")
+    train_config = load_config("configs/iclr27-r2/target-audit/block_local_non_ett_train.yaml")
+    metadata = _r2_router_metadata(train_config)
+    if mutation == "protocol":
+        metadata["experiment_protocol"]["protocol_id"] = "wrong-protocol"  # type: ignore[index]
+    elif mutation == "target":
+        metadata["experiment_protocol"]["target_protocol"] = (  # type: ignore[index]
+            "full_candidate_forecast_loss_v2"
+        )
+    elif mutation == "feature":
+        metadata["feature_policy"] = "legacy"
+    else:
+        metadata["router_seed"] = 4102
+    router = SimpleNamespace(metadata=metadata)
+
+    with pytest.raises(ValueError, match=message):
+        stage_execution._validate_router_bundle(
+            router,
+            "rolling_origin",
+            config=config,
+        )
 
 
 def _item_with_id(item_id: str, length: int = 24) -> TimeSeriesItem:
@@ -212,6 +553,144 @@ def _origins(
 def _updated_config(config, **experiment_updates):
     experiment = config.experiment.model_copy(update=experiment_updates)
     return config.model_copy(update={"experiment": experiment})
+
+
+def _write_episode_plan_reference(
+    root: Path,
+    config,
+) -> tuple[Path, Path, Path]:
+    audit = root / "audit.json"
+    audit.write_text('{"datasets": []}\n', encoding="utf-8")
+    imputer_root = root / "imputers"
+    imputer_root.mkdir()
+    imputer_manifest = imputer_root / "manifest.json"
+    imputer_manifest.write_text('{"schema_version": 1}\n', encoding="utf-8")
+    reference_root = root / "reference"
+    reference_root.mkdir()
+    episode_id = "dataset__item-0__4__independent_block__0.25__7"
+    plan = {
+        "dataset_id": "dataset",
+        "selection_summary": {"selected_episode_count": 1},
+        "episode_ids": [episode_id],
+    }
+    plan["sha256"] = stage_execution._canonical_sha256(plan)
+    expectation = {
+        "artifact_index": 0,
+        "dataset_id": "dataset",
+        "family_id": "family",
+        "episode_id": episode_id,
+        "item_id": "item-0",
+        "forecast_origin": 4,
+        "dataset_plan_sha256": plan["sha256"],
+        "sampling_cell": {},
+    }
+    progress = {
+        "schema_version": 1,
+        "status": "rebuilt",
+        "completed_count": 1,
+        "resume_count": 0,
+        "repair_count": 0,
+        "identity": {
+            "audit_artifact": stage_execution._file_signature(audit),
+            "imputer_manifest": stage_execution._file_signature(imputer_manifest),
+            "source_artifacts": {
+                "data_manifest": stage_execution._file_signature(config.registries.data_manifest),
+                "imputer_registry": stage_execution._file_signature(
+                    config.registries.imputer_registry
+                ),
+            },
+        },
+        "dataset_plans": {"dataset": plan},
+        "entries": {
+            "00000000": {
+                "artifact_index": 0,
+                "expectation": expectation,
+            }
+        },
+    }
+    progress_path = reference_root / "labels_progress.json"
+    progress_path.write_text(json.dumps(progress), encoding="utf-8")
+    (reference_root / "labels_manifest.json").write_text(
+        json.dumps(
+            {
+                "split": config.experiment.split,
+                "origin_partition": "train",
+                "active_mask_seeds": list(config.experiment.seeds),
+                "dataset_ids": ["dataset"],
+                "expected_episode_count": 1,
+                "routing_target_protocol": "full_candidate_forecast_loss_v2",
+                "forecasters": ["chronos2"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (reference_root / "resolved_config.json").write_text(
+        json.dumps({"config": config.model_dump(mode="json")}),
+        encoding="utf-8",
+    )
+    return progress_path, audit, imputer_manifest
+
+
+def test_completed_episode_plan_reference_validates_lineage_and_counts(tmp_path):
+    config = _config(tmp_path)
+    progress, audit, imputer_manifest = _write_episode_plan_reference(tmp_path, config)
+
+    reference = stage_execution._load_episode_plan_reference(
+        progress,
+        config,
+        audit,
+        imputer_manifest,
+    )
+
+    assert reference.dataset_episode_ids == {
+        "dataset": ("dataset__item-0__4__independent_block__0.25__7",)
+    }
+    assert reference.lineage["episode_count"] == 1
+    assert reference.lineage["protocol"] == "completed_label_episode_plan_binding_v1"
+
+
+def test_completed_episode_plan_reference_rejects_sampling_config_drift(tmp_path):
+    config = _config(tmp_path)
+    progress, audit, imputer_manifest = _write_episode_plan_reference(tmp_path, config)
+    changed = _updated_config(config, context_length=config.experiment.context_length + 1)
+
+    with pytest.raises(ValueError, match="context_length"):
+        stage_execution._load_episode_plan_reference(
+            progress,
+            changed,
+            audit,
+            imputer_manifest,
+        )
+
+
+def test_episode_iterator_uses_exact_referenced_identity_order(tmp_path):
+    config = _config(tmp_path)
+    dataset = SimpleNamespace(dataset_id="synthetic")
+    item = _item()
+    eligible = stage_execution._episode_descriptor_grid(config, (item,), "train")
+    eligible_ids = tuple(
+        stage_execution._episode_descriptor_id(dataset.dataset_id, descriptor)
+        for descriptor in eligible
+    )
+    requested = (eligible_ids[-1], eligible_ids[0])
+    summary = {}
+
+    observed = tuple(
+        episode_id
+        for episode_id, _ in _episode_iter(
+            config,
+            dataset,
+            (item,),
+            partition="train",
+            selection_summary=summary,
+            reference_episode_ids=requested,
+            reference_dataset_plan_sha256="a" * 64,
+        )
+    )
+
+    assert observed == requested
+    assert summary["selection_algorithm"] == "completed_label_episode_plan_binding_v1"
+    assert summary["reference_dataset_plan_sha256"] == "a" * 64
 
 
 def test_episode_partitions_are_chronological_disjoint_and_complete(tmp_path):
@@ -276,6 +755,51 @@ def test_96_by_96_episode_plan_skips_only_series_without_one_full_forecast(tmp_p
     assert len(episodes) == 1
     assert episodes[0][1].context.shape == (1, 96, 3)
     assert episodes[0][1].clean_future.shape == (96, 3)
+
+
+def test_native_episode_plan_uses_only_observed_source_masks(tmp_path):
+    config = _updated_config(
+        _config(tmp_path),
+        split="leave_family_out",
+        context_length=8,
+        horizon=4,
+        forecast_stride=4,
+        masking_protocol="native_only",
+        target_indices=(0,),
+        min_future_target_observed_fraction=0.75,
+    )
+    source = _item(length=80)
+    values = source.values.copy()
+    values[10::10, 0] = np.nan
+    item = TimeSeriesItem(
+        source.item_id,
+        values,
+        source.variate_names,
+        source.start,
+        source.freq,
+        source.timestamps,
+        source.metadata,
+    )
+    summary = {}
+
+    episodes = list(
+        _episode_iter(
+            config,
+            SimpleNamespace(dataset_id="native"),
+            [item],
+            partition="eval",
+            selection_summary=summary,
+        )
+    )
+
+    assert episodes
+    assert summary["coverage"]["mechanism_rate_seed"]["eligible_level_count"] == 1
+    for episode_id, episode in episodes:
+        assert episode_id.endswith("__native__0__0")
+        assert episode.context.metadata["mask_protocol"] == "native_observation_mask_v1"
+        assert np.array_equal(episode.context.observed_mask[0], episode.context_truth_mask)
+        assert (~episode.context_truth_mask).any()
+        assert episode.future_observed_mask[:, 0].mean() >= 0.75
 
 
 def test_training_batch_uses_only_rolling_windows_before_episode_origins(tmp_path):
@@ -361,6 +885,68 @@ def test_training_batch_masks_only_fit_prefix_before_materializing_windows(
     assert masked_lengths == [fit_end]
     assert batch.shape[0] == 3
     assert batch.metadata["training_sampling_protocol"] == ("fit_prefix_descriptor_cap_v1")
+
+
+def test_training_batch_can_remove_all_complete_base_windows():
+    batch = _training_batch(
+        [_item(80)],
+        8,
+        4,
+        dataset_id="sensitivity",
+        masking_specs=(MaskingSpec("random_point", 0.1),),
+        configured_seeds=(7,),
+        fit_fraction=0.4,
+        training_stride=4,
+        training_base_mask="no_complete_window",
+        training_base_missing_rate=0.05,
+    )
+
+    assert batch.metadata["mask_protocol"] == "base_plus_sequence_mask_v1"
+    assert batch.metadata["complete_base_window_fraction"] == 0.0
+    assert any(fraction < 1.0 for fraction in batch.metadata["base_observed_fraction_by_variate"])
+
+
+def test_training_batch_reuses_persistent_base_mask_per_item(monkeypatch):
+    original = stage_execution.no_complete_window_base_mask
+    calls = 0
+
+    def record_base_mask(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(stage_execution, "no_complete_window_base_mask", record_base_mask)
+    batch = _training_batch(
+        [_item(80)],
+        8,
+        4,
+        max_windows=12,
+        dataset_id="sensitivity",
+        masking_specs=(
+            MaskingSpec("random_point", 0.1),
+            MaskingSpec("independent_block", 0.2),
+        ),
+        configured_seeds=(7, 8),
+        fit_fraction=0.4,
+        training_stride=4,
+        training_base_mask="no_complete_window",
+        training_base_missing_rate=0.1,
+    )
+
+    assert batch.shape[0] == 12
+    assert calls == 1
+
+
+def test_training_mase_scale_uses_only_observed_pairs():
+    history = np.asarray(
+        [[0.0, 0.0], [1.0, np.nan], [3.0, 4.0], [6.0, 8.0]],
+        dtype=float,
+    )
+
+    scale, lag = _training_mase_scale(history, period=1)
+
+    assert lag == 1
+    np.testing.assert_allclose(scale, [2.0, 4.0])
 
 
 def test_fit_resource_exclusion_is_candidate_metadata_driven():
@@ -498,6 +1084,96 @@ def test_dataset_episode_cap_is_deterministic_balanced_and_applied_before_build(
     for field in ("item", "seed"):
         coverage = first_summary["coverage"][field]
         assert coverage["selected_count_max"] - coverage["selected_count_min"] <= 1
+
+
+def test_episode_cap_covers_each_mechanism_rate_seed_cell_when_sufficient(tmp_path):
+    config = _updated_config(
+        _config(tmp_path),
+        missing_mechanisms=("random_point", "independent_block"),
+        missing_rates=(0.1, 0.2),
+        seeds=(11, 22, 33),
+        max_eval_origins_per_item=4,
+        max_eval_episodes_per_dataset=12,
+    )
+    summary = {}
+
+    episodes = list(
+        _episode_iter(
+            config,
+            SimpleNamespace(dataset_id="synthetic"),
+            [_item_with_id("item-a", 160)],
+            partition="eval",
+            selection_summary=summary,
+        )
+    )
+
+    cells = summary["coverage"]["mechanism_rate_seed"]
+    assert len(episodes) == 12
+    assert cells["eligible_level_count"] == 12
+    assert cells["selected_level_count"] == 12
+    assert set(cells["selected_counts"].values()) == {1}
+    assert summary["mechanism_rate_seed_full_coverage_required"] is True
+    assert summary["mechanism_rate_seed_full_coverage_achieved"] is True
+    assert summary["missing_mechanism_rate_seed_cells"] == []
+
+
+def test_episode_cap_reports_missing_mechanism_rate_seed_cells_when_insufficient(tmp_path):
+    config = _updated_config(
+        _config(tmp_path),
+        missing_mechanisms=("random_point", "independent_block"),
+        missing_rates=(0.1, 0.2),
+        seeds=(11, 22, 33),
+        max_eval_origins_per_item=4,
+        max_eval_episodes_per_dataset=5,
+    )
+    first_summary = {}
+    second_summary = {}
+
+    first = list(
+        _episode_iter(
+            config,
+            SimpleNamespace(dataset_id="synthetic"),
+            [_item_with_id("item-a", 160)],
+            partition="eval",
+            selection_summary=first_summary,
+        )
+    )
+    second = list(
+        _episode_iter(
+            config,
+            SimpleNamespace(dataset_id="synthetic"),
+            [_item_with_id("item-a", 160)],
+            partition="eval",
+            selection_summary=second_summary,
+        )
+    )
+
+    cells = first_summary["coverage"]["mechanism_rate_seed"]
+    assert [episode_id for episode_id, _ in first] == [episode_id for episode_id, _ in second]
+    assert first_summary == second_summary
+    assert cells["eligible_level_count"] == 12
+    assert cells["selected_level_count"] == 5
+    assert len(first_summary["missing_mechanism_rate_seed_cells"]) == 7
+    assert first_summary["mechanism_rate_seed_full_coverage_required"] is False
+    assert first_summary["mechanism_rate_seed_full_coverage_achieved"] is False
+
+
+def test_r2_episode_sampling_records_complete_mask_cell_consistency():
+    config = load_config("configs/iclr27-r2/target-audit/full_candidate_non_ett_train.yaml")
+
+    _, summary = stage_execution._episode_plan(
+        config,
+        SimpleNamespace(dataset_id="synthetic"),
+        [_item_with_id("item-a", 500)],
+        partition="train",
+    )
+
+    consistency = summary["revision_sampling_consistency"]
+    assert consistency["expected_mechanism_rate_seed_cells"] == 90
+    assert consistency["eligible_mechanism_rate_seed_cells"] == 90
+    assert consistency["selected_mechanism_rate_seed_cells"] == 90
+    assert consistency["missing_mechanism_rate_seed_cells"] == []
+    assert consistency["status"] == "complete"
 
 
 def test_episode_cap_preserves_episode_ids_seeds_and_future_isolation(tmp_path):
