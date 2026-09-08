@@ -1,0 +1,204 @@
+\begin{tikzpicture}[
+  x=1cm,
+  y=1cm,
+  font=\fontsize{8}{9.2}\selectfont,
+  flow/.style={-{Latex[length=1.8mm,width=1.3mm]}, line width=0.85pt, draw=bfgray},
+  trainflow/.style={-{Latex[length=1.6mm,width=1.2mm]}, line width=0.8pt, draw=bfpurple},
+  panel/.style={rounded corners=2.2pt, line width=0.8pt, inner sep=0pt},
+  stepbadge/.style={circle, minimum size=4.8mm, inner sep=0pt,
+    font=\bfseries\fontsize{8}{8}\selectfont, text=white},
+  card/.style={rounded corners=2pt, line width=0.75pt, inner sep=0pt},
+  micro/.style={rounded corners=1.5pt, line width=0.55pt, align=center,
+    inner xsep=2.5pt, inner ysep=2pt},
+  ladder/.style={rounded corners=2pt, draw=bfgray, fill=white, line width=0.65pt,
+    minimum height=7.6mm, align=center, inner xsep=3pt, inner ysep=1.6pt}
+]
+\path[use as bounding box] (0,-1.55) rectangle (13.72,8.82);
+
+% -----------------------------------------------------------------------------
+% Offline forecast teacher
+% -----------------------------------------------------------------------------
+\draw[panel, draw=bfpurple, fill=bfpurplefill] (0,6.90) rectangle (13.72,8.80);
+\node[anchor=west, text=bfpurple, font=\bfseries\footnotesize] at (0.18,8.52)
+  {OFFLINE FORECAST TEACHER};
+\node[anchor=west, text=bfgray] at (0.18,8.20)
+  {historical origins; the future is observed only during supervision};
+
+\node[micro, draw=bfpurple, fill=white, text width=1.52cm, minimum height=0.72cm]
+  (hist) at (2.62,7.52) {context $C_e$\\future $Y_e$};
+\node[micro, draw=bfpurple, fill=white, text width=1.78cm, minimum height=0.72cm]
+  (complete) at (4.78,7.52) {candidate completion\\$I_a(C_e)$};
+\node[micro, draw=bfpurple, fill=white, text width=1.22cm, minimum height=0.72cm]
+  (teacherf) at (6.81,7.52) {frozen TSFM\\$f(\cdot)$};
+\node[micro, draw=bfpurple, fill=white, text width=1.85cm, minimum height=0.72cm]
+  (labels) at (8.99,7.52) {future MASE\\+ pair effects};
+\node[micro, draw=bfpurple, fill=white, text width=2.05cm, minimum height=0.72cm]
+  (models) at (11.65,7.52) {fixed risk rankers\\+ pair model};
+\draw[trainflow] (hist) -- (complete);
+\draw[trainflow] (complete) -- (teacherf);
+\draw[trainflow] (teacherf) -- (labels);
+\draw[trainflow] (labels) -- (models);
+
+% -----------------------------------------------------------------------------
+% Six-step deployment pipeline
+% -----------------------------------------------------------------------------
+\draw[panel, draw=bfblue, fill=bfgrayfill] (0,0.32) rectangle (13.72,6.65);
+\node[anchor=west, text=bfblue, font=\bfseries\footnotesize] at (0.18,6.38)
+  {DEPLOYMENT PIPELINE};
+\node[anchor=east, text=bfpurple] (fixedmodels) at (13.48,6.38)
+  {fixed learned scorers; forecast future $Y_t$ unavailable};
+\draw[trainflow] (models.south) -- (fixedmodels.north);
+
+% Step 1 -----------------------------------------------------------------------
+\draw[card, draw=bfblue, fill=bfbluefill] (0.18,3.65) rectangle (4.20,6.05);
+\node[stepbadge, fill=bfblue] at (0.53,5.65) {1};
+\node[anchor=west, font=\bfseries\footnotesize, text=bfink,
+  text width=2.95cm, align=left] at (0.86,5.65)
+  {Extract blocks};
+\begin{scope}[shift={(0.47,4.35)}]
+  \draw[draw=bfmuted, line width=0.45pt] (0,0) rectangle (1.18,0.74);
+  \foreach \yy in {0.19,0.37,0.55} {
+    \draw[draw=bfgrid, line width=0.3pt] (0.06,\yy) -- (1.12,\yy);
+  }
+  \draw[draw=bfblue, line width=0.75pt]
+    (0.06,0.13)--(0.23,0.23)--(0.39,0.15)--(0.57,0.28);
+  \draw[draw=bfblue, line width=0.75pt]
+    (0.79,0.25)--(0.95,0.16)--(1.12,0.25);
+  \draw[draw=bfblue, line width=0.75pt]
+    (0.06,0.42)--(0.23,0.54)--(0.40,0.45);
+  \draw[draw=bfblue, line width=0.75pt]
+    (0.63,0.54)--(0.81,0.44)--(1.12,0.56);
+  \draw[draw=bforange, fill=bforangefill, line width=0.65pt, densely dashed]
+    (0.55,0.07) rectangle (0.80,0.32);
+  \draw[draw=bforange, fill=bforangefill, line width=0.65pt, densely dashed]
+    (0.39,0.38) rectangle (0.64,0.62);
+\end{scope}
+\node[anchor=north west, align=left, text=bfink, text width=2.28cm] at (1.68,4.85)
+  {maximal runs $\mathcal B$\\[0.25mm]
+   block geometry\\[0.25mm]
+   mask/context};
+
+% Step 2 -----------------------------------------------------------------------
+\draw[card, draw=bforange, fill=bforangefill] (4.85,3.65) rectangle (8.87,6.05);
+\node[stepbadge, fill=bforange] at (5.20,5.65) {2};
+\node[anchor=west, font=\bfseries\footnotesize, text=bfink,
+  text width=2.95cm, align=left] at (5.53,5.65)
+  {Shortlist candidates};
+\begin{scope}[shift={(5.18,4.38)}]
+  \foreach \yy/\ww in {0.00/0.72,0.22/0.92,0.44/0.58} {
+    \draw[rounded corners=1pt, draw=bforange, fill=white, line width=0.55pt]
+      (0,\yy) rectangle (\ww,\yy+0.14);
+  }
+  \node[text=bforange] at (0.46,0.86) {$R_0$};
+\end{scope}
+\node[anchor=north west, align=left, text=bfink, text width=2.25cm] at (6.45,4.85)
+  {prior ranker $R_0$\\[0.25mm]
+   top $K\!\leq\!6$\\[0.25mm]
+   + LOCF, linear};
+
+% Step 3 -----------------------------------------------------------------------
+\draw[card, draw=bforange, fill=bforangefill] (9.52,3.65) rectangle (13.54,6.05);
+\node[stepbadge, fill=bforange] at (9.87,5.65) {3};
+\node[anchor=west, font=\bfseries\footnotesize, text=bfink,
+  text width=2.95cm, align=left] at (10.20,5.65)
+  {Probe evidence};
+\begin{scope}[shift={(9.83,4.39)}]
+  \foreach \dx/\dy in {0.00/0.00,0.10/0.08,0.20/0.16} {
+    \draw[rounded corners=1pt, draw=bforange, fill=white, line width=0.55pt]
+      (\dx,\dy) rectangle +(0.72,0.48);
+  }
+  \node[text=bforange] at (0.57,0.40) {$I_a$};
+\end{scope}
+\node[anchor=north west, align=left, text=bfink, text width=2.25cm] at (11.10,4.85)
+  {actual context\\[0.25mm]
+   8 pseudo gaps\\[0.25mm]
+   coverage/error/bias};
+
+% Step 4 -----------------------------------------------------------------------
+\draw[card, draw=bforange, fill=bforangefill] (9.52,0.62) rectangle (13.54,3.02);
+\node[stepbadge, fill=bforange] at (9.87,2.62) {4};
+\node[anchor=west, font=\bfseries\footnotesize, text=bfink,
+  text width=2.95cm, align=left] at (10.20,2.62)
+  {Refine unary risks};
+\begin{scope}[shift={(9.86,1.35)}]
+  \foreach \row in {0,...,2} {
+    \foreach \col in {0,...,3} {
+      \pgfmathtruncatemacro{\tone}{20+14*mod(2*\row+\col,4)}
+      \fill[bforange!\tone] (0.21*\col,0.19*\row) rectangle +(0.18,0.16);
+      \draw[white, line width=0.25pt] (0.21*\col,0.19*\row) rectangle +(0.18,0.16);
+    }
+  }
+\end{scope}
+\node[anchor=north west, align=left, text=bfink, text width=2.25cm] at (11.10,1.85)
+  {refined $R(b,a)$\\[0.25mm]
+   block--candidate risks};
+
+% Step 5 -----------------------------------------------------------------------
+\draw[card, draw=bfteal, fill=bftealfill] (4.85,0.62) rectangle (8.87,3.02);
+\node[stepbadge, fill=bfteal] at (5.20,2.62) {5};
+\node[anchor=west, font=\bfseries\footnotesize, text=bfink,
+  text width=2.95cm, align=left] at (5.53,2.62)
+  {Assign jointly};
+\begin{scope}[shift={(5.16,1.34)}]
+  \draw[draw=bfteal, line width=0.65pt] (0.08,0.10)--(0.52,0.54)--(0.94,0.10);
+  \draw[draw=bfteal, line width=0.65pt, densely dashed] (0.08,0.10)--(0.94,0.10);
+  \foreach \x/\y in {0.08/0.10,0.52/0.54,0.94/0.10} {
+    \node[circle, draw=bfteal, fill=white, line width=0.55pt,
+      minimum size=3.5mm, inner sep=0pt] at (\x,\y) {};
+  }
+\end{scope}
+\node[anchor=north west, align=left, text=bfink, text width=2.25cm] at (6.40,1.85)
+  {unary + pair risks\\[0.25mm]
+   gated beam search\\[0.25mm]
+   repair on failure};
+
+% Step 6 -----------------------------------------------------------------------
+\draw[card, draw=bfteal, fill=bftealfill] (0.18,0.62) rectangle (4.20,3.02);
+\node[stepbadge, fill=bfteal] at (0.53,2.62) {6};
+\node[anchor=west, font=\bfseries\footnotesize, text=bfink,
+  text width=2.95cm, align=left] at (0.86,2.62)
+  {Complete \& forecast};
+\begin{scope}[shift={(0.48,1.40)}]
+  \draw[draw=bfteal, fill=white, line width=0.55pt] (0,0) rectangle (0.60,0.58);
+  \foreach \yy in {0.15,0.29,0.43} {
+    \draw[draw=bfgrid, line width=0.3pt] (0.06,\yy)--(0.54,\yy);
+  }
+  \fill[bfteal!30] (0.20,0.17) rectangle (0.38,0.27);
+  \fill[bfteal!30] (0.35,0.32) rectangle (0.50,0.42);
+  \draw[flow] (0.68,0.29) -- (0.98,0.29);
+  \node[micro, draw=bfteal, fill=white, text width=0.82cm, minimum height=0.45cm]
+    at (1.38,0.29) {TSFM};
+  \draw[flow] (1.79,0.29) -- (2.07,0.29);
+  \draw[draw=bfteal, line width=0.85pt]
+    (2.10,0.16)--(2.28,0.30)--(2.46,0.22)--(2.66,0.45)--(2.84,0.35);
+\end{scope}
+\node[anchor=east, text=bfink] at (3.96,1.05)
+  {$Z(\mathbf a)\rightarrow f(\cdot)\rightarrow\widehat Y$};
+
+% Deployment flow: top row left-to-right, then bottom row right-to-left.
+\draw[flow] (4.20,4.85) -- (4.85,4.85);
+\draw[flow] (8.87,4.85) -- (9.52,4.85);
+\draw[flow] (11.53,3.65) -- (11.53,3.02);
+\draw[flow] (9.52,1.82) -- (8.87,1.82);
+\draw[flow] (4.85,1.82) -- (4.20,1.82);
+
+% -----------------------------------------------------------------------------
+% Registered one-factor ladder
+% -----------------------------------------------------------------------------
+\draw[panel, draw=bfmuted, fill=white] (0,-1.48) rectangle (13.72,0.12);
+\node[anchor=west, text=bfgray, font=\bfseries\footnotesize] at (0.18,-0.14)
+  {REGISTERED ONE-FACTOR CONTROLS};
+\node[ladder, text width=1.96cm] (recon) at (1.40,-0.94)
+  {\segrecon\\reconstruction / sequence};
+\node[ladder, text width=1.96cm] (forecast) at (4.53,-0.94)
+  {\segforecast\\forecast / sequence};
+\node[ladder, text width=2.12cm] (ind) at (7.75,-0.94)
+  {\indblock\\forecast / per-block};
+\node[ladder, draw=bfteal, fill=bftealfill, line width=0.9pt,
+  text width=2.78cm, minimum height=9.8mm]
+  (struct) at (11.35,-0.94)
+  {\bfseries B-FAIS core\\\strblock\\graph + beam};
+\draw[flow] (recon) -- node[above, text=bfgray] {target} (forecast);
+\draw[flow] (forecast) -- node[above, text=bfgray] {granularity} (ind);
+\draw[flow] (ind) -- node[above, text=bfgray] {structure} (struct);
+\end{tikzpicture}

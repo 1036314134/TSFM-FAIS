@@ -1,0 +1,342 @@
+\section{Detailed Experimental Protocol}
+\label{app:protocol}
+
+\subsection{Episode construction and partitions}
+
+Table~\ref{tab:protocol-details} records the fixed R2 episode protocol. Each complete source sequence is split temporally. Candidate imputers fit only on the first 20\% prefix. Earlier eligible origins after that prefix generate router labels, and later origins form evaluation episodes. Synthetic masks are generated on the complete sequence before contexts are sliced, so methods share the same realization and an origin does not receive a favorable redraw.
+
+\begin{table}[h]
+\caption{R2 episode construction. Dataset caps are reached in the common-16 and LOFO analyses.}
+\label{tab:protocol-details}
+\centering
+\small
+\begin{tabular}{ll}
+\toprule
+Setting & Value \\
+\midrule
+Context / horizon / forecast stride & 96 / 96 / 96 \\
+Training-window stride & 24 \\
+Candidate fit prefix & first 20\% of each sequence \\
+Forecast targets & registered variables 0 and 1 \\
+Items / train origins / evaluation origins & at most 4 / 4 / 4 \\
+Training episodes per dataset & at most 90 \\
+Evaluation episodes per dataset & 90 \\
+Missing block lengths & 6, 12, 24, 48 \\
+Missing rates & .1, .2, .3, .4, .5 \\
+Training mask seeds & 1101, 1102, 1103 \\
+ETT development mask seeds & 2101, 2102, 2103 \\
+Confirmation mask seeds & 3101, 3102, 3103 \\
+Router seeds & 4101, 4102, 4103, 4104, 4105 \\
+Global sampling seed & 20260806 \\
+Forecast samples & 20 \\
+Bootstrap replicates / seed & 5,000 / 20260806 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The six generators are random points, independent blocks, synchronous blocks, staggered correlated blocks, value-dependent blocks, and a mixture of independent blocks and random points. The labels describe deterministic stress-test implementations and do not assert the natural missing-data processes defined in statistical missingness theory \citep{rubin1976inference}. Each dataset contributes one episode for every generator--rate--seed cell, yielding $6\times5\times3=90$ episodes. The common-16 population contains 2,340 episodes per forecaster. Its 140 zero-block windows result from slicing the registered full-sequence masks; every selector is a no-op on those windows. The remaining 2,200 windows contain at least one missing context cell.
+
+\subsection{Dataset inventory}
+
+The ETT family \citep{zhou2021informer} is used only for development. Housing Inventory is excluded because 114 observations cannot support a 96-step context and 96-step future. Job Claims has one eligible evaluation origin. It cannot be separated from its rolling training origin, so common-16 excludes it; LOFO assigns that origin to held-out evaluation and includes a seventeenth family. Table~\ref{tab:data-inventory-r2} lists the 26 common-16 versions. Several sources are represented in the Monash forecasting archive \citep{godahewa2021monash}; all source terms remain attached to the local data manifests.
+
+\begin{table}[h]
+\caption{Common-16 confirmation families and dataset versions. Job Claims is added only to LOFO-17.}
+\label{tab:data-inventory-r2}
+\centering
+\scriptsize
+\begin{tabular}{p{0.24\linewidth}p{0.68\linewidth}}
+\toprule
+Family & Dataset versions \\
+\midrule
+Azure 2019 & \path{azure2019_D_5T}, \path{azure2019_I_5T}, \path{azure2019_U_5T} \\
+Coastal TS & \path{Coastal_T_S_15T}, \path{Coastal_T_S_20T}, \path{Coastal_T_S_H} \\
+Current velocity & \path{current_velocity_5T}, \path{current_velocity_15T}, \path{current_velocity_20T}, \path{current_velocity_H} \\
+Electricity & \path{electricity} \\
+EWELD load & \path{EWELD_Load_15T} \\
+Exchange rate & \path{exchange_rate} \\
+JOLTS & \path{JOLTS_M} \\
+National illness & \path{national_illness} \\
+NE China wind & \path{NE_China_Wind_H} \\
+OpenElectricity NEM & \path{OpenElectricity_NEM_5T} \\
+Port activity & \path{Port_Activity_D}, \path{Port_Activity_W} \\
+Supply chain & \path{Supply_Chain_Customer_D}, \path{Supply_Chain_Location_D} \\
+Traffic & \path{traffic} \\
+Uncertainty & \path{Uncertainty_1M_M} \\
+US labor & \path{US_Labor_M} \\
+Vehicle & \path{Vehicle_Sales_M}, \path{Vehicle_Supply_M} \\
+\midrule
+LOFO-only addition & \path{Job_Claims_W} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Candidate registry and native validity}
+
+The registry contains 20 entries. TRMF is disabled because the installed PyPOTS~1.5 wrapper exposes a transductive interface that conflicts with rolling fit and inference. The other 19 candidates execute behind a common fit/impute interface. Candidate output is checked before the common numerical repair. A repaired value can keep a forecaster input finite, yet it never changes the candidate's native-valid status.
+
+\begin{table}[h]
+\caption{Executed imputation candidates.}
+\label{tab:candidate-pool-r2}
+\centering
+\small
+\begin{tabular}{p{0.25\linewidth}p{0.66\linewidth}}
+\toprule
+Group & Candidates \\
+\midrule
+Temporal rules & LOCF, linear interpolation, seasonal lag \\
+State-space and GP & Kalman local trend, Kalman AR, STL--Kalman, GP--RBF \\
+Multivariate statistical & KNN, MICE, MissForest, SoftImpute \\
+Specialized neural & BRITS, GP-VAE, SAITS, CSDI, ImputeFormer, HELIX \\
+General time-series & TimeMixer++, TOTEM \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The shortlist always contains LOCF and linear interpolation, then adds up to four candidates using predicted risk reduction divided by measured execution cost. Shortlisting is the only active compute penalty because the assignment cost coefficient is zero. Deep candidates use ten training epochs, batch size 16, and the repository-specific adapters. CSDI generates five imputation samples. These common budgets make the experiment reproducible; they do not establish each candidate's best attainable accuracy.
+
+\subsection{Forecaster interfaces}
+
+The TimesFM adapter uses \path{google/timesfm-2.5-200m-pytorch} \citep{google2025timesfm25} and predicts each target independently. Chronos-2 uses \path{amazon/chronos-2} \citep{ansari2025chronos2}, receives a joint multivariate context, and supplies its median predictive quantile for point MASE. Sundial uses \path{thuml/sundial-base-128m} at snapshot \path{3212e42564493f520593e5414af4367fc4b49226} and predicts each target independently. Sundial supplies no teacher labels and is absent from ETT development.
+
+\section{Method and Control Details}
+\label{app:method-details}
+
+\subsection{Training targets}
+
+The teacher stores three forecast targets for a candidate row. Complete-candidate loss evaluates a context filled entirely by one candidate. Single-block loss replaces one block in a common anchor and records the resulting forecast loss. The coordination-adjusted target adds sampled interaction information. A separate reconstruction label measures masked-context absolute symmetric percentage error and is used only by \segrecon and the external sequence selectors.
+
+Table~\ref{tab:target-development} gives the ETT development outcome that selected complete-candidate loss. These are development means, with no independent family replication. They justify configuration choice and are excluded from confirmatory claims. The learned-only evidence row uses the refined ranker score. The registered blend additionally uses a raw pseudo-error proxy and a historical candidate prior.
+
+\begin{table}[h]
+\caption{ETT development decisions. Lower MASE or negative learned-minus-blend difference is preferred. No confirmatory inference is attached to this table.}
+\label{tab:target-development}
+\centering
+\small
+\begin{tabular}{lrrr}
+\toprule
+Ranker target & Chronos-2 & TimesFM 2.5 & Combined \\
+\midrule
+Complete-candidate forecast loss & 1.456 & 1.643 & 1.550 \\
+Single-block forecast loss & 1.534 & 1.721 & 1.628 \\
+Coordination-adjusted target & 1.763 & 1.706 & 1.735 \\
+\midrule
+Learned-only $-$ registered blend & $-.0348$ & $-.0135$ & -- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+For the selected target, complete-candidate loss is repeated for candidate rows associated with sampled blocks. The ranker can condition on the block features, while the label itself evaluates the full candidate completion. This detail matters when interpreting H2: the block selector changes assignment granularity without introducing a locally observed block target.
+
+\subsection{Feature policies}
+
+The deployment-available policy removes \path{dataset_id::*}, \path{family_id::*}, \path{missing_mechanism::*}, and the generator-provided target missing rate. Local and global missing fractions computed from the visible context remain available. The identity-free policy additionally removes \path{forecast_model::*}; candidate identity and candidate family remain because the selector must distinguish candidates. Table~\ref{tab:feature-groups-r2} lists the retained groups.
+
+\begin{table}[h]
+\caption{Router feature groups. All quantities are available from training history, the corrupted context, candidate metadata, or candidate outputs.}
+\label{tab:feature-groups-r2}
+\centering
+\small
+\begin{tabular}{p{0.24\linewidth}p{0.67\linewidth}}
+\toprule
+Group & Examples \\
+\midrule
+Block geometry & variable, start/end, length, relative position, boundary availability, local missing fraction \\
+Episode context & visible missing fraction, variable count, seasonal period, training-prefix summaries \\
+Candidate descriptors & candidate and family identity, fit scope, tail/period capability, stochastic flag, device and measured cost \\
+Pseudo evidence & native coverage, MAE, RMSE, bias, uncertainty, output summaries, matched pseudo-block geometry \\
+Pair descriptors & edge type and weight, overlap or gap, correlation, block-pair geometry, candidate pair, output summaries \\
+Forecaster descriptors & forecaster identity, context mode, target granularity, output type; removed for identity-free transfer \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Graph, pair labels, and solvers}
+
+Same-variable neighboring blocks receive a gap-decayed edge. Cross-variable blocks are connected when their time ranges overlap or touch, and nearby blocks can be connected when their variables are correlated in the fit prefix. Degree limits prevent dense graphs under synchronous point loss. Pair labels use a second-order counterfactual difference:
+\begin{align}
+\Phi_{bc}(a,a')={}&\mathcal L_f(A^{b\leftarrow a,c\leftarrow a'},Y)
+-\mathcal L_f(A^{b\leftarrow a},Y)\nonumber\\
+&-\mathcal L_f(A^{c\leftarrow a'},Y)+\mathcal L_f(A,Y),
+\end{align}
+where $A$ is a common complete anchor. At most four blocks, six candidates, and four pair labels are sampled per teacher episode. Structured inference uses beam width 32 and omits pair terms above 512 blocks. Independent block inference takes a valid per-block argmin. Sequence inference requires one candidate to be valid for every block and selects the candidate with lowest mean unary score.
+
+\subsection{External selector adaptations}
+
+The external methods keep their sequence-level decision unit and reconstruction-based objective. MetaOD predicts a latent task representation; ALORS learns collaborative task--candidate factors; DSelect-1 uses one sparse expert gate; NeuralUCB uses a contextual-bandit score; random-valid samples uniformly from candidates valid for the full episode. HybridLSTM uses fixed 48-step univariate windows and its method-specific pool. Appendix results report coverage separately because it lacks a valid output on some windows. Exact hyperparameters are frozen in \path{configs/iclr27-r2/baseline-selectors/}.
+
+\section{Full Confirmatory and Sensitivity Results}
+\label{app:full-results}
+
+\subsection{Six fixed tests}
+
+Table~\ref{tab:six-fixed} is the global multiplicity family. H1, H2, H3, and H5 contain every required component. H4 and H6 are incomplete under registered availability rules. Every adjusted value is one, and no row is eligible for a superiority statement.
+
+\begin{table}[h]
+\caption{Global six-test decision table. An unavailable required component forces the joint raw value to one.}
+\label{tab:six-fixed}
+\centering
+\small
+\begin{tabular}{lrrcc}
+\toprule
+Test & Joint raw $p$ & Holm $p$ & Complete & Superiority eligible \\
+\midrule
+H1: forecast versus reconstruction & .743561 & 1.000 & yes & no \\
+H2: block versus sequence & .463745 & 1.000 & yes & no \\
+H3: structured versus independent & .463745 & 1.000 & yes & no \\
+H4: core versus selected external & 1.000000 & 1.000 & no & no \\
+H5: LOFO core versus sequence & .377823 & 1.000 & yes & no \\
+H6: Sundial transfer & 1.000000 & 1.000 & no & no \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The H4 development selection covered all six registered external methods on ETT. HybridLSTM produced 100 ineligible primary episodes out of 360 for Chronos-2 and the same count for TimesFM~2.5. The registered rule \path{missing_duplicate_ineligible_or_nonfinite_primary_row_stops_decision} therefore stopped scoring and left the selected method null. For H6, the fixed-candidate branch found no candidate satisfying its availability floor. These outcomes are retained as unavailable components rather than replaced after observing confirmation results.
+
+\subsection{Tail behavior of complete components}
+
+Table~\ref{tab:component-tail} reports paired episode degradation for every available fixed-test component. The median is zero for all rows because many candidate assignments coincide. Positive upper tails remain substantial for H1, H2, H5, and H6. H3 has the smallest tail differences, consistent with the near-identical structured and independent assignments.
+
+\begin{table}[h]
+\caption{Tail statistics for tested-minus-reference MASE. Worse rate is the fraction with positive paired difference.}
+\label{tab:component-tail}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{3.2pt}
+\begin{tabular}{lllrrrr}
+\toprule
+Test & Forecaster & Contrast & CVaR90 & CVaR95 & Maximum & Worse rate \\
+\midrule
+H1 & Chronos-2 & Forecast $-$ Recon & 1.834 & 3.089 & 44.872 & 33.1\% \\
+H1 & TimesFM 2.5 & Forecast $-$ Recon & 1.586 & 2.710 & 44.219 & 30.5\% \\
+H2 & Chronos-2 & Block $-$ Sequence & .901 & 1.555 & 29.616 & 34.4\% \\
+H2 & TimesFM 2.5 & Block $-$ Sequence & .479 & .798 & 5.009 & 24.4\% \\
+H3 & Chronos-2 & Structured $-$ Independent & .133 & .262 & 6.579 & 11.6\% \\
+H3 & TimesFM 2.5 & Structured $-$ Independent & .024 & .047 & .927 & 4.2\% \\
+H5 & Chronos-2 & LOFO core $-$ sequence & 1.384 & 2.412 & 46.320 & 31.5\% \\
+H5 & TimesFM 2.5 & LOFO core $-$ sequence & .684 & 1.085 & 5.088 & 27.2\% \\
+H6 & Sundial & held-out core $-$ sequence & .596 & 1.056 & 55.286 & 24.1\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Descriptive external-selector comparisons}
+
+Table~\ref{tab:external-descriptive} gives family-macro core-minus-external differences for pairable methods. The common-16 columns contain 2,340 paired episodes and 16 families; LOFO contains 2,430 episodes and 17 families. These rows have no confirmatory intervals because H4 selection stopped. HybridLSTM has 1,745 eligible common-16 episodes and 1,884 eligible LOFO episodes, which is below complete coverage.
+
+\begin{table}[h]
+\caption{Descriptive family-macro differences against external sequence selectors. Negative values favor the \bfais core. C, T, and S denote Chronos-2, TimesFM~2.5, and Sundial.}
+\label{tab:external-descriptive}
+\centering
+\small
+\setlength{\tabcolsep}{4.1pt}
+\begin{tabular}{lrrrrr}
+\toprule
+Method & Common C & Common T & Common S & LOFO C & LOFO T \\
+\midrule
+MetaOD & $-.376$ & $-.464$ & $-.540$ & $-.121$ & $-.256$ \\
+DSelect-1 & $-4.410$ & $-3.615$ & $-4.600$ & $-1.998$ & $-2.564$ \\
+NeuralUCB & $-.462$ & $-.586$ & $-.717$ & $-.858$ & $-.549$ \\
+ALORS & $-1.718$ & $-1.236$ & $-1.101$ & $-.824$ & $-.803$ \\
+Random-valid & $-2.320$ & $-1.429$ & $-1.986$ & $-3.239$ & $-2.586$ \\
+HybridLSTM & unavailable & unavailable & unavailable & unavailable & unavailable \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Router-seed verification}
+
+All five rolling router seeds are present with distinct model and summary hashes. The resulting core family-macro MASE is identical at the reported precision: 7.516111 for Chronos-2 and 2.334864 for TimesFM~2.5 for seeds 4101 through 4105. The primary fixed tests use seed 4101 as registered. Seed identity is passed into both LambdaMART models and the pair regressor; it is not only encoded in the output directory name.
+
+\subsection{Incomplete-prefix sensitivity}
+
+The main synthetic protocol fits candidate models on a complete first-20\% prefix. The sensitivity run corrupts that prefix at 10\% and enforces that no training window is complete. Table~\ref{tab:prefix-sensitivity} compares this run with the standard-prefix core under planned episode identities and distinct mask realization records. Family-macro intervals cross zero, while the upper episode tail grows sharply.
+
+\begin{table}[h]
+\caption{No-complete-prefix minus standard-prefix sensitivity on 2,340 pairs and 16 families.}
+\label{tab:prefix-sensitivity}
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Forecaster & Family $\Delta$ & 95\% CI & CVaR95 & Maximum & Worse rate \\
+\midrule
+Chronos-2 & $+.078$ & $[-.055,.396]$ & 6.171 & 220.815 & 43.0\% \\
+TimesFM 2.5 & $+.018$ & $[-.075,.136]$ & 2.243 & 44.895 & 37.9\% \\
+Sundial & $+.023$ & $[-.079,.141]$ & 1.878 & 39.890 & 37.8\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Natural-missing details}
+
+Every Beijing episode contains at least one native gap. The mean context missing fraction is 3.33\%, with a range from 0.09\% to 26.99\%. Table~\ref{tab:native-tail} adds distributional statistics for \bfais. The oracle selects the lowest-MASE native-valid candidate per episode and is diagnostic only.
+
+\begin{table}[h]
+\caption{Distribution of \bfais MASE on the 72 natural-missing episodes.}
+\label{tab:native-tail}
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Forecaster & Mean & Median & P95 & CVaR95 & Oracle mean \\
+\midrule
+Chronos-2 & 1.012 & 1.087 & 1.776 & 1.953 & .943 \\
+TimesFM 2.5 & 1.127 & 1.152 & 2.114 & 2.498 & 1.018 \\
+Sundial & .909 & .937 & 1.660 & 1.695 & .786 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Artifact Integrity and Reproducibility}
+\label{app:integrity}
+
+\subsection{Artifact map}
+
+The final integrity report has status \path{VERIFIED}. Table~\ref{tab:artifact-map} maps manuscript evidence to repository-relative files. JSON and CSV versions are retained where both are available.
+
+\begin{table}[h]
+\caption{Primary machine-readable evidence files.}
+\label{tab:artifact-map}
+\centering
+\scriptsize
+\begin{tabular}{p{0.27\linewidth}p{0.64\linewidth}}
+\toprule
+Evidence & Repository-relative path \\
+\midrule
+Integrity report & \path{artifacts/iclr27-r2/r2-final-analysis-integrity-v007/report.md} \\
+Six-test decisions & \path{artifacts/iclr27-r2/r2-final-analysis-integrity-v007/global_holm_tests.csv} \\
+Fixed-test components & \path{artifacts/iclr27-r2/r2-final-analysis-integrity-v007/global_holm_components.csv} \\
+External descriptions & \path{artifacts/iclr27-r2/r2-final-analysis-integrity-v007/external_selector_comparisons.csv} \\
+Evidence development & \path{artifacts/iclr27-r2/r2-final-analysis-integrity-v007/evidence_ablation_comparisons.csv} \\
+Prefix sensitivity & \path{artifacts/iclr27-r2/r2-final-analysis-integrity-v007/prefix_sensitivity_comparisons.csv} \\
+Natural missingness & \path{artifacts/iclr27-r2/r2-final-analysis-integrity-v007/uci_native_missing_summary.csv} \\
+Router-seed verification & \path{artifacts/iclr27-r2/r2-final-analysis-integrity-v007/common16_five_seed_verification.json} \\
+H4 selection stop & \path{artifacts/iclr27-r2/}\newline
+  \path{r2-external-ett-development-}\newline
+  \path{selection-stopped-ms2101x3-rs4101-v005/}\newline
+  \path{selection.json} \\
+Resource summary & \path{artifacts/iclr27-r2/r2-final-analysis-integrity-v007/resource_summary.json} \\
+File and dependency hashes & \path{artifacts/iclr27-r2/r2-final-analysis-integrity-v007/source_and_dependency_signatures.json} \\
+Complete artifact manifest & \path{artifacts/iclr27-r2/r2-final-analysis-integrity-v007/artifact_manifest.json} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The H4 selection-stop file in Table~\ref{tab:artifact-map} contains the stopping rule, ineligible counts, source hashes, and a null selected method. This file is required to interpret H4.
+
+\subsection{Resource accounting}
+
+The R2 tree contains 210 recorded runs and 84 evaluation manifests. All 84 evaluations are complete; 19 scheduler states record failed or interrupted attempts that are excluded from result summaries. Completed manifests record 145,639 forecaster calls over 2,669,387 forecast contexts. The maximum recorded CUDA allocation is 1,088,912,384 bytes and the maximum reservation is 1,166,016,512 bytes. Summed recorded wall time is 245.1 hours, including 81.8 hours of pipeline runtime and 9.6 hours inside forecast calls. These sums combine heterogeneous stages and should not be read as a single end-to-end benchmark.
+
+\subsection{Legacy separation and software checks}
+
+R2 outputs are confined to \path{artifacts/iclr27-r2/}. The separation audit inventories 40,678 legacy files and finds zero legacy files written after the R2 start time. The legacy and R2 numbers are therefore not combined in any table in this paper.
+
+The current source revision passes 526 automated tests. Static checks pass for Ruff and mypy over 61 source files. One expected MICE convergence warning is emitted by the test suite. These checks validate implemented invariants such as one-factor control configurations, mask partition separation, feature removal, native validity, routing metadata, and artifact signatures. They do not validate the scientific hypotheses, which are decided by the result tables above.
+
+\subsection{Replication scope}
+
+The source tree contains frozen configurations, registries, routing and evaluation code, result summaries, and tests. Exact reruns additionally require the local raw datasets, imputer checkpoints, and forecaster snapshots referenced by the manifests. No evaluation stage silently downloads a replacement forecaster. Observed context values are restored after assignment, and candidate eligibility is measured before fallback repair. A reproduction that changes either rule will change coverage and may change the paired population.
+
+The recorded resource manifests identify Windows, Python~3.10, PyTorch~2.5.1 with CUDA~12.4, random seeds, resolved configurations, and input hashes. Raw dataset redistribution should follow each provider's terms. The UCI Beijing dataset is CC BY 4.0 \citep{chen2017beijing}.
