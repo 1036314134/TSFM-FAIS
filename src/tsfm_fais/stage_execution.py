@@ -54,6 +54,7 @@ from tsfm_fais.experiment_sampling import (
     forecast_aware_block_subset,
 )
 from tsfm_fais.forecasting import ForecastRunner, default_forecast_registry
+from tsfm_fais.forecasting.metrics import training_mase_scale
 from tsfm_fais.imputers import (
     DEFAULT_REGISTRY,
     CandidateRunner,
@@ -390,26 +391,7 @@ def _training_mase_scale(
 ) -> tuple[np.ndarray, int]:
     """Freeze one per-variate MASE scale from a historical training prefix."""
 
-    history = np.asarray(values, dtype=float)
-    if history.ndim != 2 or history.shape[0] < 2:
-        raise ValueError("MASE scaling requires a [T,D] training prefix")
-    requested = max(1, int(period))
-    lags = (requested, 1) if requested != 1 and history.shape[0] > requested else (1,)
-    for lag in lags:
-        paired = np.isfinite(history[lag:]) & np.isfinite(history[:-lag])
-        if np.any(np.sum(paired, axis=0) == 0):
-            continue
-        differences = np.abs(history[lag:] - history[:-lag])
-        scale = np.asarray(
-            [
-                np.mean(differences[paired[:, channel], channel])
-                for channel in range(history.shape[1])
-            ],
-            dtype=float,
-        )
-        if np.isfinite(scale).all():
-            return np.maximum(scale, 1e-8), lag
-    raise ValueError("MASE scaling has no observed lagged pair for at least one variate")
+    return training_mase_scale(values, period)
 
 
 def _selected_candidate_ids(config: AppConfig) -> tuple[str, ...]:

@@ -1,4 +1,14 @@
-# TSFM-FAIS：面向下游 TSFM 预测的块级多算法缺失值填补
+# TSFM-FAIS：面向冻结时序预测器的填补算法选择
+
+当前研究主线为 R3 序列级预测收益估计：使用历史上下文、候选填补结果及冻结预测器的响应选择处理流程。新流程统一训练与评价的 MASE 尺度，按时间隔离监督窗口，并纳入 Chronos-2 原生缺失输入、同监督选择器、预测集成和观测历史回测。R3 结果均处于开发阶段，尚未构成独立确认或投稿结论。
+
+研究范围见 [R3 研究计划](docs/iclr2027/R3_RESEARCH_PLAN.md)，已完成的实验和结果限制见 [R3 工作记录](docs/iclr2027/R3_PROGRESS.md)。紧凑试跑和扩大实验分别使用 `configs/iclr27-r3/development_pilot.yaml` 与 `configs/iclr27-r3/development_expanded.yaml`。在已配置模型检查点和填补器历史拟合产物的环境中运行：
+
+```powershell
+python scripts/run_utility_experiment.py run --config configs/iclr27-r3/development_expanded.yaml
+```
+
+下文保留原 B-FAIS 的系统说明与早期实验口径。2026 年 8 月的 R2 评估未通过注册的优越性检验，现有[论文草稿](docs/iclr2027/tsfm_fais_iclr2027.tex)报告该结果；下述 7 月胜出计数不代表当前论文已验证的贡献。
 
 TSFM-FAIS 实现 B-FAIS（Block-wise Forecast-Aware Imputer Selection）。系统接收带缺失的多变量时间序列，将每个变量上的极大连续缺失区间表示为原子块，从可扩展候选池中为不同缺失块选择填补算法，再组装成完整上下文供下游时间序列基础模型（TSFM）预测。填补阶段始终使用全部变量；预测阶段既支持原生联合多变量模型，也支持将一个或多个目标变量分别交给单变量模型。
 

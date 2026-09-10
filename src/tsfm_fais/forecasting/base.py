@@ -48,6 +48,7 @@ class ForecastCapabilities:
 
     modes: frozenset[str]
     max_context: int
+    supports_missing_context: bool = False
 
 
 class LazyForecastAdapter:
@@ -76,12 +77,21 @@ class LazyForecastAdapter:
         return self._backend
 
     def predict(self, contexts: np.ndarray, spec: Any):
+        return self._validated_predict(contexts, spec, allow_missing=False)
+
+    def predict_missing(self, contexts: np.ndarray, spec: Any):
+        """Pass NaNs to an explicitly supported native missing-data backend."""
+        if not self.capabilities.supports_missing_context:
+            raise ValueError(f"{self.model_id} does not support native missing context")
+        return self._validated_predict(contexts, spec, allow_missing=True)
+
+    def _validated_predict(self, contexts: np.ndarray, spec: Any, *, allow_missing: bool):
         values = np.asarray(contexts, dtype=float)
         if values.ndim == 2:
             values = values[:, :, None]
         if values.ndim != 3:
             raise ValueError("contexts must have shape [N,L,D]")
-        if not np.isfinite(values).all():
+        if np.isinf(values).any() or (not allow_missing and np.isnan(values).any()):
             raise ValueError("forecast context must be complete and finite")
         if spec.mode not in self.capabilities.modes:
             raise ValueError(f"{self.model_id} does not support mode {spec.mode}")

@@ -260,15 +260,33 @@ def replace_block(base: np.ndarray, candidate: np.ndarray, block: MissingBlock) 
 
 
 class TeacherBuilder:
-    def __init__(self, forecast: ForecastCallable, seasonality: int = 1):
+    def __init__(
+        self,
+        forecast: ForecastCallable,
+        seasonality: int = 1,
+        *,
+        mase_scales: Mapping[int, float] | None = None,
+    ):
         self.forecast = forecast
         self.seasonality = seasonality
+        self.mase_scales = None if mase_scales is None else dict(mase_scales)
+        if self.mase_scales is not None and (
+            not self.mase_scales
+            or any(not np.isfinite(value) or value <= 0 for value in self.mase_scales.values())
+        ):
+            raise ValueError("teacher MASE scales must be nonempty, positive, and finite")
 
     def _scales(
         self,
         context: np.ndarray,
         targets: Sequence[int],
     ) -> dict[int, float]:
+        if self.mase_scales is not None:
+            if set(targets).difference(self.mase_scales):
+                raise ValueError("teacher MASE scales must cover all forecast targets")
+            return {target: self.mase_scales[target] for target in targets}
+        # R2 replay retains its original context-based objective. New experiments
+        # supply explicit training-prefix scales for every teacher request.
         values = np.asarray(context, dtype=float)
         scales: dict[int, float] = {}
         for target in targets:

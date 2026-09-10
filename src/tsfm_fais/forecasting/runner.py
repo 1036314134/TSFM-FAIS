@@ -56,6 +56,15 @@ class ForecastRunner:
         }
 
     def predict(self, contexts: np.ndarray, forecast_spec: ForecastSpec) -> ForecastResult:
+        return self._run(contexts, forecast_spec, allow_missing=False)
+
+    def predict_missing(self, contexts: np.ndarray, forecast_spec: ForecastSpec) -> ForecastResult:
+        """Evaluate native missing input without weakening the complete-input path."""
+        return self._run(contexts, forecast_spec, allow_missing=True)
+
+    def _run(
+        self, contexts: np.ndarray, forecast_spec: ForecastSpec, *, allow_missing: bool
+    ) -> ForecastResult:
         values = np.asarray(contexts, dtype=float)
         self.call_count += 1
         if values.ndim == 3:
@@ -69,7 +78,7 @@ class ForecastRunner:
         started = perf_counter()
         torch = self._cuda_profiler()
         try:
-            return self._predict(values, forecast_spec)
+            return self._predict(values, forecast_spec, allow_missing=allow_missing)
         finally:
             self.runtime_seconds += perf_counter() - started
             if torch is not None:
@@ -83,11 +92,13 @@ class ForecastRunner:
                     int(torch.cuda.max_memory_reserved()),
                 )
 
-    def _predict(self, contexts: np.ndarray, forecast_spec: ForecastSpec) -> ForecastResult:
+    def _predict(
+        self, contexts: np.ndarray, forecast_spec: ForecastSpec, *, allow_missing: bool = False
+    ) -> ForecastResult:
         values = np.asarray(contexts, dtype=float)
         if values.ndim != 3:
             raise ValueError("contexts must have shape [N,L,D]")
-        if not np.isfinite(values).all():
+        if np.isinf(values).any() or (not allow_missing and np.isnan(values).any()):
             raise ValueError("forecast adapters require a complete finite context")
         n, length, dimensions = values.shape
         if forecast_spec.context_length is not None:
@@ -96,12 +107,18 @@ class ForecastRunner:
         if any(target < 0 or target >= dimensions for target in targets):
             raise ValueError("target index is outside the context dimensions")
         adapter = self._adapter(forecast_spec.model_id)
+        if allow_missing and not getattr(
+            getattr(adapter, "capabilities", None), "supports_missing_context", False
+        ):
+            raise ValueError(f"{forecast_spec.model_id} does not support native missing context")
         adapter_spec = self.registry.get(forecast_spec.model_id)
         if adapter_spec.mode != forecast_spec.mode:
             raise ValueError(
                 f"model {forecast_spec.model_id} supports {adapter_spec.mode}, requested {forecast_spec.mode}"
             )
         if forecast_spec.mode == "joint_multivariate" and hasattr(adapter, "predict"):
+            if allow_missing:
+                return adapter.predict_missing(values, forecast_spec)
             return adapter.predict(values, forecast_spec)
         if forecast_spec.mode == "joint_multivariate":
             native = adapter.predict_native(
@@ -146,7 +163,8 @@ class ForecastRunner:
                 quantile_levels=forecast_spec.quantile_levels,
                 num_samples=forecast_spec.num_samples,
             )
-            result = adapter.predict(flattened[:, :, None], local_spec)
+            predict = adapter.predict_missing if allow_missing else adapter.predict
+            result = predict(flattened[:, :, None], local_spec)
             point = result.point[:, :, 0]
             quantiles = None if result.quantiles is None else result.quantiles[:, :, 0, :]
             samples = None if result.samples is None else result.samples[:, :, :, 0]

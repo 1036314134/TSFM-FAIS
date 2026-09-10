@@ -20,6 +20,7 @@ class Chronos2Adapter(LazyForecastAdapter):
     capabilities = ForecastCapabilities(
         modes=frozenset({"joint_multivariate", "independent_univariate"}),
         max_context=8192,
+        supports_missing_context=True,
     )
 
     def __init__(

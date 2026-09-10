@@ -1,0 +1,46 @@
+schema_version: 1
+protocol_id: r3-utility-development-v2
+evidence_role: development
+data_manifest: ../data/datasets.yaml
+output_root: ../../artifacts/iclr27-r3/development-expanded-v001
+imputer_artifact_roots:
+  - ../../artifacts/iclr27-r2/r2-target-rolling-full-candidates-ms1101x3-rs4101-fit-v001/imputer_artifacts
+  - ../../artifacts/iclr27-r2/r2-target-ett-full-candidates-ms2101x3-rs4101-fit-v001/imputer_artifacts
+forecaster_artifacts:
+  chronos2: C:/Users/MDC/.cache/huggingface/hub/models--amazon--chronos-2/snapshots/29ec3766d36d6f73f0696f85560a422f50e8498c
+  timesfm2p5: C:/Users/MDC/.cache/huggingface/hub/models--google--timesfm-2.5-200m-pytorch/snapshots/1d952420fba87f3c6dee4f240de0f1a0fbc790e3
+dataset_ids:
+  - ETTh1
+  - exchange_rate
+  - national_illness
+  - Coastal_T_S_H
+  - current_velocity_H
+  - EWELD_Load_15T
+  - NE_China_Wind_H
+  - Port_Activity_D
+  - Uncertainty_1M_M
+  - JOLTS_M
+  - US_Labor_M
+  - Vehicle_Sales_M
+  - Job_Claims_W
+  - azure2019_D_5T
+  - OpenElectricity_NEM_5T
+  - Supply_Chain_Customer_D
+  - traffic
+  - electricity
+candidate_ids: [locf, linear_interp, seasonal_lag, knn_multivariate, saits, timemixerpp]
+context_length: 96
+horizon: 96
+target_indices: [0, 1]
+fit_prefix_fraction: 0.2
+temporal_boundary: 0.6
+max_items: 1
+train_origins: 16
+validation_origins: 4
+mechanisms: [random_point, independent_block, synchronous_block, staggered_correlated, value_dependent, mixed_outage]
+missing_rates: [0.1, 0.3, 0.5]
+mask_seeds: [6101, 6102]
+block_lengths: [6, 12, 24, 48]
+device: cuda
+forecast_batch_size: 32
+selector_seed: 5101
