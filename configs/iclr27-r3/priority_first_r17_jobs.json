@@ -1,0 +1,16 @@
+{
+  "jobs": [
+    {
+      "name": "r17_train_position_objectives",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/train_position_objectives.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r17/position-objectives-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r17/position-objectives-v001/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r17_audit_position_objectives",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/audit_position_objectives.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r17/position-objectives-audit-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r17/position-objectives-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    }
+  ]
+}

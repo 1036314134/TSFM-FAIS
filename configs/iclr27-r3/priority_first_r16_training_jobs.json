@@ -1,0 +1,16 @@
+{
+  "jobs": [
+    {
+      "name": "r16_train_conditional_risk_gate",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/train_conditional_risk_gate.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r16/conditional-training-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r16/conditional-training-v001/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r16_audit_conditional_risk_gate",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/audit_conditional_risk_gate.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r16/conditional-training-audit-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r16/conditional-training-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    }
+  ]
+}

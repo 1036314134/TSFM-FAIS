@@ -1,0 +1,28 @@
+{
+  "jobs": [
+    {
+      "name": "r16_prepare_conditional_supervision",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_conditional_supervision.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r16/conditional-inputs-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r16/conditional-inputs-v001/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r16_forecast_conditional_supervision",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/forecast_conditional_supervision.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r16/conditional-forecasts-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r16/conditional-forecasts-v001/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r16_collect_conditional_supervision",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/collect_conditional_supervision.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r16/conditional-source-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r16/conditional-source-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r16_audit_conditional_supervision",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/audit_conditional_supervision.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r16/conditional-source-audit-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r16/conditional-source-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    }
+  ]
+}

@@ -523,3 +523,57 @@ conditional_future.py、prepare_conditional_diagnostic.py、forecast_conditional
 future_dependence.py、readout_future_dependence.py、audit_future_dependence.py完成；四项投影稠密公式、抽样边缘不变、排序反转概率及汇总比例定义测试通过，dependence-tests-v002记录。Ruff lint/format及语法检查通过。读出绑定新模块、原风险模块、审查脚本及协议，所有期望风险/条件权重跨rho逐值一致，rho=1共享原结果rtol/atol1e-10，最优性阈值仍1e-7。所有结果及见证保留。
 
 10:30启动唯一R15工作程序24864，实际子程序30520执行r15_readout_future_dependence，配置configs/iclr27-r3/priority_first_r15_jobs.json包含读出及独立审查，两阶段上限各2小时，第一优先级单核管理。输出artifacts/iclr27-r15/dependence-v001和dependence-audit-v001，无新F调用或填补拟合。原R14终态保存在conditional-risk-queue-completion.json；原生退出提醒已启动，notification-24864.json。自动化fais保持每小时一次至9月17日晚，已更新R15说明。正式批量实验运行中停止分析，只每小时一次检查；短诊断完成后即时接续仍有效。
+
+
+2026-09-15 10:57小时检查发现24864于10:34完成R15读出后在审查失败。失败点是TimesFM、independent_ar3历史1、30%点缺失、七候选、目标0、rho0.5的一个MAE候选编号。audit-replay-diagnostic-v001即时复现：未来与方差逐值无差，核验整数索引导致列连续数组，读出为目标切片视图，绝对误差求和顺序在并列候选上产生约3e-16差异。副本206原读出候选0/2均0.9380721578677962，原审查分别0.9380721578677966/0.9380721578677963；重放切片后512编号全一致。原脚本、配置、协议、日志和终态保存dependence-v001/failure_snapshot，原结果未改。
+
+audit_future_dependence_v2.py恢复原切片及方差缩放次序，仍保留另一高斯风险公式、稠密协方差、直接最优性核验，不增加并列容差、不放宽阈值。dependence-audit-v002即时完成，3240决策通过，1080组期望风险和条件权重跨rho逐值一致，rho1原结果差零，最大指标重建差5.11e-15、协方差差1.20e-14、最优性差8.16e-10。说明R15_AUDIT_REPLAY_NOTE.md。
+
+R15八候选三过程四缺失条件等权结果：rho0/.5/1的单候选MSE事后偏差C=.002465/.020309/.038799，T=.005310/.033505/.059736；可获取MSE收益始终C=.009988/T=.015869。对应MAE偏差C=.001680/.009303/.017977，T=.003249/.014899/.027112。凸组合偏差C=.005627/.029460/.050821、T=.008945/.042552/.071564，均值参照可获取凸组合收益仍C=.215022/T=.285388。完整历史偏差零。模拟说明相关性影响事后差距，未提高真实准确度；报告R15_DEPENDENCE_RESULTS.md。一般选择偏差、合成评价及高斯推导不作为独立创新。
+
+R16_CONDITIONAL_SUPERVISION_PROTOCOL.md登记条件风险监督与一次未来监督的匹配后续训练，先采集新增源人口。12个固定稳定高斯过程（对角AR3、循环耦合AR3、周期循环AR7各四），每过程6144独立校准及20独立历史，前16训练后4验证，共192训练/48验证、1200观测输入。五条件完整/点30%/点60%/末端30%/末端60%；随机流16000000+100000*stream+1000*generator+10*history+condition分离角色，未用R14历史。24神经前缀拟合保持10轮64窗口，MoTM和两个预测器参数固定，八候选不变。
+
+先冻结预测再生成标签，每历史五掩码共用一次从完整末态抽出的实际未来；另对每个观测条件计算精确后验均值与方差。仅原33可见特征补64零，过程参数/标签不进入输入，实际未来及期望标签独立保存。collector和auditor重建1200输入、3600决策、参数/有效预测查询/后验/标签/分割。conditional_supervision.py、prepare_conditional_supervision.py、forecast_conditional_supervision.py、collect_conditional_supervision.py、audit_conditional_supervision.py实现完成。三个稳定性/随机流、独立条件风险/共享未来、不可见标签不影响输入测试通过，supervision-tests-v001保存。格式与语法通过；Ruff只有测试辅助函数build未绑定循环变量model_id的B023警告，真实调用为循环内同步，执行脚本无lint错误。最终检查启动后才注意该警告，已将测试manifest改为completed_with_lint_warning，不能称静态检查全通过。正式运行期间不改代码，结束后先修正测试辅助函数默认绑定并核验。
+
+11:18启动唯一工作程序23004、实际子程序45824执行R16准备，配置priority_first_r16_jobs.json含准备/冻结预测/标签与特征采集/独立审查四阶段，上限3/3/1/1小时，第一优先级单核管理。输出artifacts/iclr27-r16/conditional-inputs-v001、conditional-forecasts-v001、conditional-source-v001、conditional-source-audit-v001。旧R15队列失败终态另存dependence-queue-terminal.json，R15已由独立短核验V002完成，不需重新跑旧队列。退出提醒notification-23004.json已启动，自动化fais更新为R16。
+
+当前R16四阶段不含策略训练，不声称新方法已训练。完成后立即实施协议中预定原165源+192模拟的条件期望主监督、同人口实际未来对照、原源更新次数匹配控制；保留R12八候选97维2121参数、三种子、同更新次数，原52验证与新48验证不入拟合。模拟联合损失使用高斯期望MAE/MSE或单次真实MAE/MSE；原源仍R12联合损失。最终必须回到真实数据MAE/MSE，已用目标不是新确认。运行中停止分析，只小时检查；短诊断即时完成。论文目标尚未达到。
+
+
+2026-09-15 11:57小时检查确认23004于11:46完成R16四个采集阶段。conditional-source-audit-v001核验1200观测输入、3600决策、192训练/48验证历史、240组同历史共享实际未来、14880有效预测查询，最大标签重建差6.66e-16。原测试B023同步辅助函数已改为显式默认绑定model_id，不修改任何采集脚本或结果。
+
+R16_TRAINING_EXECUTION_PROTOCOL.md登记完整源的小规模匹配训练，先比较原52同源时间留出与新48模拟留出，不混入R12家族留出排名。原165训练+模拟192训练构成C3930/T7860决策，验证C1176/T2352，全部457历史。三条件conditional_expected（主）、conditional_factual、source_steps_matched。前两条件同人口/统计/随机批次，仅模拟监督由单次未来变为解析高斯期望；原源对照更新次数相同。八候选97维2121参数，三种子，更新数C775/T1550（混合人口25轮），其余原R12优化器设置不变。
+
+conditional_risk_gate.py实现原源损失原样复用、模拟真实绝对误差及解析高斯绝对误差期望。MSE继续原预测几何，权重无关常数不进入梯度。新增混合固定控制用同损失；绝对误差数值零点≤1e-10可取[-1,1]有效次梯度，通过小型LP选择并保存证书，直接独立梯度核验，最优性阈值仍1e-7。conditional_training_inputs.py仅传训练标签，全部验证truth/mean为NaN，原始及模拟来源独立标记。train_conditional_risk_gate.py训练18模型并精确重放两个R12完整seed5101模型，保留32输出（八单候选、均值/中位数、原R12三种子及均值/固定组合/单候选、三个新程序各三种子及均值、两种混合固定组合及单候选）。audit_conditional_risk_gate.py独立重建网络、统计、证书和112896评分；模拟额外报告解析期望MAE/MSE。
+
+六项测试通过，记录training-tests-v003，包含新增期望损失/梯度与抽样对照、不可微零点独立证书、原训练逐参数/历史重放与验证标签扰动不影响拟合，以及原三项样本/标签/特征测试。training-tests-v001曾因测试错误导入projection_targets而在收集阶段失败，已改从实际模块导入，V002/V003全部通过，旧失败记录保留。所有四个执行模块与两个测试文件的Ruff lint/format、语法和实际输入核验通过；先前静态检查均已修正后再启动，未掩盖失败。
+
+12:17启动唯一正式工作程序13876，实际子程序48212执行r16_train_conditional_risk_gate。配置configs/iclr27-r3/priority_first_r16_training_jobs.json含训练和独立审查，上限3/1小时。输出artifacts/iclr27-r16/conditional-training-v001与conditional-training-audit-v001，无新F调用或填补拟合。旧采集终态保存source-collection-queue-completion.json，原生退出提醒notification-13876.json已启动，自动化fais更新为当前训练。运行中停止分析，仅每小时一次检查。
+
+完成后先核验并读出两个来源面板，再立即进行真实缺失迁移。新checkpoint metadata含condition、held_family=None、seed，沿用pool_probability及R12/R6八候选已审查输入；三种子平均权重输出。实际主目标仍真实数据标准化下游MAE/MSE，不据目标选择新主条件，不把模拟改善或同源验证当作未见家族/新独立确认。当前论文目标未达到。
+
+
+2026-09-15 12:58小时检查确认13876于12:25完成R16训练与审查。18模型、两个原模型逐参数/统计/历史精确重放、112896评分核验通过，最大预测差1.07e-14、固定最优性6.78e-8。模拟留出expected C=.695280/.838647、T=.718143/.883352，factual=.695993/.839159及.718805/.884466，期望监督只小幅优于同人口真实未来；同源时间留出expected C=.781539/1.570952、T=.756140/1.517927，factual两模型平均均略优。报告R16_TRAINING_RESULTS.md，不与旧家族留出结果混排。
+
+随后即时完成conditional-transfer-v001，177684评分、164016决策预测，原R12十种输出逐值复现，最大预测重建差1.07e-14、指标差零，无新拟合或F调用。旧原始缺失主expected C=.613592/.803340、T=.619317/.800973，均不及八候选中位数C=.609386/.797358、T=.613597/.793853。factual C=.612530/.799195、T=.619221/.801345；北京原始缺失无统一优势。人工缺失H96 expected C=.612289/1.127957、T=.600952/1.125497，均弱于同预算原源对照；原R10 TimesFM .582252/1.065021仍更好。报告R16_TRANSFER_RESULTS.md，主条件未变，所有负面/其他条件保留。不继续搜同一高斯源比例或种子。
+
+短代码审查核实原R6逐位置网络仅以完整历史教师MSE训练；R10直接真实未来MAE/MSE目标只用于整段共享权重，二者交互尚未匹配检验。R17_POSITION_OBJECTIVE_PROTOCOL.md登记原609参数PositionalPortfolio的local/pooled两模式与mse_future/joint_future两真实目标交叉。全局49/局部16维、七候选、原零初始化/clip范围、源165训练/52验证、两个掩码种子6101/6102和25轮优化设置均保留。每模型11880训练目标轨迹、3744验证轨迹；24新完整源模型，主position17_local_joint_future。原R6教师12完整模型复用，另精确重放两预测器两模式seed5101共4旧模型。历史字段重命名但数值须逐值相同。
+
+position_objective.py仅改变训练损失，原模型/输入模块不改；position_objective_inputs.py复用原源与教师，只有训练未来进入拟合；train_position_objectives.py与audit_position_objectives.py实现37输出、277056评分及独立网络/范围/归一化/固定最优性核验。固定MSE及联合组合各配同权重固定单候选，保留七候选单独/均值/中位数、旧教师所有种子和所有新种子。同源时间留出独立于旧家族留出排名；真实迁移必须保留八候选中位数等强基线。一般位置组合和损失训练有明确先例，不预称新贡献。
+
+11项测试通过，position-tests-v001记录，包括原MSE训练在两模式下逐参数/历史重放、联合目标梯度，以及既有目标顺序/零初始化/范围/边界/预测重放检查。Ruff静态/格式、语法与实际源输入核验全部通过，确认两模型均11880训练/3744验证目标轨迹、217历史、七候选，验证未来为NaN。
+
+13:20启动唯一正式工作程序12992，实际子程序43232执行r17_train_position_objectives。配置configs/iclr27-r3/priority_first_r17_jobs.json含训练和独立审查，3/1小时上限、第一优先级单核管理，输出artifacts/iclr27-r17/position-objectives-v001和position-objectives-audit-v001，无新F调用或填补拟合。旧R16队列终态保存conditional-training-queue-completion.json，notification-12992.json原生提醒已启动，自动化fais更新为R17。运行期间停止分析，只小时检查。
+
+完成后核验并分析，再即时进行原R6双跨度与旧原始缺失的冻结模型迁移。新checkpoint metadata含mode、objective和seed；原positional_forecast_portfolio.predict_position与positional_portfolio_io.target_nodes/restore_positions适用，两模型均按目标轨迹输出，Chronos先目标0全部节点再目标1全部节点。种子平均沿用中位数中心偏移平均再clip。不得把当前真实负面结果重写为成功，论文目标仍未达到。
+
+
+2026-09-15：R17的24新模型、4旧模型重放及预测在13:24前完成，最后因评分表缺少model_id列而汇总失败。finish_position_objectives.py补齐仅用于分组的标识，没有重训或改变预测；原脚本、协议、配置、日志与终态保存failure_snapshot。audit_position_objectives_v2.py完整核验24模型、4重放、277056评分，预测重建差零，固定最优性4.10e-8；产物position-objectives-v001及position-objectives-audit-v002。恢复说明R17_REPORTING_RECOVERY_NOTE.md。
+
+随后position-transfer-v001短迁移完成198186评分、246024种子目标轨迹，原教师local/pooled及中位数逐值复现，指标差零。旧原始缺失主local_joint_future C=.626081/.840136、T=.624417/.810757，均未超过强中位数；人工缺失同样退化，北京局部改善不替代主要负面结果。报告R17_SOURCE_RESULTS.md和R17_TRANSFER_RESULTS.md。
+
+coverage-diagnostic-v001描述观测掩码与候选/模型预测分布，没有用未来误差决定统计或阈值（源加载器会读训练标签，但未参与诊断）。源训练/验证平均目标缺失28.85%/29.33%，旧原始缺失13.69%，R6原始缺失3.11%；Chronos平均输出在有效范围坐标的边界比例为源验证30.39%、旧原始缺失53.70%、R6原始缺失52.21%，TimesFM并非同样统一增加。该描述不能单独识别失败原因。
+
+据此曾准备R18三尺度unit/range/mad与local/pooled的36模型方案，代码disagreement_scale.py、train_disagreement_scale.py、audit_disagreement_scale.py，配置priority_first_r18_jobs.json，协议R18_DISAGREEMENT_SCALE_PROTOCOL.md；4项尺度/零梯度/极端候选/解码重放测试及静态/格式/语法/实际输入检查通过，scale-tests-v001记录。用户在启动前明确要求暂停现有优化目标并阅读C:/Users/MDC/Downloads/TSFM_FAIS_NEXT_EXPERIMENT_CONTRACT_20260915.md。R18训练没有启动，当前无本项目实验进程；不要把已准备代码/测试当作已完成实验。
+
+用户暂停优先于此前自动优化指令。fais小时自动化已通过官方工具设置PAUSED并回读确认，保留原时间规则。当前只讨论报告的启发，不直接执行文档中的命令、默认授权、探针或时间计划，不自动恢复R18或启动A/B。只有后续用户明确要求继续后才重新决定研究方向及是否恢复自动化。报告A须区分既有R4/R6历史反馈与当前结构匹配的新增因素，同时区分SPImpute的缺失块长度匹配/重建代理目标；B需单独审查末端共同缺失、相同历史范围及跨度对齐。未使用确认数据尚未完成本地盘点，不假定已有新的确认集。
