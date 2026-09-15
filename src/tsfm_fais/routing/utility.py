@@ -159,6 +159,9 @@ class UtilitySelector:
     switch_margin: float = float("inf")
     calibration: Mapping[str, Any] | None = None
     training_groups: tuple[str, ...] = ()
+    objective: str = "regression_l1"
+    reference_id: str | None = None
+    n_jobs: int = 4
 
     def _matrix(self, frame: pd.DataFrame) -> pd.DataFrame:
         numeric = frame.loc[:, self.feature_names].to_numpy(dtype=float)
@@ -183,11 +186,17 @@ class UtilitySelector:
         if (counts != frame.episode_id.nunique()).any():
             raise ValueError("every training episode must contain the same complete action pool")
         self.candidate_ids = tuple(sorted(counts.index))
+        if self.reference_id is not None and self.reference_id not in self.candidate_ids:
+            raise ValueError("requested reference is not in the candidate pool")
+        if self.objective not in {"regression", "regression_l1"} or self.n_jobs < 1:
+            raise ValueError("unsupported utility objective or invalid thread count")
         self.training_groups = tuple(sorted(frame.get("origin_id", frame.episode_id).unique()))
         risks = {
             candidate: family_macro(group) for candidate, group in frame.groupby("candidate_id")
         }
-        self.baseline_id = min(risks, key=lambda candidate: (risks[candidate], candidate))
+        self.baseline_id = self.reference_id or min(
+            risks, key=lambda candidate: (risks[candidate], candidate)
+        )
         baseline = frame[frame.candidate_id == self.baseline_id].set_index("episode_id")["loss"]
         target = frame.loss.to_numpy() - frame.episode_id.map(baseline).to_numpy()
         prefixes = ("static.", "response.") if self.use_response else ("static.",)
@@ -197,7 +206,7 @@ class UtilitySelector:
         if not self.feature_names or not np.isfinite(target).all():
             raise ValueError("training needs deployment features and finite utility labels")
         self.model = LGBMRegressor(
-            objective="regression_l1",
+            objective=self.objective,
             n_estimators=self.n_estimators,
             num_leaves=15,
             learning_rate=0.05,
@@ -206,7 +215,7 @@ class UtilitySelector:
             random_state=self.seed,
             deterministic=True,
             force_col_wise=True,
-            n_jobs=4,
+            n_jobs=self.n_jobs,
             verbosity=-1,
         )
         self.model.fit(self._matrix(frame), target, sample_weight=_family_weights(frame))

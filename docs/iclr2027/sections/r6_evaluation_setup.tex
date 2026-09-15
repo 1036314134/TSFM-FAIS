@@ -1,0 +1,43 @@
+\section{Independent Confirmation Protocol}
+\label{sec:r6_protocol}
+
+\paragraph{Data sources and chronology.}
+The final source gates were fixed before constructing a new confirmation cohort. The cohort uses Beijing Multi-Site Air Quality, Appliances Energy Prediction, hourly Bike Sharing, and the environmental measurements from Occupancy Detection~\citep{uci2017beijing,uci2017appliances,uci2013bike,uci2016occupancy}. These sources were outside the selector's training and earlier evaluation catalogs. This separation concerns selector development; it does not establish that the released forecasting models never encountered these sources during pretraining. Source files, preprocessing, target choices and task identities were recorded before forecasting errors were examined.
+
+Table~\ref{tab:r6_coverage} reports the retained input population. Each input is evaluated at both $H=96$ and $H=192$, with $L=96$. The cohort contains 381 distinct history origins and 1,522 input tasks. Of these, 1,152 are artificial-mask tasks from 32 complete histories, with 36 masking conditions per history. The remaining 370 inputs retain their original observations. Horizons, masks and panels can share a history origin and are not independent samples.
+
+\begin{table}[t]
+\caption{New confirmation coverage. Input tasks are shared between the two prediction horizons. The 12 Beijing stations form one source family.}
+\label{tab:r6_coverage}
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+Source & Items & Variables & Origins & Input tasks \\
+\midrule
+Beijing Multi-Site & 12 & 11 & 320 & 608 \\
+Appliances & 1 & 26 & 20 & 304 \\
+Bike Sharing & 1 & 6 & 22 & 306 \\
+Occupancy measurements & 1 & 4 & 19 & 304 \\
+\midrule
+Total & 15 & -- & 381 & 1,522 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Targets and observation semantics.}
+The two targets are PM2.5/PM10 for Beijing, appliance/lighting energy for Appliances, casual/registered rental counts for Bike Sharing, and temperature/humidity for Occupancy. Identifiers and categorical calendar fields are excluded. The random variables supplied with Appliances, the bike-count total derived from its two targets, and the occupancy classification label and target-derived humidity ratio are also excluded. The remaining input variables retain the provider's numerical representation. The Appliances release includes interpolated airport-weather covariates, while its energy targets are measured at ten-minute resolution.
+
+Beijing measurements use an hourly grid and preserve their original NA entries. Bike Sharing supplies 17,379 hourly records; its nominal hourly grid has 17,544 positions, with 165 unrecorded hours retained as unknown. The three Occupancy files are merged chronologically. Timestamp rounding changes no time by more than one second; 20,560 records map to a 22,741-minute grid with 2,181 unrecorded minutes and no duplicate rounded rows. Unknown time-bin values are never replaced by zero or treated as future truth. Their reporting or clock-related causes are not identified. Consequently, original-NA histories, nominal time-grid gaps and complete-release controls are reported separately.
+
+\paragraph{Eligibility and missingness.}
+Imputer fitting and scoring statistics use the first 20\% of each item, requiring at least two observations in every retained channel. Origins follow the 60\% time boundary and the prescribed separation from prefix fitting. A stride of 288 separates a 96-step context and its maximum 192-step future. Eligibility requires at least 48 observed future values per target through step 96 and at least 96 through step 192. Up to 16 missing-context and 16 complete-context origins are retained per item by evenly spaced chronological selection. These strata do not estimate the population frequency of missingness.
+
+Artificial masking uses complete observed histories and complete two-target futures through step 192. Up to eight origins per item are selected before masking. For Beijing this panel uses the first four station names in lexical order: their eligible-history counts are 1, 4, 0 and 3, and no replacement station is introduced. The other three sources contribute eight histories each. Six missingness mechanisms, rates 0.1/0.3/0.5 and seeds 8101/8102 define the 36 conditions per history. Whole-trajectory masks use prefix-only calibration; the same realized context is reused at both horizons. Original observation masks remain distinct from artificial masks. Exact comparisons of 96-step target histories and their first 96 future steps against 853 previously used windows found no duplicate window.
+
+\paragraph{Models and comparison conditions.}
+The two primary forecasters are the fixed Chronos-2 and TimesFM 2.5 revisions used in source development. Imputation uses the same six procedures, including SAITS and TimeMixer++ fitted for ten epochs on at most 64 prefix windows. MoTM uses its pinned released networks and unchanged observed-context adaptation. The confirmation retains 23 outputs: seven single-candidate forecasts, standalone MoTM, five forecast-aggregation controls, three small gates with different source supervision, their source-fixed convex/single controls, and the previous learned and fixed three-candidate procedures. The primary gate uses complete-history teacher supervision; the matched small-network controls change the aggregation loss or replace the teacher with actual source future labels. All source models are fixed before confirmation.
+
+The native forecasting interfaces were checked at both horizons on finite and missing inputs from all four sources. All 32 comparisons agreed with direct vendor calls, and the forecasting parameters remained unchanged. Effective duplicate inputs can reuse predictions. The primary gate still requires up to seven candidate-history evaluations, while the eight-member MoTM median can require one additional candidate. Source fitting, input completion, forecasting and gate execution have separate costs.
+
+\paragraph{Metrics and interpretation.}
+MAE and MSE are computed after standardization by observed-prefix statistics and only at originally observed future entries. Targets are averaged within a task, masks within an origin, origins within an item, items within a dataset, and datasets within a source family. Each horizon and observation panel is reported separately. Paired source differences and joint MAE/MSE win/loss counts accompany aggregate effects. Source-resampling ranges describe sensitivity to reweighting the observed sources; four purposively selected source families do not establish a broad population significance claim. The original-NA panel has one source family, and its station count is not substituted for the number of families.

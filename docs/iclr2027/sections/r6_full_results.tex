@@ -1,0 +1,148 @@
+\section{Complete Confirmation Comparisons}
+\label{app:r6_full}
+Tables~\ref{tab:r6_all_synthetic_h96}--\ref{tab:r6_all_native_h192} retain all 23 frozen procedures on the synthetic and originally missing panels at both horizons. The two targets are averaged within an input, followed by equal weighting of histories, items, datasets and source families. Bold identifies the lowest displayed score within each column. Shared histories across masks and horizons are not independent samples.
+\begin{table}[!htbp]
+\caption{Artificial missingness: 32 complete histories, 1,152 masking inputs and four source families. Horizon 96. Standardized downstream MAE/MSE; lower is better.}
+\label{tab:r6_all_synthetic_h96}
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{Chronos-2} & \multicolumn{2}{c}{TimesFM 2.5}\\
+Procedure & MAE & MSE & MAE & MSE\\
+\midrule
+LOCF & 0.664132 & 1.477673 & 0.673797 & 1.507488\\
+Linear interpolation & 0.679381 & 1.572613 & 0.683644 & 1.590224\\
+Seasonal lag & 0.631647 & 1.223257 & 0.623139 & 1.196848\\
+Multivariate nearest neighbors & 0.659391 & 1.294877 & 0.663057 & 1.349377\\
+SAITS & 0.650770 & 1.270880 & 0.650017 & 1.292376\\
+TimeMixer++ & 0.671324 & 1.296532 & 0.669241 & 1.310951\\
+Guarded native input & 0.604171 & 1.200309 & 0.672877 & 1.539210\\
+MoTM & 0.635111 & 1.222468 & 0.638219 & 1.263218\\
+Mean of six finite candidates & 0.628933 & 1.173273 & 0.628167 & 1.180577\\
+Median of six finite candidates & 0.624324 & 1.205464 & 0.621990 & 1.212519\\
+Mean of seven candidates & 0.620103 & 1.144141 & 0.630054 & 1.194909\\
+Median of seven candidates & 0.614601 & 1.180633 & 0.619774 & 1.215528\\
+Median including MoTM & 0.605507 & 1.139357 & 0.611607 & 1.171881\\
+Individual teacher ranking, top three & 0.587200 & 1.104139 & 0.605561 & 1.175001\\
+Source-fixed individual-risk triple & 0.594789 & 1.148699 & 0.625741 & 1.242735\\
+Learned triple: combination teacher risk & 0.586873 & 1.085500 & 0.608002 & 1.177663\\
+Learned triple: member teacher risk & \textbf{0.581795} & \textbf{1.085192} & 0.615569 & 1.216673\\
+Source-fixed combination-risk triple & 0.594789 & 1.148699 & 0.619040 & 1.207129\\
+Ensemble teacher gate (primary) & 0.608321 & 1.110985 & 0.624733 & 1.158096\\
+Member teacher gate & 0.593649 & 1.134564 & 0.605122 & 1.132753\\
+Source future-supervised gate & 0.616020 & 1.147136 & \textbf{0.600364} & \textbf{1.130239}\\
+Source-fixed convex mixture & 0.600751 & 1.109923 & 0.616414 & 1.148950\\
+Source-fixed single candidate & 0.604171 & 1.200309 & 0.623139 & 1.196848\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!htbp]
+\caption{Artificial missingness: 32 complete histories, 1,152 masking inputs and four source families. Horizon 192. Standardized downstream MAE/MSE; lower is better.}
+\label{tab:r6_all_synthetic_h192}
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{Chronos-2} & \multicolumn{2}{c}{TimesFM 2.5}\\
+Procedure & MAE & MSE & MAE & MSE\\
+\midrule
+LOCF & 0.700649 & 1.554350 & 0.715843 & 1.601017\\
+Linear interpolation & 0.709172 & 1.615842 & 0.725900 & 1.694804\\
+Seasonal lag & 0.665305 & 1.314595 & 0.666854 & 1.316702\\
+Multivariate nearest neighbors & 0.688642 & 1.376007 & 0.707498 & 1.485056\\
+SAITS & 0.688555 & 1.380330 & 0.698676 & 1.444043\\
+TimeMixer++ & 0.705086 & 1.392193 & 0.715922 & 1.454231\\
+Guarded native input & 0.633150 & 1.255335 & 0.713977 & 1.638922\\
+MoTM & 0.667095 & 1.303082 & 0.683597 & 1.381504\\
+Mean of six finite candidates & 0.663127 & 1.260948 & 0.672728 & 1.306693\\
+Median of six finite candidates & 0.658360 & 1.294804 & 0.667433 & 1.341754\\
+Mean of seven candidates & 0.653054 & 1.227724 & 0.674032 & 1.317249\\
+Median of seven candidates & 0.646870 & 1.264564 & 0.664383 & 1.338877\\
+Median including MoTM & 0.637855 & 1.222324 & 0.655845 & 1.293378\\
+Individual teacher ranking, top three & 0.622052 & 1.189024 & 0.650046 & 1.292228\\
+Source-fixed individual-risk triple & 0.624603 & 1.215744 & 0.668339 & 1.358296\\
+Learned triple: combination teacher risk & \textbf{0.617015} & \textbf{1.157891} & 0.653202 & 1.298539\\
+Learned triple: member teacher risk & 0.618107 & 1.176196 & 0.659582 & 1.334614\\
+Source-fixed combination-risk triple & 0.624603 & 1.215744 & 0.662784 & 1.329668\\
+Ensemble teacher gate (primary) & 0.636745 & 1.178526 & 0.664386 & 1.265550\\
+Member teacher gate & 0.625210 & 1.197344 & 0.645186 & \textbf{1.240919}\\
+Source future-supervised gate & 0.649898 & 1.239344 & \textbf{0.642417} & 1.245513\\
+Source-fixed convex mixture & 0.630231 & 1.179018 & 0.659963 & 1.266592\\
+Source-fixed single candidate & 0.633150 & 1.255335 & 0.666854 & 1.316702\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!htbp]
+\caption{Original missingness: 192 Beijing histories from 12 stations in one source family. Horizon 96. Standardized downstream MAE/MSE; lower is better.}
+\label{tab:r6_all_native_h96}
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{Chronos-2} & \multicolumn{2}{c}{TimesFM 2.5}\\
+Procedure & MAE & MSE & MAE & MSE\\
+\midrule
+LOCF & \textbf{0.950132} & 1.943627 & 0.971925 & 2.019353\\
+Linear interpolation & 0.950227 & 1.944724 & \textbf{0.969275} & \textbf{2.015033}\\
+Seasonal lag & 0.974885 & 2.010805 & 0.989865 & 2.090399\\
+Multivariate nearest neighbors & 0.961376 & 1.969753 & 0.986390 & 2.078360\\
+SAITS & 0.957647 & 1.957036 & 0.984749 & 2.073282\\
+TimeMixer++ & 0.961594 & 1.962200 & 0.980503 & 2.051087\\
+Guarded native input & 0.951353 & \textbf{1.941988} & 0.971437 & 2.021100\\
+MoTM & 0.967316 & 1.993144 & 0.988743 & 2.073599\\
+Mean of six finite candidates & 0.956681 & 1.952902 & 0.977016 & 2.038406\\
+Median of six finite candidates & 0.957101 & 1.955445 & 0.980046 & 2.048878\\
+Mean of seven candidates & 0.955058 & 1.948091 & 0.975680 & 2.033217\\
+Median of seven candidates & 0.956488 & 1.953139 & 0.978526 & 2.041793\\
+Median including MoTM & 0.957342 & 1.955942 & 0.979453 & 2.043289\\
+Individual teacher ranking, top three & 0.957032 & 1.956728 & 0.977873 & 2.033044\\
+Source-fixed individual-risk triple & 0.955994 & 1.946929 & 0.982924 & 2.062434\\
+Learned triple: combination teacher risk & 0.958852 & 1.956421 & 0.980450 & 2.040928\\
+Learned triple: member teacher risk & 0.955966 & 1.955191 & 0.979422 & 2.038913\\
+Source-fixed combination-risk triple & 0.955994 & 1.946929 & 0.981958 & 2.056250\\
+Ensemble teacher gate (primary) & 0.955657 & 1.950378 & 0.982291 & 2.050711\\
+Member teacher gate & 0.952588 & 1.942716 & 0.979920 & 2.040645\\
+Source future-supervised gate & 0.956171 & 1.953695 & 0.980731 & 2.047140\\
+Source-fixed convex mixture & 0.954660 & 1.946952 & 0.979966 & 2.043733\\
+Source-fixed single candidate & 0.951353 & \textbf{1.941988} & 0.989865 & 2.090399\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!htbp]
+\caption{Original missingness: 192 Beijing histories from 12 stations in one source family. Horizon 192. Standardized downstream MAE/MSE; lower is better.}
+\label{tab:r6_all_native_h192}
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{Chronos-2} & \multicolumn{2}{c}{TimesFM 2.5}\\
+Procedure & MAE & MSE & MAE & MSE\\
+\midrule
+LOCF & 1.003871 & 2.215710 & 1.033990 & 2.326283\\
+Linear interpolation & 1.002549 & 2.215391 & 1.030748 & 2.318477\\
+Seasonal lag & 1.008891 & 2.219830 & 1.038977 & 2.357782\\
+Multivariate nearest neighbors & 1.004405 & 2.213127 & 1.040638 & 2.357744\\
+SAITS & 1.002326 & 2.206226 & 1.038978 & 2.350760\\
+TimeMixer++ & 1.003487 & 2.205822 & 1.033742 & 2.331863\\
+Guarded native input & 0.999211 & 2.210220 & 1.032443 & 2.324450\\
+MoTM & 1.010474 & 2.235865 & 1.040558 & 2.348499\\
+Mean of six finite candidates & 1.000870 & 2.200697 & 1.031193 & 2.321433\\
+Median of six finite candidates & 1.001998 & 2.206083 & 1.034343 & 2.330134\\
+Mean of seven candidates & 0.999880 & 2.198561 & \textbf{1.030462} & 2.318470\\
+Median of seven candidates & 1.001817 & 2.205530 & 1.033228 & 2.324191\\
+Median including MoTM & 1.002224 & 2.206333 & 1.034025 & 2.325857\\
+Individual teacher ranking, top three & 1.002582 & 2.209810 & 1.032216 & \textbf{2.315772}\\
+Source-fixed individual-risk triple & 1.000222 & 2.197967 & 1.036182 & 2.341873\\
+Learned triple: combination teacher risk & 1.001785 & 2.202354 & 1.034049 & 2.322201\\
+Learned triple: member teacher risk & 1.001781 & 2.207453 & 1.033022 & 2.319224\\
+Source-fixed combination-risk triple & 1.000222 & 2.197967 & 1.035738 & 2.336656\\
+Ensemble teacher gate (primary) & 1.000238 & 2.202889 & 1.034761 & 2.327239\\
+Member teacher gate & 0.998896 & 2.204126 & 1.033196 & 2.319714\\
+Source future-supervised gate & 0.999885 & 2.201400 & 1.031819 & 2.321118\\
+Source-fixed convex mixture & \textbf{0.998834} & \textbf{2.197785} & 1.031979 & 2.323520\\
+Source-fixed single candidate & 0.999211 & 2.210220 & 1.038977 & 2.357782\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+

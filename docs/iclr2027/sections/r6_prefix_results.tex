@@ -1,0 +1,59 @@
+\section{Historical Calibration after Confirmation}
+\label{app:prefix_calibration}
+After examining the frozen confirmation, we registered a fixed historical calibration diagnostic on the same R6 cohort. It is developmental reuse. Within each original 20\% fitting prefix, the first 60\% fitted calibration imputers with the original 10-epoch/64-window budget. Up to four complete 96-step histories from the remaining interval supplied frozen-forecaster teacher outputs. Eleven of 15 items provided at least two histories, giving 43 histories and 774 artificial-mask inputs. Other items retained source-fixed weights. Per-item local simplex weights minimized teacher MSE; the prespecified returned weights combined local and source-fixed weights equally. An unshrunk local control was retained. H192 reused weights calibrated at H96. Evaluation reused the original R6 candidate bank, whose deployment imputers used the full original fitting prefix. This difference in imputer-fitting intervals limits attribution of the result.
+
+A subsequent matched-label control retained only those historical origins whose next 96 steps remained inside the original fitting prefix and contained at least 48 observations per target. This gave 39 common histories across the same 11 supported items. Teacher and actual past-future losses used exactly the same observed coordinates, with equal target weighting. Both used the same half shrinkage and source fallback. No new forecaster calls or imputer fits were needed. Weights and output banks were saved before scoring the evaluation futures.
+
+Tables~\ref{tab:r6_prefix_h96} and~\ref{tab:r6_prefix_h192} report all fixed controls. The all-history teacher calibration helps TimesFM on the synthetic panel but worsens Chronos. On matched histories, actual past-future supervision improves Chronos relative to teacher supervision, while teacher supervision is better for TimesFM. Original missingness does not exhibit uniform gains over the source-fixed mixture. These findings do not establish a generally preferable label source or support choosing a different rule for each backbone after viewing confirmation outcomes.
+\begin{table}[!htbp]
+\caption{Fixed post-confirmation historical-calibration diagnostics at horizon 96. Standardized MAE/MSE, with all R6 evaluation inputs retained. Half shrinkage means equal local and source-fixed weights. The matched controls share the same 39 historical origins and observation masks.}
+\label{tab:r6_prefix_h96}
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{Chronos-2} & \multicolumn{2}{c}{TimesFM 2.5}\\
+Procedure & MAE & MSE & MAE & MSE\\
+\midrule
+\multicolumn{5}{l}{\textit{Artificial missingness: four families, 32 original histories}}\\
+Source-fixed mixture & 0.600751 & 1.109923 & 0.616414 & 1.148950\\
+All eligible teachers, half shrinkage & 0.614169 & 1.126436 & 0.610681 & 1.116069\\
+All eligible teachers, no shrinkage & 0.632034 & 1.170204 & 0.610774 & 1.117264\\
+Matched history: teacher supervision & 0.607626 & 1.107897 & 0.611610 & 1.124640\\
+Matched history: observed-future supervision & 0.600859 & 1.081927 & 0.618728 & 1.151249\\
+\midrule
+\multicolumn{5}{l}{\textit{Original missingness: one family, 192 original histories}}\\
+Source-fixed mixture & 0.954660 & 1.946952 & 0.979966 & 2.043733\\
+All eligible teachers, half shrinkage & 0.954595 & 1.948990 & 0.978922 & 2.041206\\
+All eligible teachers, no shrinkage & 0.955153 & 1.954632 & 0.978046 & 2.040678\\
+Matched history: teacher supervision & 0.954611 & 1.949007 & 0.978907 & 2.041159\\
+Matched history: observed-future supervision & 0.959134 & 1.962096 & 0.980734 & 2.051587\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!htbp]
+\caption{Fixed post-confirmation historical-calibration diagnostics at horizon 192. Standardized MAE/MSE, with all R6 evaluation inputs retained. Half shrinkage means equal local and source-fixed weights. The matched controls share the same 39 historical origins and observation masks.}
+\label{tab:r6_prefix_h192}
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{Chronos-2} & \multicolumn{2}{c}{TimesFM 2.5}\\
+Procedure & MAE & MSE & MAE & MSE\\
+\midrule
+\multicolumn{5}{l}{\textit{Artificial missingness: four families, 32 original histories}}\\
+Source-fixed mixture & 0.630231 & 1.179018 & 0.659963 & 1.266592\\
+All eligible teachers, half shrinkage & 0.642142 & 1.191903 & 0.654603 & 1.234683\\
+All eligible teachers, no shrinkage & 0.659121 & 1.232414 & 0.655748 & 1.237264\\
+Matched history: teacher supervision & 0.635716 & 1.173660 & 0.654922 & 1.238696\\
+Matched history: observed-future supervision & 0.629991 & 1.151173 & 0.660652 & 1.261029\\
+\midrule
+\multicolumn{5}{l}{\textit{Original missingness: one family, 192 original histories}}\\
+Source-fixed mixture & 0.998834 & 2.197785 & 1.031979 & 2.323520\\
+All eligible teachers, half shrinkage & 0.999488 & 2.202261 & 1.032042 & 2.323357\\
+All eligible teachers, no shrinkage & 1.001123 & 2.210888 & 1.032365 & 2.324837\\
+Matched history: teacher supervision & 0.999488 & 2.202190 & 1.032024 & 2.323292\\
+Matched history: observed-future supervision & 1.001507 & 2.207276 & 1.032632 & 2.328450\\
+\bottomrule
+\end{tabular}
+\end{table}
+

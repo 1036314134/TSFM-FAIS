@@ -1,0 +1,68 @@
+{
+  "jobs": [
+    {
+      "name": "r7_latent_source_tests",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-c",
+        "import pathlib,json,sys,pytest,torch\ntorch.set_num_threads(1)\nroot=pathlib.Path(\"E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r7/latent-source-tests-v001\")\nroot.mkdir(parents=True,exist_ok=False)\ncode=pytest.main(['-q','tests/unit/test_latent_source_inputs.py','--basetemp',str(root/'temp'),'--junitxml',str(root/'tests.xml')])\n(root/'manifest.json').write_text(json.dumps({'status':'completed' if code==0 else 'failed','pytest_exit_code':int(code)},indent=2)+'\\n',encoding='utf-8')\nsys.exit(code)"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r7/latent-source-tests-v001/manifest.json",
+      "hard_timeout_seconds": 600
+    },
+    {
+      "name": "r7_collect_latent_source",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/collect_latent_source.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r7/latent-source-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r7/latent-source-v001/manifest.json",
+      "hard_timeout_seconds": 129600
+    },
+    {
+      "name": "r7_train_latent_source_gates",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_latent_source_gates.py",
+        "--input-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r7/latent-source-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r7/latent-source-gates-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r7/latent-source-gates-v001/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r7_audit_latent_source_gates",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_latent_source_gates.py",
+        "--input-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r7/latent-source-v001",
+        "--study-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r7/latent-source-gates-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r7/latent-source-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r7/latent-source-audit-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r6_manuscript_evidence_build_v004",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/build_r6_manuscript.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/manuscript-render-v004"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/manuscript-render-v004/manifest.json",
+      "hard_timeout_seconds": 3600
+    }
+  ]
+}

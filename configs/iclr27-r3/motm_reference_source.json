@@ -1,0 +1,306 @@
+{
+  "status": "download_specification",
+  "repository": "EDF-Lab/MoTM",
+  "commit": "b406660be4e9e147c3622b4e2f23c71789c26811",
+  "tree_sha": "e0f9b33692ec0d2c3b8d9b9e9fc8ca92393aaaeb",
+  "reference_url": "https://github.com/EDF-Lab/MoTM/tree/b406660be4e9e147c3622b4e2f23c71789c26811",
+  "selection": "official source, configuration, inference entry point and three best.pt checkpoints; no training data",
+  "file_count": 58,
+  "total_bytes": 14510860,
+  "notes": [
+    "Official inference expects per-checkpoint .hydra/config.yaml, which is absent from the published tree; exact inference configuration still requires verification.",
+    "No local environment packages are modified by this preparation."
+  ],
+  "files": [
+    {
+      "path": "README.md",
+      "git_blob_sha1": "9270233fdb9051ef438144c015628d60d188a14e",
+      "size_bytes": 7153
+    },
+    {
+      "path": "config/callbacks/default.yaml",
+      "git_blob_sha1": "942d9b29777adaa10748902c03b897fb794dd51c",
+      "size_bytes": 13
+    },
+    {
+      "path": "config/data/infer/etth1.yaml",
+      "git_blob_sha1": "87ac9a15124841b7cf929036a75c7394f0976a3f",
+      "size_bytes": 332
+    },
+    {
+      "path": "config/data/infer/etth2.yaml",
+      "git_blob_sha1": "772b8b4a0d3673716d07c0af012272934022e957",
+      "size_bytes": 332
+    },
+    {
+      "path": "config/data/infer/spanishe.yaml",
+      "git_blob_sha1": "b09abaa8905731176a1cca021dc9d1f47a7c841d",
+      "size_bytes": 338
+    },
+    {
+      "path": "config/data/infer/traffic.yaml",
+      "git_blob_sha1": "46636e05f1873c848009f90be55e9cf87aa068d7",
+      "size_bytes": 339
+    },
+    {
+      "path": "config/data/infer/weather.yaml",
+      "git_blob_sha1": "784346a8d222a7ab9888ff92b46a2e4d0a96f11f",
+      "size_bytes": 336
+    },
+    {
+      "path": "config/data/train/electricity.yaml",
+      "git_blob_sha1": "2f328b08444e7b170d1c040cdacf6f3b3d9168fb",
+      "size_bytes": 344
+    },
+    {
+      "path": "config/data/train/solar.yaml",
+      "git_blob_sha1": "12abc81e142d4e1423d614b6ad73e0b06722d89b",
+      "size_bytes": 333
+    },
+    {
+      "path": "config/data/train/spanishw_t.yaml",
+      "git_blob_sha1": "433d444d0468d678fbe514fbd6753d92d4601d0c",
+      "size_bytes": 358
+    },
+    {
+      "path": "config/hydra/custom.yaml",
+      "git_blob_sha1": "d0208dd9fa5e505ccd012fc1bfa64f62458ebf30",
+      "size_bytes": 728
+    },
+    {
+      "path": "config/hydra/inference.yaml",
+      "git_blob_sha1": "61cf51ce09e415a7d6d0f228b5707c461229b58f",
+      "size_bytes": 363
+    },
+    {
+      "path": "config/hydra/mixture.yaml",
+      "git_blob_sha1": "18d5e20f29224f636f58155b1072d5856bb0891b",
+      "size_bytes": 365
+    },
+    {
+      "path": "config/imputation.yaml",
+      "git_blob_sha1": "2f339c5e0d9e1303fb988f7a50d8918b9e65cdf9",
+      "size_bytes": 180
+    },
+    {
+      "path": "config/inference.yaml",
+      "git_blob_sha1": "0ef0a8527b6a937d0b98fadba25d27ba3859426f",
+      "size_bytes": 130
+    },
+    {
+      "path": "config/inr/timeflow.yaml",
+      "git_blob_sha1": "55778f2ef3120fb501aa3322b7cdad39e7a230be",
+      "size_bytes": 399
+    },
+    {
+      "path": "config/optim/timeflow.yaml",
+      "git_blob_sha1": "18598183b1aac541380385504803deaca332b1f3",
+      "size_bytes": 291
+    },
+    {
+      "path": "config/task/imputation.yaml",
+      "git_blob_sha1": "a69803116db026d7b008f29918eaf67f256918c9",
+      "size_bytes": 274
+    },
+    {
+      "path": "config/trainer/gpu.yaml",
+      "git_blob_sha1": "10259d70e6169e9d1468154c86e1ee4b88ac6d92",
+      "size_bytes": 172
+    },
+    {
+      "path": "outputs/saved_weights/Electricity/ckpt/best.pt",
+      "git_blob_sha1": "f4473601e3ebf6caaf83aa84950597decc253d03",
+      "size_bytes": 4776100
+    },
+    {
+      "path": "outputs/saved_weights/Solar/ckpt/best.pt",
+      "git_blob_sha1": "312c98583c8c1eb688378b1c7a56c7c7b7199cfd",
+      "size_bytes": 4776100
+    },
+    {
+      "path": "outputs/saved_weights/SpanishW-T/ckpt/best.pt",
+      "git_blob_sha1": "ff59ed5f65c52e139bcc72deecd1b39ace284c8a",
+      "size_bytes": 4776164
+    },
+    {
+      "path": "pyproject.toml",
+      "git_blob_sha1": "abc469e5ddf98c15d42de2cfb81f071ea1691719",
+      "size_bytes": 383
+    },
+    {
+      "path": "scripts/slurm/sinfer_mixture.sh",
+      "git_blob_sha1": "fe6a9d196a3cc0878b486777fbb055387c27a7e0",
+      "size_bytes": 3005
+    },
+    {
+      "path": "src/baselines/__init__.py",
+      "git_blob_sha1": "33e6bc5bcd1c2761da9429130786361870e29fc4",
+      "size_bytes": 144
+    },
+    {
+      "path": "src/baselines/naive.py",
+      "git_blob_sha1": "eebc6b5da9f997cf690088c055a55c675d177c9a",
+      "size_bytes": 2802
+    },
+    {
+      "path": "src/data/constants.py",
+      "git_blob_sha1": "88d1419d51e669b8df7cbf99a181ab037d439207",
+      "size_bytes": 1361
+    },
+    {
+      "path": "src/data/data_builder.py",
+      "git_blob_sha1": "97f095fead532a79942be1d1ce0dc1a12d48119f",
+      "size_bytes": 15287
+    },
+    {
+      "path": "src/data/dataloader/__init__.py",
+      "git_blob_sha1": "ceed0e174378093f826b7b5170e8018690cc9a5b",
+      "size_bytes": 305
+    },
+    {
+      "path": "src/data/dataloader/base.py",
+      "git_blob_sha1": "b21e68fee187662c09257338807c01e1520bdecd",
+      "size_bytes": 13833
+    },
+    {
+      "path": "src/data/dataloader/joint.py",
+      "git_blob_sha1": "e4c68ed15d33e4fb70eb6d138c0b2734fe109a5c",
+      "size_bytes": 1473
+    },
+    {
+      "path": "src/data/interpolate.py",
+      "git_blob_sha1": "31c5be3661a0977c02c8953a5277e4be2d515f7f",
+      "size_bytes": 3040
+    },
+    {
+      "path": "src/data/scaler.py",
+      "git_blob_sha1": "edae617cb15313b2356bec55a7f055a31d30780a",
+      "size_bytes": 2287
+    },
+    {
+      "path": "src/data/utils.py",
+      "git_blob_sha1": "6bf4b5b169de7efd0cba597ed309a1c0a7438460",
+      "size_bytes": 15171
+    },
+    {
+      "path": "src/metalearning/losses.py",
+      "git_blob_sha1": "75ff013bed0aa30523cee3c786470d8311b06dfe",
+      "size_bytes": 2484
+    },
+    {
+      "path": "src/metalearning/metalearning.py",
+      "git_blob_sha1": "2b93314d1bd7d3f5f7bb95cdb13521af92f4c82d",
+      "size_bytes": 7800
+    },
+    {
+      "path": "src/modules/__init__.py",
+      "git_blob_sha1": "2244f43725e5c8553fba64d2c3fdff5156f51743",
+      "size_bytes": 98
+    },
+    {
+      "path": "src/modules/freq_embedding/__init__.py",
+      "git_blob_sha1": "7bae04aa4e3f7a67b60f00e7791f665ce6ca015f",
+      "size_bytes": 179
+    },
+    {
+      "path": "src/modules/freq_embedding/gaussian.py",
+      "git_blob_sha1": "cb9bd985d54ad3175e6ca63815e567c7d4ef594d",
+      "size_bytes": 1562
+    },
+    {
+      "path": "src/modules/freq_embedding/nerf.py",
+      "git_blob_sha1": "a77b526dd407fba91a73108cf9a103c5cf3e7765",
+      "size_bytes": 3820
+    },
+    {
+      "path": "src/modules/hypernetwork/__init__.py",
+      "git_blob_sha1": "b04aed6a4362b744ab3e03a78d63baa41d92fbe3",
+      "size_bytes": 171
+    },
+    {
+      "path": "src/modules/hypernetwork/autodecoder.py",
+      "git_blob_sha1": "2ab3d1b46f28a91324f05a1355eece12e1f62c87",
+      "size_bytes": 3495
+    },
+    {
+      "path": "src/modules/inr/__init__.py",
+      "git_blob_sha1": "172d973bb253b4663dfa0989273e72690d64fcbe",
+      "size_bytes": 215
+    },
+    {
+      "path": "src/modules/inr/fourier_features/_base.py",
+      "git_blob_sha1": "972ef861bfe970c1ddd4dd00d889ace20897595d",
+      "size_bytes": 2897
+    },
+    {
+      "path": "src/modules/inr/fourier_features/modulated.py",
+      "git_blob_sha1": "ca5999172f9baae9dc1c86c47e333ccd0fd56160",
+      "size_bytes": 5425
+    },
+    {
+      "path": "src/modules/modulation/__init__.py",
+      "git_blob_sha1": "6c30e54703a89958f97c820bbb268535a34030a9",
+      "size_bytes": 154
+    },
+    {
+      "path": "src/modules/modulation/film_conditionning.py",
+      "git_blob_sha1": "cd49b6426153d00394ea158c9847b08187e94b70",
+      "size_bytes": 8278
+    },
+    {
+      "path": "src/modules/ridge/ridge.py",
+      "git_blob_sha1": "4ee4be48c3ee2f545b281cc4ef45ce99d79ccb9e",
+      "size_bytes": 1874
+    },
+    {
+      "path": "src/modules/utils.py",
+      "git_blob_sha1": "c4e1851fdfeb2ceabb284125641311336602f56c",
+      "size_bytes": 697
+    },
+    {
+      "path": "src/tools/inference.py",
+      "git_blob_sha1": "668f66929b5e4e7124d8f503926817cb572e6932",
+      "size_bytes": 7701
+    },
+    {
+      "path": "src/tools/inference_mixture.py",
+      "git_blob_sha1": "27fa73bfd6d4aa1d2c323dcc4e17fa5b29b03ec0",
+      "size_bytes": 17016
+    },
+    {
+      "path": "src/tools/trainer.py",
+      "git_blob_sha1": "27117c80df4301c78dc19db3b3ddb68aa27561d3",
+      "size_bytes": 11616
+    },
+    {
+      "path": "src/tools/utils/estimate_lambda.py",
+      "git_blob_sha1": "566a520a5f028daab31acec985969a28245a0456",
+      "size_bytes": 10553
+    },
+    {
+      "path": "src/tools/utils/mask.py",
+      "git_blob_sha1": "2c09f0c01951e423fae94262e0f56e1a71c2ec3f",
+      "size_bytes": 1024
+    },
+    {
+      "path": "src/tools/utils/plot.py",
+      "git_blob_sha1": "5f82a10f6318d5f937cb386285b76a28d0175c1b",
+      "size_bytes": 10589
+    },
+    {
+      "path": "src/tools/utils/read_results.py",
+      "git_blob_sha1": "7841dc60b823f686e9526fb4bae68e3112d32c76",
+      "size_bytes": 3508
+    },
+    {
+      "path": "src/tools/utils/scheduler.py",
+      "git_blob_sha1": "b45ea0280954c26dbbc59abf95fc551447db1e78",
+      "size_bytes": 2849
+    },
+    {
+      "path": "timeflow_infer_mixture.py",
+      "git_blob_sha1": "e6607effe503d67fff5ed87a88373d0b22c71f19",
+      "size_bytes": 6620
+    }
+  ]
+}

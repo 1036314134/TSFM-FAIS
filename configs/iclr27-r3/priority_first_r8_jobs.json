@@ -1,0 +1,30 @@
+{
+  "jobs": [
+    {
+      "name": "r8_train_calibrated_source_gates",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_calibrated_source_gates.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r8/calibrated-source-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r8/calibrated-source-v001/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r8_audit_calibrated_source_gates",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_calibrated_source_gates.py",
+        "--study-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r8/calibrated-source-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r8/calibrated-source-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r8/calibrated-source-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    }
+  ]
+}

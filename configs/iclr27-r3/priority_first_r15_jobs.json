@@ -1,0 +1,16 @@
+{
+  "jobs": [
+    {
+      "name": "r15_readout_future_dependence",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/readout_future_dependence.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r15/dependence-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r15/dependence-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r15_audit_future_dependence",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/audit_future_dependence.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r15/dependence-audit-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r15/dependence-audit-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "jobs": [
+    {
+      "name": "r14_prepare_conditional_diagnostic",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_conditional_diagnostic.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r14/conditional-inputs-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r14/conditional-inputs-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r14_forecast_conditional_diagnostic",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/forecast_conditional_diagnostic.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r14/conditional-forecasts-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r14/conditional-forecasts-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r14_readout_conditional_risk",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/readout_conditional_risk.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r14/conditional-risk-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r14/conditional-risk-v001/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r14_audit_conditional_risk",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/audit_conditional_risk.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r14/conditional-risk-audit-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r14/conditional-risk-audit-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    }
+  ]
+}

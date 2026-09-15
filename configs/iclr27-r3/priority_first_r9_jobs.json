@@ -1,0 +1,28 @@
+{
+  "jobs": [
+    {
+      "name": "r9_prepare_source_supplement",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_source_expansion.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r9/source-supplement-inputs-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r9/source-supplement-inputs-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r9_collect_source_supplement",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/collect_source_expansion.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r9/source-supplement-forecasts-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r9/source-supplement-forecasts-v001/manifest.json",
+      "hard_timeout_seconds": 43200
+    },
+    {
+      "name": "r9_train_source_expansion",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/train_source_expansion.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r9/source-expansion-learning-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r9/source-expansion-learning-v001/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r9_audit_source_expansion",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/audit_source_expansion.py", "--study-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r9/source-expansion-learning-v001", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r9/source-expansion-audit-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r9/source-expansion-audit-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    }
+  ]
+}

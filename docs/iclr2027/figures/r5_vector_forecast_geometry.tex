@@ -1,0 +1,45 @@
+\begingroup
+\definecolor{faisGeomBlue}{HTML}{0072B2}
+\definecolor{faisGeomGray}{HTML}{666666}
+\begin{tikzpicture}[x=2.2cm,y=2.2cm,font=\fontsize{8}{9.2}\selectfont,>=Stealth]
+  \foreach \offset in {0,6.65} {
+    \begin{scope}[xshift=\offset cm]
+      \draw[->,thin] (-1.15,0) -- (1.17,0);
+      \draw[->,thin] (-1.15,0) -- (-1.15,1.12);
+      \foreach \tick in {0,0.5,1} {
+        \draw[thin] (-1.18,\tick) -- (-1.12,\tick);
+        \node[anchor=east] at (-1.2,\tick) {$\tick$};
+      }
+      \foreach \tick in {-1,1} {
+        \draw[thin] (\tick,-0.02) -- (\tick,0.02);
+        \node[anchor=north] at (\tick,-0.045) {$\tick$};
+      }
+      \node at (0,-0.28) {First forecast coordinate};
+      \node[rotate=90] at (-1.51,0.55) {Second forecast coordinate};
+      \draw[faisGeomGray,line width=1pt,domain=-1:1,samples=101]
+        plot (\x,{\x*\x});
+      \draw[faisGeomBlue,dashed,line width=0.7pt] (0,0) -- (0,{1/3});
+      \filldraw[fill=white,draw=black,line width=0.8pt] (0,0) circle[radius=1.8pt];
+      \fill[faisGeomBlue] (0,{1/3+0.035}) -- (0.035,{1/3}) --
+        (0,{1/3-0.035}) -- (-0.035,{1/3}) -- cycle;
+      \draw[faisGeomBlue,thin] (0.02,0.37) -- (0.22,0.7);
+    \end{scope}
+  }
+  \begin{scope}
+    \node[font=\fontsize{9}{10}\selectfont\bfseries] at (0,1.43) {(a) Accurate predictor};
+    \node at (0,1.22) {Actual future: $Y=(Z,Z^2)$};
+    \node[text=faisGeomBlue] at (0,0.85) {$\bar p=m=(0,1/3)$};
+    \node[anchor=north] at (0,-0.045) {$F(0)$};
+    \node at (0,-0.5) {Best completion: MSE $4/15$};
+    \node[text=faisGeomBlue] at (0,-0.7) {Forecast mean: MSE $19/90$};
+  \end{scope}
+  \begin{scope}[xshift=6.65cm]
+    \node[font=\fontsize{9}{10}\selectfont\bfseries] at (0,1.43) {(b) Predictor error};
+    \node at (0,1.22) {Actual future: $Y=(Z,0)$};
+    \node[text=faisGeomBlue] at (0,0.85) {$\bar p=(0,1/3)$};
+    \node[anchor=north] at (0,-0.045) {$m=F(0)$};
+    \node at (0,-0.5) {Best completion: MSE $1/6$};
+    \node[text=faisGeomBlue] at (0,-0.7) {Forecast mean: MSE $2/9$};
+  \end{scope}
+\end{tikzpicture}
+\endgroup

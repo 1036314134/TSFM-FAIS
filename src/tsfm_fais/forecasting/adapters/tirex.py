@@ -21,6 +21,7 @@ class TiRexAdapter(LazyForecastAdapter):
     capabilities = ForecastCapabilities(
         modes=frozenset({"independent_univariate"}),
         max_context=2048,
+        supports_missing_context=True,
     )
     native_quantile_levels = tuple(float(value) for value in np.arange(0.1, 1.0, 0.1))
 
@@ -29,7 +30,7 @@ class TiRexAdapter(LazyForecastAdapter):
         model_name: str = "NX-AI/TiRex",
         *,
         device: str = "cpu",
-        batch_size: int = 32,
+        batch_size: int = 1,
         backend_name: str = "torch",
         backend: Any | None = None,
     ) -> None:

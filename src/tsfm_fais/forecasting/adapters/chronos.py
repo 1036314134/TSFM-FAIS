@@ -70,11 +70,7 @@ class Chronos2Adapter(LazyForecastAdapter):
     ) -> ForecastResult:
         backend = self._ensure_backend()
         inputs = [
-            {
-                "target": row[:, 0]
-                if row.shape[1] == 1
-                else row.T
-            }
+            {"target": row[:, 0] if row.shape[1] == 1 else row.T}
             for row in contexts.astype(np.float32, copy=False)
         ]
         raw = backend.predict_quantiles(
@@ -85,19 +81,21 @@ class Chronos2Adapter(LazyForecastAdapter):
             predict_batches_jointly=self.predict_batches_jointly,
         )
         raw_quantiles = raw[0] if isinstance(raw, tuple) else raw
-        all_quantiles = normalize_quantiles(
-            raw_quantiles,
-            contexts.shape[0],
-            spec.horizon,
-            contexts.shape[2],
-            len(spec.quantile_levels),
-        )
+        # Chronos-2 documents [variate, horizon, quantile] for each input.
+        # Inferring axes from sizes conflates variates and quantiles when D == Q.
+        raw_array = stack_payload(raw_quantiles)
+        expected = (contexts.shape[0], contexts.shape[2], spec.horizon, len(spec.quantile_levels))
+        if raw_array.shape != expected:
+            raise ValueError(
+                f"Chronos-2 quantiles must have [N,D,H,Q] shape {expected}, got {raw_array.shape}"
+            )
+        all_quantiles = raw_array.transpose(0, 2, 1, 3)
         quantiles = all_quantiles[:, :, targets, :]
         return ForecastResult(
             point=point_from_quantiles(quantiles, spec.quantile_levels),
             target_indices=targets,
             quantiles=quantiles,
-            metadata={"checkpoint": self.model_name},
+            metadata={"checkpoint": self.model_name, "native_quantile_layout": "N,D,H,Q"},
         )
 
 
@@ -157,10 +155,7 @@ class ChronosBoltAdapter(LazyForecastAdapter):
         except ImportError:  # permits dependency-free injected test backends
             inputs = [row[:, 0].astype(np.float32, copy=False) for row in contexts]
         else:
-            inputs = [
-                torch.as_tensor(row[:, 0], dtype=torch.float32)
-                for row in contexts
-            ]
+            inputs = [torch.as_tensor(row[:, 0], dtype=torch.float32) for row in contexts]
         raw = backend.predict_quantiles(
             inputs=inputs,
             prediction_length=spec.horizon,

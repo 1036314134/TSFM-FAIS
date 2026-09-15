@@ -1,0 +1,40 @@
+\section{Development Data Coverage and Imputer Settings}
+\label{app:source}
+
+Table~\ref{tab:source-inventory} gives the actual evaluated source population. Each dataset contributes one evaluated multivariate item. The five smallest training families contain only 12 of the 165 source origins in total; under the full equal-family objective they receive one third of the family weight. Family-held-out fits renormalize weights over the remaining families. This describes source-weight concentration and does not establish its effect on generalization.
+
+\begin{table}[h]
+\centering\small
+\caption{Source-development coverage. Periods and horizons are measured in sampling steps. Each origin has 36 configured masking conditions. The local traffic snapshot has 21 channels and is not treated as the full traffic panel.}
+\label{tab:source-inventory}
+\begin{tabular}{lrrrr}
+\toprule
+Dataset & Variables & Period & Train origins & Validation origins\\
+\midrule
+azure2019\_D\_5T & 3 & 288 & 16 & 4\\
+Coastal\_T\_S\_H & 3 & 24 & 16 & 4\\
+current\_velocity\_H & 6 & 24 & 10 & 4\\
+electricity & 321 & 24 & 16 & 4\\
+ETTh1 & 7 & 24 & 16 & 4\\
+EWELD\_Load\_15T & 10 & 96 & 16 & 4\\
+exchange\_rate & 8 & 7 & 15 & 4\\
+national\_illness & 7 & 52 & 2 & 2\\
+NE\_China\_Wind\_H & 4 & 24 & 16 & 4\\
+OpenElectricity\_NEM\_5T & 10 & 288 & 16 & 4\\
+Port\_Activity\_D & 2 & 7 & 4 & 4\\
+Supply\_Chain\_Customer\_D & 36 & 7 & 4 & 4\\
+traffic & 21 & 24 & 16 & 4\\
+Uncertainty\_1M\_M & 3 & 12 & 1 & 1\\
+Vehicle\_Sales\_M & 10 & 12 & 1 & 1\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The masking mechanisms are random points, independent blocks, synchronous blocks, staggered blocks in correlated variables, value-dependent blocks, and mixed outages. The generator acts on the complete trajectory before contexts are extracted. Dataset, item, split, mechanism, nominal rate, and seed identify a realization. Origins in the same split inherit that realization; source training and validation use separate realizations. Correlation and value-score calibration use the fitting prefix. Nominal rates of 0.1, 0.3, and 0.5 refer to the trajectory-level generator setting, so a context's realized rate may differ. Value-dependent locations are selected offline over the trajectory; this is a controlled contamination procedure rather than a general model of online sensor failure.
+
+In the budget study, SAITS uses two layers, model dimension 64, feed-forward dimension 128, four attention heads, key and value dimensions 16, zero dropout, and unit weights for its observed and masked reconstruction terms. TimeMixer++ uses one layer, model dimension 32, feed-forward dimension 64, four heads, six kernels, top-$k=3$, one downsampling layer with window two, and zero dropout. Its channel-independence and nonstationary-normalization options are disabled. Both use a batch size of 16 and no early-stopping patience. Input dimension follows the dataset. These are fixed experimental configurations, not optimized capacity estimates.
+
+Evaluated-item counts differ from neural-imputer fitting-item counts. The dataset-level imputer artifacts can use prefixes from additional items declared in their fit records; source selection reuses those artifacts. In particular, the current-velocity fitting items differ from the single evaluated source item. The 165 selector-training origins therefore do not describe all data used to fit the neural imputers.
+
+
+

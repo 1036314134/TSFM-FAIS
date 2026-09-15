@@ -1,0 +1,28 @@
+{
+  "jobs": [
+    {
+      "name": "chronos_gradient_interface_diagnostic",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/diagnose_chronos_forward.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/chronos-gradient-interface-diagnostic-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/chronos-gradient-interface-diagnostic-v001/manifest.json",
+      "hard_timeout_seconds": 900
+    },
+    {
+      "name": "chronos_contiguous_input_diagnostic",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/diagnose_chronos_forward.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/chronos-gradient-interface-diagnostic-v002"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/chronos-gradient-interface-diagnostic-v002/manifest.json",
+      "hard_timeout_seconds": 900
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+\section{Forecast-Risk Supervision for Imputation Portfolios}
+\label{sec:forecast_gate}
+
+\paragraph{Candidate forecasts.}
+Let $O\in(\mathbb{R}\cup\{\mathrm{NaN}\})^{L\times D}$ denote an observed multivariate history and let $F_H$ denote the fixed point-forecasting interface at horizon $H$. Six imputation procedures produce completed histories $C_a=I_a(O)$, preserving every observed entry. A seventh procedure uses the predictor's supported missing-input interface. Its empty-input fallback uses LOCF and historical-prefix medians: Chronos applies a shared fallback when any input channel is empty, whereas TimesFM applies the fallback to each empty target separately. The resulting forecasts are $P_a=F_H(C_a)$ for $a\in\{1,\ldots,7\}$, with the seventh argument interpreted according to this missing-input procedure. Both forecasting backbones retain their original parameters.
+
+For target $k$, let $\mu_k$ and $s_k$ be the mean and population standard deviation of its observed historical fitting prefix. At least two observations are required; a standard deviation at most $10^{-12}$ is replaced by one and recorded. These statistics define $Z_{a,hk}=(P_{a,hk}-\mu_k)/s_k$. Forecasting inputs retain their original scale. Chronos uses one portfolio decision for both evaluated targets, so $z_a=\operatorname{vec}(Z_a)\in\mathbb{R}^{2H}$. TimesFM uses separate decisions, each with $z_a\in\mathbb{R}^{H}$. Write $q$ for the dimension of the applicable forecast vector.
+
+\paragraph{Available representation and shared gate.}
+Each candidate has 33 observable features: 21 summaries of the observed history and its completion, and 12 summaries of its queried forecast. Forecast summaries describe changes from LOCF, distance from the median of the six finite-imputation forecasts, temporal variation, and departure from the last LOCF history value. The two quantile-related fields remain zero in this point-forecast evaluation. Dataset identifiers, artificial-mask labels, actual future values, and artificially hidden historical values are excluded from the gate input.
+
+A shared linear layer with 16 ReLU units maps each candidate feature vector $x_a$ to $h_a$. The mean $\bar h=7^{-1}\sum_a h_a$ represents the candidate set. A second 16-unit ReLU layer and a scalar output layer score $[h_a;\bar h]$, with an additional learned bias for each candidate. Softmax converts the seven scores into weights $w_\theta(x)\in\Delta_7$, where $\Delta_7=\{w\geq0:\sum_a w_a=1\}$. Feature centering and scaling use source training rows only, with the source family weights; scales have a floor of $10^{-6}$, and standardized features are clipped to $[-10,10]$. Each gate has 1,096 trainable parameters. The prediction averages the weight vectors from the three prespecified seeds and returns
+\begin{equation}
+ \widehat z=\sum_{a=1}^{7}\bar w_a z_a,
+ \qquad \bar w_a=\frac{1}{3}\sum_{j=1}^{3}w_{\theta_j,a}.
+ \label{eq:gate_prediction}
+\end{equation}
+The deployed gate ensemble therefore has 3,288 trainable parameters per backbone. Each TimesFM target receives its own weights; Chronos shares weights across its two targets. Equation~\ref{eq:gate_prediction} combines predictions and does not define a unique completed input history.
+
+\paragraph{Supervision from complete source histories.}
+For a source history $X$ whose values are available before artificial masking, the same frozen forecaster provides a teacher vector $t$ from $F_H(X)$, standardized by the same prefix statistics. Only source training histories supply this supervision. The teacher does not require the actual future associated with that source history, and its complete-history input is unavailable to the deployed gate. The teacher is the backbone's selected point output; no assumption that it equals the true conditional future mean is imposed by the implementation.
+
+The primary objective evaluates the forecast actually returned by the gate:
+\begin{equation}
+ \mathcal{L}_{\mathrm{ens}}(w)
+ =\frac{1}{q}\left\|\sum_a w_a z_a-t\right\|_2^2.
+ \label{eq:gate_teacher_loss}
+\end{equation}
+The matched control instead minimizes
+$\mathcal{L}_{\mathrm{mem}}(w)=q^{-1}\sum_a w_a\|z_a-t\|_2^2$
+with the same representation, architecture, training histories and optimization budget. For nonnegative weights summing to one, their difference is the established ensemble-dispersion identity~\citep{krogh1994ensembles}:
+\begin{equation}
+ \mathcal{L}_{\mathrm{mem}}(w)-\mathcal{L}_{\mathrm{ens}}(w)
+ =\frac{1}{q}\sum_a w_a\left\|z_a-\sum_b w_bz_b\right\|_2^2.
+ \label{eq:gate_dispersion}
+\end{equation}
+This identity motivates a matched objective comparison for weighted means. It neither applies directly to median aggregation nor guarantees improved prediction of the real future.
+
+\paragraph{Cached quadratic objective.}
+Let $b=\operatorname{median}_a z_a$, $d_a=z_a-b$, and $G_{ab}=q^{-1}d_a^\top d_b$. The stored single-candidate teacher risks are measured relative to the same reference:
+$r_a=q^{-1}(\|z_a-t\|_2^2-\|b-t\|_2^2)$.
+Setting $c_a=(G_{aa}-r_a)/2$ gives
+\begin{equation}
+ \mathcal{L}_{\mathrm{ens}}(w)-q^{-1}\|b-t\|_2^2
+ =w^\top G w-2c^\top w,
+ \qquad
+ \mathcal{L}_{\mathrm{mem}}(w)-q^{-1}\|b-t\|_2^2=w^\top r.
+ \label{eq:gate_quadratic}
+\end{equation}
+The omitted term is independent of the gate parameters. Training therefore reuses the candidate forecasts and teacher-risk records and differentiates only through the small gate. A source-fixed convex combination minimizes the family-weighted quadratic objective over $\Delta_7$; a source-fixed single minimizes the corresponding individual teacher risk. A further matched control replaces $t$ with the actual standardized source future while retaining the same gate and fitting budget.
+
+\paragraph{Fitting and evaluation boundary.}
+Source development leaves one family out at a time and fits on the earlier source training histories of the remaining families. Final source models use the original 165 training origins from 15 families, with 5,940 artificial-mask episodes. The optimization schedule is fixed at 25 epochs, batch size 128, AdamW learning rate $10^{-3}$, weight decay $10^{-3}$ and gradient-norm limit one. The three seeds are 5101, 5102 and 5103. Validation outcomes do not select epochs or seeds. All final source parameters are fixed before new confirmation data are evaluated.
+
+The primary confirmation uses $L=H=96$. The same source models are applied at $H=192$ without retraining, providing a separate horizon-transfer evaluation. Both MAE and MSE are computed on originally observed future target entries after training-prefix standardization. An input must have at least 48 observed future entries per target at $H=96$ and at least 96 at $H=192$. The predictor must evaluate up to seven distinct candidate histories before gate application; batching and reuse of identical effective inputs reduce calls but do not turn this procedure into prediction-free imputation selection. The MoTM comparator and eight-member forecast median have a separately recorded additional-candidate budget.

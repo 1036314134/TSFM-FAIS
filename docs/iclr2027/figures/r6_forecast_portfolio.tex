@@ -1,0 +1,30 @@
+\begin{tikzpicture}[
+  x=1cm,y=1cm,>=Stealth,
+  box/.style={draw=blue!55!black,rounded corners=2pt,fill=blue!4,align=center,minimum height=.75cm,text width=1.55cm,font=\scriptsize},
+  training/.style={draw=orange!70!black,fill=orange!7,rounded corners=2pt,align=center,minimum height=.62cm,text width=2.0cm,font=\scriptsize},
+  flow/.style={->,line width=.65pt,draw=blue!55!black},
+  supervision/.style={->,dashed,line width=.65pt,draw=orange!70!black}
+]
+\node[box] (observed) at (0,0) {Observed history\\$O$};
+\node[box] (candidates) at (2.25,0) {Six imputers +\\native-input rule};
+\node[box] (forecaster) at (4.5,0) {Frozen forecaster\\$F_H$};
+\node[box] (points) at (6.75,0) {Seven candidate\\forecasts $z_a$};
+\node[box] (output) at (9.0,0) {Weighted forecast\\$\widehat z=\sum_a\bar w_a z_a$};
+\draw[flow] (observed) -- (candidates);
+\draw[flow] (candidates) -- (forecaster);
+\draw[flow] (forecaster) -- (points);
+\draw[flow] (points) -- (output);
+\node[box,text width=2.45cm] (features) at (4.5,-1.55) {33 visible features\\History, completion,\\forecast response};
+\node[box,text width=2.0cm] (gate) at (7.45,-1.55) {Shared gate\\Average weights from\\three fixed seeds};
+\draw[flow] (points.south) -- (6.75,-.65) -- (4.5,-.65) -- (features.north);
+\draw[flow] (observed.south) -- (0,-1.55) -- (features.west);
+\draw[flow] (candidates.south) -- (2.25,-1.55);
+\draw[flow] (features) -- (gate);
+\draw[flow] (gate.east) -| node[pos=.6,right,font=\scriptsize] {$\bar w$} (output.south);
+\node[training] (teacher) at (2.7,1.65) {Complete source history\\Teacher $t=F_H(X)$};
+\node[training,text width=2.4cm] (loss) at (6.25,1.65) {Source teacher objective\\Ensemble loss or member loss};
+\draw[supervision] (teacher) -- (loss);
+\draw[supervision] (points.north) -- (loss.south);
+\draw[supervision] (loss.east) -- (10.4,1.65) -- (10.4,-2.55) -- (7.45,-2.55) -- (gate.south);
+\node[font=\scriptsize,orange!70!black,align=center] at (0,1.65) {Source fitting only\\(dashed arrows)};
+\end{tikzpicture}

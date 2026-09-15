@@ -1,0 +1,7 @@
+# Matched source-future supervision control
+
+Before final cohort construction or new confirmation forecasts, add a source-supervised comparator to the fixed R6 method. This control uses the same 1,096-parameter shared gate, 33 features, three seeds, 25 epochs, optimizer, gradient limit, family weights and 165 source training histories. Its only changed fitting information is the actual observed 96-step source future, replacing the complete-history forecast teacher. It minimizes the error of its returned weighted forecast. No new-cohort observation or outcome is used for fitting or choosing settings.
+
+The comparison with the primary ensemble-loss teacher gate isolates source supervision under an unchanged architecture and output class. The existing member-loss teacher gate separately examines the aggregation objective. These three conditions are not a complete two-by-two factorial design. The additional comparator receives real source future labels; its informational advantage must be stated alongside performance and cost.
+
+Fit only six source control models (two forecasters, three seeds). Source validation histories remain outside this fitting population. Do not tune this control on the new confirmation data. Apply the same frozen 96-step-trained control at both confirmation horizons, alongside the unchanged primary method and previously declared baselines. The primary method binding and all original results remain unchanged.

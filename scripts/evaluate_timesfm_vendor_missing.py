@@ -23,7 +23,12 @@ from tsfm_fais.forecasting.metrics import macro_mase  # noqa: E402
 from tsfm_fais.forecasting.registry import default_forecast_registry  # noqa: E402
 from tsfm_fais.forecasting.runner import ForecastRunner  # noqa: E402
 from tsfm_fais.routing.utility import family_macro  # noqa: E402
-from tsfm_fais.utility_experiment import file_sha256, load_utility_config  # noqa: E402
+from tsfm_fais.utility_experiment import (  # noqa: E402
+    _save_npz,
+    _write_json,
+    file_sha256,
+    load_utility_config,
+)
 
 
 class TimesFMVendorMissingAdapter(TimesFM2p5Adapter):
@@ -35,12 +40,17 @@ class TimesFMVendorMissingAdapter(TimesFM2p5Adapter):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--batch-size", type=int)
     args = parser.parse_args()
     config = load_utility_config(args.config)
     import torch
     from timesfm.timesfm_2p5 import timesfm_2p5_base
 
-    torch.set_num_threads(4)
+    batch_size = config.forecast_batch_size if args.batch_size is None else args.batch_size
+    if args.threads < 1 or batch_size < 1:
+        parser.error("threads and batch-size must be positive")
+    torch.set_num_threads(args.threads)
     root = config.output_root
     manifest = json.loads((root / "episodes_manifest.json").read_text(encoding="utf-8"))
     output = root / "timesfm-vendor-missing-v001"
@@ -52,15 +62,17 @@ def main() -> None:
         "script_sha256": file_sha256(Path(__file__)),
         "vendor_preprocessing_sha256": file_sha256(Path(timesfm_2p5_base.__file__)),
         "checkpoint": str(config.forecaster_artifacts["timesfm2p5"]),
+        "threads": args.threads,
+        "batch_size": batch_size,
     }
     identity_path = output / "identity.json"
     if identity_path.exists() and json.loads(identity_path.read_text(encoding="utf-8")) != identity:
         raise ValueError("vendor baseline identity changed; preserve the earlier run")
-    identity_path.write_text(json.dumps(identity, indent=2), encoding="utf-8")
+    _write_json(identity_path, identity)
     adapter = TimesFMVendorMissingAdapter(
         model_name=str(config.forecaster_artifacts["timesfm2p5"]),
         device=config.device,
-        batch_size=config.forecast_batch_size,
+        batch_size=batch_size,
     )
     runner = ForecastRunner(default_forecast_registry(), {"timesfm2p5": adapter})
     spec = ForecastSpec(
@@ -76,8 +88,8 @@ def main() -> None:
     rows, prediction_records = [], []
     started = perf_counter()
     for dataset_id, records in groups.items():
-        for start in range(0, len(records), config.forecast_batch_size):
-            batch = records[start : start + config.forecast_batch_size]
+        for start in range(0, len(records), batch_size):
+            batch = records[start : start + batch_size]
             pending, contexts = [], []
             for record in batch:
                 path = root / record["path"]
@@ -91,7 +103,7 @@ def main() -> None:
                 result = runner.predict_missing(np.stack(contexts), spec)
                 for index, record in enumerate(pending):
                     destination = prediction_dir / Path(record["path"]).name
-                    np.savez_compressed(
+                    _save_npz(
                         destination,
                         point=result.point[index],
                         quantiles=result.quantiles[index],
@@ -137,20 +149,17 @@ def main() -> None:
     frame = pd.DataFrame(rows)
     frame.to_parquet(output / "rows.parquet", index=False)
     score = family_macro(frame[frame.split == "validation"])
-    (output / "manifest.json").write_text(
-        json.dumps(
-            {
-                "identity": identity,
-                "evidence_role": "development",
-                "validation_family_macro_mase": score,
-                "elapsed_seconds": perf_counter() - started,
-                "resources_this_execution": runner.resource_metrics(),
-                "episodes": prediction_records,
-                "semantics": "vendor interface removes leading missing values, interpolates remaining NaNs, and pads with a padding mask; this does not establish a learned missing-value mechanism",
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
+    _write_json(
+        output / "manifest.json",
+        {
+            "identity": identity,
+            "evidence_role": "development",
+            "validation_family_macro_mase": score,
+            "elapsed_seconds": perf_counter() - started,
+            "resources_this_execution": runner.resource_metrics(),
+            "episodes": prediction_records,
+            "semantics": "vendor interface removes leading missing values, interpolates remaining NaNs, and pads with a padding mask; this does not establish a learned missing-value mechanism",
+        },
     )
     print(json.dumps({"status": "completed", "validation_family_macro_mase": score}), flush=True)
 

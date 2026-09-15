@@ -1,0 +1,3248 @@
+{
+  "jobs": [
+    {
+      "name": "chronos_layout_repair",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/repair_chronos_layout_forecasts.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/chronos-layout-fixed-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/chronos-layout-fixed-v001/manifest.json"
+    },
+    {
+      "name": "corrected_accuracy_export",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/export_downstream_accuracy.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--chronos-repair-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/chronos-layout-fixed-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002/manifest.json",
+      "completion_field": "evidence_role",
+      "completion_value": "development"
+    },
+    {
+      "name": "history_controls_chronos2",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\evaluate_history_controls.py",
+        "--source-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r3\\development-expanded-v001",
+        "--accuracy-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\accuracy-development-v002",
+        "--probe-plan",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\recent-probes-screening-v001\\plan.json",
+        "--output-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\history-controls-screening-v001",
+        "--model",
+        "chronos2"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\history-controls-screening-v001\\chronos2\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "chronos_screening_readout",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/summarize_accuracy_screening.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--probe-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001",
+        "--controls-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/history-controls-screening-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/screening-readout-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/screening-readout-v001/manifest.json",
+      "hard_timeout_seconds": 600
+    },
+    {
+      "name": "chronos_scale_information_analysis",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_scale_information.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--readout-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/screening-readout-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/scale-information-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/scale-information-v001/manifest.json",
+      "hard_timeout_seconds": 600
+    },
+    {
+      "name": "history_controls_timesfm2p5",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\evaluate_history_controls.py",
+        "--source-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r3\\development-expanded-v001",
+        "--accuracy-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\accuracy-development-v002",
+        "--probe-plan",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\recent-probes-screening-v001\\plan.json",
+        "--output-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\history-controls-screening-v001",
+        "--model",
+        "timesfm2p5"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\history-controls-screening-v001\\timesfm2p5\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "recent_and_confirmation_contract_checks",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/verify_recent_probe_workflow.py",
+        "--output",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-confirmation-contracts-v002.json"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-confirmation-contracts-v002.json",
+      "hard_timeout_seconds": 1000
+    },
+    {
+      "name": "recent_probe_prepare",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_recent_forecast_probes.py",
+        "prepare",
+        "--source-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r3\\development-expanded-v001",
+        "--output-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\recent-probes-screening-v001"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\recent-probes-screening-v001\\prepared_manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "recent_probe_forecast_chronos2",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_recent_forecast_probes.py",
+        "forecast",
+        "--source-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r3\\development-expanded-v001",
+        "--output-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\recent-probes-screening-v001",
+        "--accuracy-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\accuracy-development-v002",
+        "--model",
+        "chronos2"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\recent-probes-screening-v001\\chronos2\\manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "recent_probe_forecast_timesfm2p5",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_recent_forecast_probes.py",
+        "forecast",
+        "--source-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r3\\development-expanded-v001",
+        "--output-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\recent-probes-screening-v001",
+        "--accuracy-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\accuracy-development-v002",
+        "--model",
+        "timesfm2p5"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\recent-probes-screening-v001\\timesfm2p5\\manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "recent_probe_analysis",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\analyze_recent_forecast_probes.py",
+        "--source-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r3\\development-expanded-v001",
+        "--probe-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\recent-probes-screening-v001",
+        "--accuracy-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\accuracy-development-v002"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\recent-probes-screening-v001\\analysis-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "recent_input_mixtures_chronos2",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\forecast_probe_mixtures.py",
+        "--source-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r3\\development-expanded-v001",
+        "--probe-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\recent-probes-screening-v001",
+        "--accuracy-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\accuracy-development-v002",
+        "--model",
+        "chronos2"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\recent-probes-screening-v001\\chronos2-input-mixtures\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "recent_input_mixtures_timesfm2p5",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\forecast_probe_mixtures.py",
+        "--source-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r3\\development-expanded-v001",
+        "--probe-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\recent-probes-screening-v001",
+        "--accuracy-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\accuracy-development-v002",
+        "--model",
+        "timesfm2p5"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r4\\recent-probes-screening-v001\\timesfm2p5-input-mixtures\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "complete_screening_readout",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/summarize_accuracy_screening.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--probe-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001",
+        "--controls-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/history-controls-screening-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/screening-readout-v002"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/screening-readout-v002/manifest.json",
+      "hard_timeout_seconds": 600
+    },
+    {
+      "name": "screening_figures",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/plot_accuracy_screening.py",
+        "--readout-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/screening-readout-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/screening-figures-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/screening-figures-v001/manifest.json",
+      "hard_timeout_seconds": 600
+    },
+    {
+      "name": "confirmation_readiness_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_r3_confirmation_sources.py",
+        "--data-root",
+        "E:/ZMY/Github/TSFM-SPImpute/data/Origin/arrow",
+        "--output",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/confirmation-readiness-v001.json",
+        "--confirmation-windows"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/confirmation-readiness-v001.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "differentiable_mixture_feasibility",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/probe_differentiable_imputation.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/differentiable-mixture-feasibility-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/differentiable-mixture-feasibility-v001/manifest.json",
+      "hard_timeout_seconds": 900
+    },
+    {
+      "name": "differentiable_baselines_and_wide_feasibility",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/probe_differentiable_imputation.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/differentiable-mixture-feasibility-v002",
+        "--datasets",
+        "ETTh1,exchange_rate,Coastal_T_S_H,electricity,traffic"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/differentiable-mixture-feasibility-v002/manifest.json",
+      "hard_timeout_seconds": 900
+    },
+    {
+      "name": "corrected_accuracy_selection",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_downstream_accuracy.py",
+        "--run-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--objectives",
+        "joint,mae,mse"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002/analysis-joint-mae-mse-v001/manifest.json",
+      "completion_field": "evidence_role",
+      "completion_value": "development"
+    },
+    {
+      "name": "r5_chronos_block_composer_training",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_differentiable_block_composer.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--screening-plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-pilot-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-pilot-v001/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r5_chronos_predictor_features_training",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_differentiable_block_composer.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--screening-plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-pilot-v002",
+        "--forecaster-features"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-pilot-v002/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r5_chronos_target_conditioned_training",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_differentiable_block_composer.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--screening-plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-pilot-v003",
+        "--forecaster-features",
+        "--target-conditioned"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-pilot-v003/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r5_timesfm_gradient_feasibility",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/probe_timesfm_gradients.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/timesfm-gradient-feasibility-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/timesfm-gradient-feasibility-v001/manifest.json",
+      "hard_timeout_seconds": 900
+    },
+    {
+      "name": "r5_timesfm_block_composer_training",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_differentiable_block_composer.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--screening-plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-timesfm-v001",
+        "--model",
+        "timesfm2p5"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-timesfm-v001/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r5_composer_matched_readout",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_block_composer_runs.py",
+        "--runs",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-pilot-v001",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-pilot-v002",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-pilot-v003",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-timesfm-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--controls-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/history-controls-screening-v001",
+        "--reference-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/screening-readout-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/composer-readout-v003"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/composer-readout-v003/manifest.json",
+      "hard_timeout_seconds": 600
+    },
+    {
+      "name": "r5_native_two_action_feedback",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_native_feedback.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--probe-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-feedback-screening-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-feedback-screening-v001/manifest.json",
+      "hard_timeout_seconds": 600
+    },
+    {
+      "name": "r5_teacher_projection_feasibility",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/probe_differentiable_imputation.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/teacher-projection-feasibility-v001",
+        "--optimization-target",
+        "forecast_median",
+        "--steps",
+        "40"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/teacher-projection-feasibility-v001/manifest.json",
+      "hard_timeout_seconds": 900
+    },
+    {
+      "name": "r5_chronos_distillation_training",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_differentiable_block_composer.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--screening-plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-distillation-v001",
+        "--forecaster-features",
+        "--teacher-weight",
+        "0.5"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-distillation-v001/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r5_distillation_matched_readout",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_block_composer_runs.py",
+        "--runs",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-pilot-v001",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-pilot-v002",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-pilot-v003",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-timesfm-v001",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-distillation-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--controls-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/history-controls-screening-v001",
+        "--reference-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/screening-readout-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/composer-readout-v004"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/composer-readout-v004/manifest.json",
+      "hard_timeout_seconds": 600
+    },
+    {
+      "name": "r5_distillation_teacher_cache_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_composer_teacher_cache.py",
+        "--run-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-distillation-v001",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-distillation-v001/teacher_cache_audit.json",
+      "completion_value": "passed",
+      "hard_timeout_seconds": 600
+    },
+    {
+      "name": "r5_motm_reference_preparation",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_motm_reference.py",
+        "--specification",
+        "E:/ZMY/Github/TSFM-FAIS/configs/iclr27-r3/motm_reference_source.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-reference-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-reference-v001/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r5_motm_private_runtime_preparation",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_motm_runtime.py",
+        "--reference-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-reference-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-runtime-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-runtime-v001/manifest.json",
+      "hard_timeout_seconds": 1200
+    },
+    {
+      "name": "r5_motm_source_feasibility",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/probe_motm_reference.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--reference-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-reference-v001",
+        "--runtime-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-runtime-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-source-feasibility-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-source-feasibility-v001/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r5_motm_development_screening",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_motm_screening.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--controls-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/history-controls-screening-v001",
+        "--reference-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-reference-v001",
+        "--runtime-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-runtime-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-development-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-development-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_predictive_consensus_controls",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_predictive_consensus.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--controls-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/history-controls-screening-v001",
+        "--motm-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-development-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/consensus-controls-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/consensus-controls-v001/manifest.json",
+      "hard_timeout_seconds": 600
+    },
+    {
+      "name": "r5_chronos_consensus_input_projection",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_consensus_input_projection.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--controls-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/history-controls-screening-v001",
+        "--motm-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-development-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/consensus-input-projection-v002",
+        "--model",
+        "chronos2"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/consensus-input-projection-v002/chronos2/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_timesfm_consensus_input_projection",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_consensus_input_projection.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--controls-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/history-controls-screening-v001",
+        "--motm-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-development-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/consensus-input-projection-v002",
+        "--model",
+        "timesfm2p5"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/consensus-input-projection-v002/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_chronos_public_composer_evaluation_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_chronos_composer_evaluation.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--runs",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-pilot-v001",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-pilot-v002",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-pilot-v003",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/block-composer-distillation-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/chronos-composer-public-evaluation-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/chronos-composer-public-evaluation-v001/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r5_vector_imputation_exact_check",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/verify_vector_imputation_example.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/vector-imputation-example-v002"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/vector-imputation-example-v002/manifest.json",
+      "hard_timeout_seconds": 60
+    },
+    {
+      "name": "r5_chronos_scalar_completion_curve",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/probe_scalar_completion_curve.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/scalar-completion-curve-v001",
+        "--model",
+        "chronos2"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/scalar-completion-curve-v001/chronos2/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_timesfm_scalar_completion_curve",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/probe_scalar_completion_curve.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/scalar-completion-curve-v001",
+        "--model",
+        "timesfm2p5"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/scalar-completion-curve-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_timesfm_gaussian_predictive_integration",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_gaussian_predictive_integration.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--controls-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/history-controls-screening-v001",
+        "--motm-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-development-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/gaussian-predictive-integration-v001",
+        "--model",
+        "timesfm2p5"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/gaussian-predictive-integration-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_chronos_gaussian_predictive_integration",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_gaussian_predictive_integration.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--controls-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/history-controls-screening-v001",
+        "--motm-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-development-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/gaussian-predictive-integration-v001",
+        "--model",
+        "chronos2"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/gaussian-predictive-integration-v001/chronos2/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_independent_history_learning_curve",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_selector_learning_curve.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/selector-learning-curve-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/selector-learning-curve-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_pairwise_selection_controls",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_pairwise_selection.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/pairwise-selection-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/pairwise-selection-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_horizon_consensus_granularity",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_horizon_consensus.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/horizon-consensus-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/horizon-consensus-v001/manifest.json",
+      "hard_timeout_seconds": 600
+    },
+    {
+      "name": "r5_preforecast_static_students",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_preforecast_student.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-student-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-student-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_preforecast_student_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_preforecast_student.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--input-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-student-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-student-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-student-audit-v001/manifest.json",
+      "hard_timeout_seconds": 1200
+    },
+    {
+      "name": "r5_chronos_preforecast_input_replay",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/replay_preforecast_student.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--student-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-student-v001",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-input-replay-v001",
+        "--model",
+        "chronos2"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-input-replay-v001/chronos2/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_timesfm_preforecast_input_replay",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/replay_preforecast_student.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--student-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-student-v001",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-input-replay-v001",
+        "--model",
+        "timesfm2p5"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-input-replay-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_structured_preforecast_features",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_structured_preforecast.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-preforecast-features-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-preforecast-features-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_temporal_preforecast_students",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_preforecast_student.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--structured-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-preforecast-features-v001",
+        "--feature-view",
+        "target_temporal",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-student-temporal-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-student-temporal-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_joint_dependency_students",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_preforecast_student.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--structured-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-preforecast-features-v001",
+        "--feature-view",
+        "full_dependency",
+        "--models",
+        "chronos2",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-student-dependency-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-student-dependency-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_structured_student_audit_and_readout",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_structured_study.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--feature-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-preforecast-features-v001",
+        "--base-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-student-v001",
+        "--temporal-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-student-temporal-v001",
+        "--dependency-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-student-dependency-v001",
+        "--replay-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-input-replay-v001",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-student-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-student-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_complete_history_projection_feasibility",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_clean_forecast_projection.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--chronos-repair-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/chronos-layout-fixed-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r5_clean_teacher_base_students",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_preforecast_student.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--objectives",
+        "clean_forecast_mse",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-base-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-base-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_clean_teacher_temporal_students",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_preforecast_student.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--objectives",
+        "clean_forecast_mse",
+        "--structured-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-preforecast-features-v001",
+        "--feature-view",
+        "target_temporal",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-temporal-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-temporal-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_clean_teacher_dependency_student",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_preforecast_student.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--objectives",
+        "clean_forecast_mse",
+        "--models",
+        "chronos2",
+        "--structured-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-preforecast-features-v001",
+        "--feature-view",
+        "full_dependency",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-dependency-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-dependency-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_clean_teacher_student_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_structured_study.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--feature-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-preforecast-features-v001",
+        "--feature-audit-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-student-audit-v001/features",
+        "--teacher-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--base-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-base-v001",
+        "--temporal-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-temporal-v001",
+        "--dependency-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-dependency-v001",
+        "--replay-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/preforecast-input-replay-v001",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--previous-readout-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-student-audit-v001/readout",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_matched_future_mse_base_students",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_preforecast_student.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--objectives",
+        "future_mse",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/future-mse-student-base-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/future-mse-student-base-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_matched_future_mse_temporal_student",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_preforecast_student.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--objectives",
+        "future_mse",
+        "--models",
+        "timesfm2p5",
+        "--structured-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-preforecast-features-v001",
+        "--feature-view",
+        "target_temporal",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/future-mse-student-temporal-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/future-mse-student-temporal-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_matched_future_mse_base_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_preforecast_student.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--input-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/future-mse-student-base-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/future-mse-student-base-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/future-mse-student-base-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_matched_future_mse_temporal_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_preforecast_student.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--structured-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-preforecast-features-v001",
+        "--input-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/future-mse-student-temporal-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/future-mse-student-temporal-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/future-mse-student-temporal-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_budgeted_student_portfolios",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_budgeted_student_portfolio.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--structured-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-preforecast-features-v001",
+        "--spec",
+        "E:/ZMY/Github/TSFM-FAIS/configs/iclr27-r3/r5_budgeted_student_portfolio.json",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/budgeted-student-portfolio-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/budgeted-student-portfolio-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_clean_student_input_replay_chronos",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/replay_preforecast_student.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--student-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-base-v001",
+        "--model",
+        "chronos2",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-input-replay-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-input-replay-v001/chronos2/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_clean_student_input_replay_timesfm",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/replay_preforecast_student.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--student-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-temporal-v001",
+        "--structured-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-preforecast-features-v001",
+        "--model",
+        "timesfm2p5",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-input-replay-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-input-replay-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_budgeted_student_feature_controls",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_budgeted_student_portfolio.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--structured-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-preforecast-features-v001",
+        "--spec",
+        "E:/ZMY/Github/TSFM-FAIS/configs/iclr27-r3/r5_budgeted_student_feature_controls.json",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/budgeted-student-feature-controls-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/budgeted-student-feature-controls-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_clean_ranked_replay_chronos",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/replay_preforecast_student.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--student-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-base-v001",
+        "--model",
+        "chronos2",
+        "--query-budget",
+        "3",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-ranked-replay-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-ranked-replay-v001/chronos2/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_clean_ranked_replay_timesfm",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/replay_preforecast_student.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--student-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-temporal-v001",
+        "--structured-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-preforecast-features-v001",
+        "--model",
+        "timesfm2p5",
+        "--query-budget",
+        "3",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-ranked-replay-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-ranked-replay-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_forecast_response_clean_teacher",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_preforecast_student.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--input-scope",
+        "candidate_forecasts",
+        "--objectives",
+        "clean_forecast_mse",
+        "--teacher-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-clean-teacher-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-clean-teacher-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_forecast_response_future_mse",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_preforecast_student.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--input-scope",
+        "candidate_forecasts",
+        "--objectives",
+        "future_mse",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-future-mse-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-future-mse-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_forecast_response_clean_teacher_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_preforecast_student.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--input-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-clean-teacher-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-clean-teacher-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-clean-teacher-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_forecast_response_future_mse_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_preforecast_student.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--input-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-future-mse-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-future-mse-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-future-mse-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_clean_base_ranked_replay_timesfm",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/replay_preforecast_student.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--student-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-student-base-v001",
+        "--model",
+        "timesfm2p5",
+        "--query-budget",
+        "3",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-base-ranked-replay-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/clean-teacher-base-ranked-replay-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_forecast_response_portfolios",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_budgeted_student_portfolio.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--structured-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/structured-preforecast-features-v001",
+        "--spec",
+        "E:/ZMY/Github/TSFM-FAIS/configs/iclr27-r3/r5_forecast_response_portfolio.json",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-portfolio-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-portfolio-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_forecast_response_replay_chronos",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/replay_preforecast_student.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--student-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-clean-teacher-v001",
+        "--model",
+        "chronos2",
+        "--aggregation-size",
+        "3",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-input-replay-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-input-replay-v001/chronos2/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_forecast_response_replay_timesfm",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/replay_preforecast_student.py",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--student-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-clean-teacher-v001",
+        "--model",
+        "timesfm2p5",
+        "--aggregation-size",
+        "3",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-input-replay-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-input-replay-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_forecast_projection_regression",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_forecast_projection.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-projection-regression-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-projection-regression-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_forecast_projection_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_forecast_projection.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--input-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-projection-regression-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-projection-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-projection-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_confirmation_source_models",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/fit_confirmation_selectors.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--cohort",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/confirmation-cohort-v002.json",
+        "--confirmation-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_prepare_native_confirmation",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_native_confirmation.py",
+        "--cohort",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/confirmation-cohort-v002.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001/prepared"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001/prepared/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_prepare_native_confirmation_motm",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_native_motm.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001/prepared",
+        "--reference-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-reference-v001",
+        "--runtime-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-runtime-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001/motm"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001/motm/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_native_confirmation_chronos",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_native_confirmation.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001/prepared",
+        "--motm-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001/motm",
+        "--source-bundle",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--model",
+        "chronos2",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001/chronos2/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_native_confirmation_timesfm",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_native_confirmation.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001/prepared",
+        "--motm-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001/motm",
+        "--source-bundle",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--model",
+        "timesfm2p5",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_native_confirmation_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_native_confirmation.py",
+        "--input-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001",
+        "--source-bundle",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_native_confirmation_readout",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/summarize_native_confirmation.py",
+        "--input-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001",
+        "--audit-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-audit-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-readout-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-readout-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_imputer_budget_preparation",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_imputer_budget_study.py",
+        "--config",
+        "E:/ZMY/Github/TSFM-FAIS/configs/iclr27-r3/development_expanded.yaml",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-preparation-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-preparation-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_imputer_budget_chronos",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_imputer_budget_study.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-preparation-v001",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--model",
+        "chronos2",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-evaluation-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-evaluation-v001/chronos2/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_imputer_budget_timesfm",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_imputer_budget_study.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-preparation-v001",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--model",
+        "timesfm2p5",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-evaluation-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-evaluation-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_imputer_budget_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_imputer_budget_study.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-preparation-v001",
+        "--evaluation-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-evaluation-v001",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_tirex_reference_preparation",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_tirex_reference.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/tirex-reference-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/tirex-reference-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_tirex_missing_interface_probe",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/probe_tirex_missing.py",
+        "--reference-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/tirex-reference-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/tirex-missing-probe-v002"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/tirex-missing-probe-v002/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_imputer_input_scope_chronos",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_imputer_input_scope.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-preparation-v001",
+        "--budget-evaluation-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-evaluation-v001",
+        "--budget-audit-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-audit-v001",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--model",
+        "chronos2",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-input-scope-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-input-scope-v001/chronos2/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_imputer_input_scope_timesfm",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_imputer_input_scope.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-preparation-v001",
+        "--budget-evaluation-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-evaluation-v001",
+        "--budget-audit-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-audit-v001",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--model",
+        "timesfm2p5",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-input-scope-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-input-scope-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_imputer_input_scope_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_imputer_input_scope.py",
+        "--input-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-input-scope-v001",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-input-scope-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-input-scope-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_imputer_budget_tirex",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_imputer_budget_study.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-preparation-v001",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--model",
+        "tirex",
+        "--tirex-reference",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/tirex-reference-v001",
+        "--tirex-probe",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/tirex-missing-probe-v002",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-evaluation-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-evaluation-v001/tirex/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_imputer_budget_tirex_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_imputer_budget_study.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-preparation-v001",
+        "--evaluation-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-evaluation-v001",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--models",
+        "tirex",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-tirex-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-tirex-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_manuscript_evidence_build",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/build_r5_manuscript.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/manuscript-render-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/manuscript-render-v001/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r5_budget_origin_prepare",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_budget_origin_extension.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-preparation-v001",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-preparation-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-preparation-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_budget_origin_chronos2",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_imputer_budget_study.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-preparation-v001",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--model",
+        "chronos2",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-evaluation-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-evaluation-v001/chronos2/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r5_budget_origin_timesfm2p5",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_imputer_budget_study.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-preparation-v001",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--model",
+        "timesfm2p5",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-evaluation-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-evaluation-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r5_budget_origin_tirex",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_imputer_budget_study.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-preparation-v001",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--model",
+        "tirex",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-evaluation-v001",
+        "--tirex-reference",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/tirex-reference-v001",
+        "--tirex-probe",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/tirex-missing-probe-v002"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-evaluation-v001/tirex/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r5_budget_origin_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_imputer_budget_study.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-preparation-v001",
+        "--evaluation-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-evaluation-v001",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--models",
+        "chronos2,timesfm2p5,tirex",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_budget_origin_readout",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/summarize_budget_origins.py",
+        "--initial-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-evaluation-v001",
+        "--additional-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-evaluation-v001",
+        "--initial-audit-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-audit-v001",
+        "--initial-tirex-audit-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-tirex-audit-v001",
+        "--additional-audit-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-audit-v001",
+        "--source-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-readout-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/imputer-budget-origin-readout-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_triple_objective_diagnostic",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_triple_objective_gap.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--portfolio-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-portfolio-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/triple-objective-diagnostic-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/triple-objective-diagnostic-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_manuscript_geometry_build",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/build_r5_manuscript.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/manuscript-render-v002"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/manuscript-render-v002/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r5_manuscript_followup_build",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/build_r5_manuscript.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/manuscript-render-v003"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/manuscript-render-v003/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r5_aligned_portfolio_prepare",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_aligned_portfolio.py",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--protocol",
+        "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R5_ALIGNED_PORTFOLIO_PLAN.md",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r5_aligned_portfolio_unit_projection",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_aligned_portfolio.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--screen-plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--target-kind",
+        "unit_projection",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-student-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-student-v001/unit_projection/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r5_aligned_portfolio_direct_risk",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_aligned_portfolio.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--screen-plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--target-kind",
+        "direct_risk",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-student-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-student-v001/direct_risk/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r5_aligned_portfolio_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_aligned_portfolio.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--study-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-student-v001",
+        "--portfolio-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-portfolio-v001",
+        "--screen-plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-audit-v001/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r5_matched_portfolio_median_risk",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_pairwise_portfolio.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--screen-plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--protocol",
+        "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R5_MATCHED_PORTFOLIO_OBJECTIVES.md",
+        "--label-kind",
+        "median_risk",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/matched-portfolio-objectives-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/matched-portfolio-objectives-v001/median_risk/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r5_matched_portfolio_member_risk",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_pairwise_portfolio.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--screen-plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--protocol",
+        "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R5_MATCHED_PORTFOLIO_OBJECTIVES.md",
+        "--label-kind",
+        "member_risk",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/matched-portfolio-objectives-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/matched-portfolio-objectives-v001/member_risk/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r5_matched_portfolio_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_pairwise_portfolio.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--study-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/matched-portfolio-objectives-v001",
+        "--screen-plan",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/recent-probes-screening-v001/plan.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/matched-portfolio-objectives-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/matched-portfolio-objectives-audit-v001/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r5_fresh_confirmation_inventory",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/inspect_fresh_confirmation.py",
+        "--data-root",
+        "E:/ZMY/Github/TSFM-SPImpute/data/original",
+        "--previous-cohort",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/confirmation-cohort-v002.json",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/fresh-confirmation-inventory-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/fresh-confirmation-inventory-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_followup_source_freeze",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/freeze_followup_portfolios.py",
+        "--prepared-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--audit-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/matched-portfolio-objectives-audit-v001",
+        "--confirmation-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-source-bundle-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-source-bundle-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_manuscript_inventory_build",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/build_r5_manuscript.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/manuscript-render-v004"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/manuscript-render-v004/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r5_followup_public_sources",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_followup_sources.py",
+        "--uci-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/uci-reference-v001",
+        "--solar-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/solar-reference-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-public-sources-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-public-sources-v001/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r5_followup_cohort_freeze",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/freeze_followup_cohort.py",
+        "--inventory-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/fresh-confirmation-inventory-v001",
+        "--public-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-public-sources-v001",
+        "--source-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--old-prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001/prepared",
+        "--previous-cohort", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/confirmation-cohort-v002.json",
+        "--source-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-source-bundle-v001",
+        "--confirmation-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R5_FOLLOWUP_CONFIRMATION_PROTOCOL.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-cohort-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-cohort-v001/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r5_followup_input_preparation",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_followup_inputs.py",
+        "--cohort-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-cohort-v001",
+        "--source-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-source-bundle-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/prepared"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/prepared/manifest.json",
+      "hard_timeout_seconds": 21600
+    },
+    {
+      "name": "r5_followup_input_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_followup_preparation.py",
+        "--cohort-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-cohort-v001",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/prepared",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-input-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-input-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_followup_runtime_replay",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/verify_followup_runtime.py",
+        "--source-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--source-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-source-bundle-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-runtime-replay-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-runtime-replay-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_followup_chronos2_forecasts",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_followup_forecasts.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/prepared",
+        "--input-audit-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-input-audit-v001",
+        "--source-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-source-bundle-v001",
+        "--old-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--old-evaluation-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--model", "chronos2"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/chronos2/manifest.json",
+      "hard_timeout_seconds": 21600
+    },
+    {
+      "name": "r5_followup_timesfm2p5_forecasts",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_followup_forecasts.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/prepared",
+        "--input-audit-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-input-audit-v001",
+        "--source-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-source-bundle-v001",
+        "--old-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--old-evaluation-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--model", "timesfm2p5"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 21600
+    },
+    {
+      "name": "r5_followup_chronos2_policies",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/apply_followup_policies.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/prepared",
+        "--forecast-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--source-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-source-bundle-v001",
+        "--old-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--runtime-replay-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-runtime-replay-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-policy-results-v001",
+        "--model", "chronos2"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-policy-results-v001/chronos2/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_followup_timesfm2p5_policies",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/apply_followup_policies.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/prepared",
+        "--forecast-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--source-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-source-bundle-v001",
+        "--old-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--runtime-replay-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-runtime-replay-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-policy-results-v001",
+        "--model", "timesfm2p5"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-policy-results-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_followup_policy_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_followup_policies.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/prepared",
+        "--forecast-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--policy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-policy-results-v001",
+        "--source-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-source-bundle-v001",
+        "--old-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-policy-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-policy-audit-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_followup_policy_readout",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/summarize_followup_confirmation.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/prepared",
+        "--policy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-policy-results-v001",
+        "--audit-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-policy-audit-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-readout-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-readout-v001/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r5_followup_motm_preparation",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_followup_motm.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/prepared",
+        "--reference-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-reference-v001",
+        "--runtime-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-runtime-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R5_FOLLOWUP_MOTM_SUPPLEMENT.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-motm-prepared-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-motm-prepared-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_followup_motm_chronos2",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_followup_motm.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/prepared",
+        "--motm-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-motm-prepared-v001",
+        "--forecast-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--policy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-policy-results-v001",
+        "--old-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R5_FOLLOWUP_MOTM_SUPPLEMENT.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-motm-evaluation-v001",
+        "--model", "chronos2"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-motm-evaluation-v001/chronos2/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_followup_motm_timesfm2p5",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_followup_motm.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/prepared",
+        "--motm-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-motm-prepared-v001",
+        "--forecast-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--policy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-policy-results-v001",
+        "--old-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R5_FOLLOWUP_MOTM_SUPPLEMENT.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-motm-evaluation-v001",
+        "--model", "timesfm2p5"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-motm-evaluation-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_followup_motm_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_followup_motm.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/prepared",
+        "--motm-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-motm-prepared-v001",
+        "--forecast-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--policy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-policy-results-v001",
+        "--study-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-motm-evaluation-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-motm-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-motm-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_followup_teacher_diagnostic",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/diagnose_followup_teacher.py",
+        "--cohort-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-cohort-v001",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/prepared",
+        "--forecast-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--policy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-policy-results-v001",
+        "--policy-audit-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-policy-audit-v001",
+        "--old-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R5_FOLLOWUP_TEACHER_DIAGNOSTIC.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-teacher-diagnostic-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-teacher-diagnostic-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r5_portfolio_transfer_regret",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_portfolio_transfer_regret.py",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--source-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-source-bundle-v001",
+        "--matched-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/matched-portfolio-objectives-v001/median_risk",
+        "--matched-audit-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/matched-portfolio-objectives-audit-v001",
+        "--followup-diagnostic-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-teacher-diagnostic-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/portfolio-transfer-regret-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/portfolio-transfer-regret-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_followup_tradeoff_figure",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/plot_followup_tradeoffs.py",
+        "--readout-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-readout-v001",
+        "--supplement-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-motm-audit-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-tradeoff-figure-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-tradeoff-figure-v001/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r5_shared_gate_ensemble",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_shared_forecast_gate.py",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R5_SHARED_FORECAST_GATE_PLAN.md",
+        "--objective", "ensemble",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-forecast-gate-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-forecast-gate-v001/ensemble/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r5_shared_gate_member",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_shared_forecast_gate.py",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R5_SHARED_FORECAST_GATE_PLAN.md",
+        "--objective", "member",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-forecast-gate-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-forecast-gate-v001/member/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r5_shared_gate_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_shared_forecast_gate.py",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--study-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-forecast-gate-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-audit-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_shared_gate_readout",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/summarize_shared_forecast_gate.py",
+        "--study-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-forecast-gate-v001",
+        "--audit-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-audit-v001",
+        "--matched-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/matched-portfolio-objectives-v001/median_risk",
+        "--original-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/forecast-response-portfolio-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-readout-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-readout-v001/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r5_shared_gate_source_freeze",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/freeze_shared_forecast_gates.py",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--audit-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-audit-v001",
+        "--diagnostic-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-transfer-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-source-bundle-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-source-bundle-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r5_shared_gate_transfer_diagnostic",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/apply_shared_gate_transfer.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001/prepared",
+        "--previous-policy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-policy-results-v001",
+        "--motm-study-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-motm-evaluation-v001",
+        "--source-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-source-bundle-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-transfer-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-transfer-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r6_public_source_inventory",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_r6_sources.py",
+        "--reference-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/uci-reference-v001",
+        "--method-freeze", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/method-freeze-v001/manifest.json",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_CONFIRMATION_PLAN.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/public-sources-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/public-sources-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r6_source_future_gate_control",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/fit_source_future_gate_control.py",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-source-bundle-v001",
+        "--method-freeze", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/method-freeze-v001/manifest.json",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_SUPERVISED_CONTROL.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-control-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-control-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r6_cohort_freeze",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/freeze_r6_cohort.py",
+        "--public-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/public-sources-v001",
+        "--method-freeze", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/method-freeze-v001/manifest.json",
+        "--source-control-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-control-v001",
+        "--source-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r3/development-expanded-v001",
+        "--old-prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001/prepared",
+        "--used-cohort-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-cohort-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_CONFIRMATION_PLAN.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/cohort-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/cohort-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r6_input_preparation",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_r6_inputs.py",
+        "--cohort-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/cohort-v001",
+        "--method-freeze", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/method-freeze-v001/manifest.json",
+        "--motm-reference", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-reference-v001",
+        "--motm-runtime", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/motm-runtime-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared/manifest.json",
+      "hard_timeout_seconds": 21600
+    },
+    {
+      "name": "r6_input_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_r6_inputs.py",
+        "--cohort-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/cohort-v001",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/input-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/input-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r6_horizon_interface_probe",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/probe_r6_horizons.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--input-audit-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/input-audit-v001",
+        "--legacy-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--previous-forecasts", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/horizon-probe-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/horizon-probe-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r6_chronos2_forecasts",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_r6_forecasts.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--input-audit-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/input-audit-v001",
+        "--horizon-probe", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/horizon-probe-v001",
+        "--method-freeze", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/method-freeze-v001/manifest.json",
+        "--legacy-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--previous-forecasts", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/forecasts",
+        "--model", "chronos2"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/forecasts/chronos2/manifest.json",
+      "hard_timeout_seconds": 21600
+    },
+    {
+      "name": "r6_timesfm2p5_forecasts",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_r6_forecasts.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--input-audit-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/input-audit-v001",
+        "--horizon-probe", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/horizon-probe-v001",
+        "--method-freeze", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/method-freeze-v001/manifest.json",
+        "--legacy-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--previous-forecasts", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/forecasts",
+        "--model", "timesfm2p5"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/forecasts/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 21600
+    },
+    {
+      "name": "r6_policy_runtime_check",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/check_r6_policy_runtime.py",
+               "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-runtime-check-v002"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-runtime-check-v002/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r6_chronos2_policies",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_r6_policies.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--forecast-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/forecasts",
+        "--method-freeze", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/method-freeze-v001/manifest.json",
+        "--source-future-control", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-control-v001",
+        "--pairwise-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-source-bundle-v001",
+        "--legacy-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--runtime-check", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-runtime-check-v002",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-results-v002",
+        "--model", "chronos2"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-results-v002/chronos2/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r6_timesfm2p5_policies",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_r6_policies.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--forecast-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/forecasts",
+        "--method-freeze", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/method-freeze-v001/manifest.json",
+        "--source-future-control", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-control-v001",
+        "--pairwise-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-source-bundle-v001",
+        "--legacy-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--runtime-check", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-runtime-check-v002",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-results-v002",
+        "--model", "timesfm2p5"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-results-v002/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r6_policy_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/audit_r6_policies.py",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--forecast-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/forecasts",
+        "--policy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-results-v002",
+        "--method-freeze", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/method-freeze-v001/manifest.json",
+        "--source-future-control", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-control-v001",
+        "--pairwise-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-source-bundle-v001",
+        "--legacy-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-audit-v002"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-audit-v002/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r6_policy_readout",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/summarize_r6_confirmation.py",
+        "--policy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-results-v002",
+        "--audit-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-audit-v002",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--cohort-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/cohort-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/readout-v002"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/readout-v002/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r6_local_calibration_diagnostic",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_r6_local_calibration.py",
+        "--cohort-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/cohort-v001",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--forecast-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/forecasts",
+        "--method-freeze", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/method-freeze-v001/manifest.json",
+        "--audit-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-audit-v002",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/local-calibration-diagnostic-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/local-calibration-diagnostic-v001/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r6_prefix_calibration_inputs",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_r6_prefix_calibration.py",
+        "--cohort-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/cohort-v001",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_PREFIX_CALIBRATION_PLAN.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-calibration-inputs-v002"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-calibration-inputs-v002/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r6_prefix_calibration_chronos2",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/fit_r6_prefix_calibration.py",
+        "--input-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-calibration-inputs-v002",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--method-freeze", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/method-freeze-v001/manifest.json",
+        "--legacy-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--previous-forecasts", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_PREFIX_CALIBRATION_PLAN.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-calibration-weights-v001",
+        "--model", "chronos2"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-calibration-weights-v001/chronos2/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r6_prefix_calibration_timesfm2p5",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/fit_r6_prefix_calibration.py",
+        "--input-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-calibration-inputs-v002",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--method-freeze", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/method-freeze-v001/manifest.json",
+        "--legacy-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--previous-forecasts", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_PREFIX_CALIBRATION_PLAN.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-calibration-weights-v001",
+        "--model", "timesfm2p5"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-calibration-weights-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r6_prefix_calibration_evaluation",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_r6_prefix_calibration.py",
+        "--input-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-calibration-inputs-v002",
+        "--calibration-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-calibration-weights-v001",
+        "--cohort-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/cohort-v001",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--forecast-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/forecasts",
+        "--method-freeze", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/method-freeze-v001/manifest.json",
+        "--readout-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/readout-v002",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-calibration-results-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-calibration-results-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r6_manuscript_evidence_build",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/build_r6_manuscript.py",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/manuscript-render-v002"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/manuscript-render-v002/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r6_prefix_label_control",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/compare_r6_prefix_labels.py",
+        "--cohort-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/cohort-v001",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--calibration-input-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-calibration-inputs-v002",
+        "--calibration-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-calibration-weights-v001",
+        "--forecast-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/forecasts",
+        "--method-freeze", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/method-freeze-v001/manifest.json",
+        "--original-prefix-result", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-calibration-results-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_PREFIX_LABEL_CONTROL_PLAN.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-label-control-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-label-control-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r6_complete_teachers_chronos2",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/collect_r6_complete_teachers.py",
+        "--cohort-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/cohort-v001",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--audit-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-audit-v002",
+        "--legacy-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--previous-forecasts", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_TEACHER_TRANSFER_DIAGNOSTIC.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/complete-teachers-v001",
+        "--model", "chronos2"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/complete-teachers-v001/chronos2/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r6_complete_teachers_timesfm2p5",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/collect_r6_complete_teachers.py",
+        "--cohort-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/cohort-v001",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--audit-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-audit-v002",
+        "--legacy-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--previous-forecasts", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/followup-confirmation-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_TEACHER_TRANSFER_DIAGNOSTIC.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/complete-teachers-v001",
+        "--model", "timesfm2p5"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/complete-teachers-v001/timesfm2p5/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r6_teacher_transfer_diagnostic",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_r6_teacher_transfer.py",
+        "--teacher-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/complete-teachers-v001",
+        "--cohort-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/cohort-v001",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--forecast-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/forecasts",
+        "--policy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-results-v002",
+        "--audit-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-audit-v002",
+        "--readout-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/readout-v002",
+        "--method-freeze", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/method-freeze-v001/manifest.json",
+        "--fixed-oracle-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/local-calibration-diagnostic-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_TEACHER_TRANSFER_DIAGNOSTIC.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/teacher-transfer-diagnostic-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/teacher-transfer-diagnostic-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r6_origin_weighting_source",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/train_r6_origin_weighting.py",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--original-study", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-forecast-gate-v001/ensemble",
+        "--original-audit", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-audit-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_ORIGIN_WEIGHTING_PLAN.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/origin-weighting-source-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/origin-weighting-source-v001/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r6_origin_weighting_transfer",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_r6_origin_weighting.py",
+        "--source-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/origin-weighting-source-v001",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--policy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-results-v002",
+        "--policy-audit", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-audit-v002",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--comparison-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/prefix-label-control-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/origin-weighting-transfer-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/origin-weighting-transfer-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r6_teacher_transfer_figures",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/plot_r6_teacher_transfer.py",
+        "--readout-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/teacher-transfer-diagnostic-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/teacher-transfer-figures-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/teacher-transfer-figures-v001/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r6_source_future_cv",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/train_r6_source_future_cv.py",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-study", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-forecast-gate-v001/ensemble",
+        "--future-control", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-control-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_SOURCE_LABEL_OBJECTIVE_PLAN.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-cv-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-cv-v001/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r6_source_future_cv_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/audit_r6_source_future_cv.py",
+        "--study-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-cv-v001",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-study", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-forecast-gate-v001/ensemble",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-cv-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-cv-audit-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r6_legacy_native_gates",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_legacy_native_gates.py",
+        "--input-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001",
+        "--legacy-audit", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-audit-v001",
+        "--legacy-readout", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-readout-v001",
+        "--legacy-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/confirmation-source-bundle-v001",
+        "--gate-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-source-bundle-v001",
+        "--future-control", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-control-v001",
+        "--origin-source", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/origin-weighting-source-v001",
+        "--origin-audit", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/origin-weighting-transfer-v001",
+        "--future-cv", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-cv-v001",
+        "--future-cv-audit", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-cv-audit-v001",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--reference-forecasts", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/forecasts",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_LEGACY_NATIVE_GATE_PLAN.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/legacy-native-gates-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/legacy-native-gates-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r6_geometry_gate_source",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/train_r6_geometry_gates.py",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--reference-study", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-forecast-gate-v001/ensemble",
+        "--reference-bundle", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-gate-source-bundle-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_GEOMETRY_GATE_PLAN.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/geometry-gate-source-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/geometry-gate-source-v001/manifest.json",
+      "hard_timeout_seconds": 18000
+    },
+    {
+      "name": "r6_geometry_gate_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/audit_r6_geometry_gates.py",
+        "--study-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/geometry-gate-source-v001",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--reference-study", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-forecast-gate-v001/ensemble",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/geometry-gate-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/geometry-gate-audit-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r6_geometry_gate_transfer",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_r6_geometry_gates.py",
+        "--study-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/geometry-gate-source-v001",
+        "--study-audit", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/geometry-gate-audit-v001",
+        "--r6-prepared", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--r6-policy", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-results-v002",
+        "--r6-audit", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-audit-v002",
+        "--r6-comparison", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/origin-weighting-transfer-v001",
+        "--legacy-input", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001",
+        "--legacy-results", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/legacy-native-gates-v001",
+        "--future-cv", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-cv-v001",
+        "--future-cv-audit", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-future-cv-audit-v001",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/geometry-gate-transfer-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/geometry-gate-transfer-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r6_decision_class_diagnostic",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_r6_decision_classes.py",
+        "--r6-prepared", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--r6-policy", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-results-v002",
+        "--r6-audit", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-audit-v002",
+        "--legacy-input", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001",
+        "--legacy-results", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/legacy-native-gates-v001",
+        "--comparison-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/geometry-gate-transfer-v001",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_DECISION_CLASS_DIAGNOSTIC.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/decision-class-diagnostic-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/decision-class-diagnostic-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r6_coordinate_teacher_diagnostic",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/analyze_r6_coordinate_teacher.py",
+        "--teacher-diagnostic", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/teacher-transfer-diagnostic-v001",
+        "--prepared-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_COORDINATE_TEACHER_DIAGNOSTIC.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/coordinate-teacher-diagnostic-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/coordinate-teacher-diagnostic-v001/manifest.json",
+      "hard_timeout_seconds": 1800
+    },
+    {
+      "name": "r6_positional_portfolio_source",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/train_positional_portfolio.py",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--reference-study", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/shared-forecast-gate-v001/ensemble",
+        "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R6_POSITIONAL_PORTFOLIO_PLAN.md",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/positional-source-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/positional-source-v001/manifest.json",
+      "hard_timeout_seconds": 28800
+    },
+    {
+      "name": "r6_positional_portfolio_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/audit_positional_portfolio.py",
+        "--study-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/positional-source-v001",
+        "--aligned-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/aligned-portfolio-prepared-v001",
+        "--accuracy-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r4/accuracy-development-v002",
+        "--teacher-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/complete-history-projection-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/positional-source-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/positional-source-audit-v001/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r6_positional_portfolio_transfer",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_positional_portfolio.py",
+        "--study-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/positional-source-v001",
+        "--study-audit", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/positional-source-audit-v001",
+        "--r6-prepared", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/confirmation-v001/prepared",
+        "--r6-policy", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-results-v002",
+        "--r6-audit", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/policy-audit-v002",
+        "--legacy-input", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r5/native-confirmation-v001",
+        "--legacy-results", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/legacy-native-gates-v001",
+        "--comparison-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/geometry-gate-transfer-v001",
+        "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/positional-transfer-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/positional-transfer-v001/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r6_native_source_tests",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-c",
+        "import json, pathlib, sys, pytest, torch\ntorch.set_num_threads(1)\nroot=pathlib.Path(\"E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/native-source-tests-v001\")\nroot.mkdir(parents=True, exist_ok=False)\nresult=pytest.main(['-q','tests/unit/test_native_source_transfer.py','--basetemp',str(root/'temp'),'--junitxml',str(root/'tests.xml')])\n(root/'manifest.json').write_text(json.dumps({'status':'completed' if result==0 else 'failed','pytest_exit_code':int(result)},indent=2)+'\\n',encoding='utf-8')\nsys.exit(result)"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/native-source-tests-v001/manifest.json",
+      "hard_timeout_seconds": 600
+    },
+    {
+      "name": "r6_native_source_transfer_v002",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_native_source_transfer.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/native-source-transfer-v002"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/native-source-transfer-v002/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r6_native_source_audit_v002",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_native_source_transfer.py",
+        "--study-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/native-source-transfer-v002",
+        "--prior-study-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/native-source-transfer-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/native-source-audit-v002"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/native-source-audit-v002/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r6_source_quantile_tests",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-c",
+        "import json, pathlib, sys, pytest\nroot=pathlib.Path(\"E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-quantile-tests-v001\")\nroot.mkdir(parents=True, exist_ok=False)\nresult=pytest.main(['-q','tests/unit/test_source_quantiles.py','--basetemp',str(root/'temp'),'--junitxml',str(root/'tests.xml')])\n(root/'manifest.json').write_text(json.dumps({'status':'completed' if result==0 else 'failed','pytest_exit_code':int(result)},indent=2)+'\\n',encoding='utf-8')\nsys.exit(result)"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-quantile-tests-v001/manifest.json",
+      "hard_timeout_seconds": 600
+    },
+    {
+      "name": "r6_source_quantile_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_source_quantiles.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-quantile-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/source-quantile-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r6_interval_gate_tests",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-c",
+        "import json, pathlib, sys, pytest, torch\ntorch.set_num_threads(1)\nroot=pathlib.Path(\"E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/interval-gate-tests-v001\")\nroot.mkdir(parents=True, exist_ok=False)\nresult=pytest.main(['-q','tests/unit/test_interval_gate_inputs.py','--basetemp',str(root/'temp'),'--junitxml',str(root/'tests.xml')])\n(root/'manifest.json').write_text(json.dumps({'status':'completed' if result==0 else 'failed','pytest_exit_code':int(result)},indent=2)+'\\n',encoding='utf-8')\nsys.exit(result)"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/interval-gate-tests-v001/manifest.json",
+      "hard_timeout_seconds": 600
+    },
+    {
+      "name": "r6_interval_gate_source",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_interval_forecast_gate.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/interval-gate-source-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/interval-gate-source-v001/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r6_interval_gate_audit",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_interval_forecast_gate.py",
+        "--study-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/interval-gate-source-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/interval-gate-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/interval-gate-audit-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r6_manuscript_evidence_build_v003",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/build_r6_manuscript.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/manuscript-render-v003"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/manuscript-render-v003/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r6_latent_interface_tests",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-c",
+        "import json, pathlib, sys, pytest, torch\ntorch.set_num_threads(1)\nroot=pathlib.Path(\"E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/latent-interface-tests-v001\")\nroot.mkdir(parents=True, exist_ok=False)\nresult=pytest.main(['-q','tests/unit/test_latent_probe_resume.py','--basetemp',str(root/'temp'),'--junitxml',str(root/'tests.xml')])\n(root/'manifest.json').write_text(json.dumps({'status':'completed' if result==0 else 'failed','pytest_exit_code':int(result)},indent=2)+'\\n',encoding='utf-8')\nsys.exit(result)"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/latent-interface-tests-v001/manifest.json",
+      "hard_timeout_seconds": 600
+    },
+    {
+      "name": "r6_latent_interface_probe",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/probe_frozen_latent_interfaces.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/latent-interface-probe-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/latent-interface-probe-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    }
+  ]
+}

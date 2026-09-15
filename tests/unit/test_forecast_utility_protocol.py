@@ -62,7 +62,7 @@ class RecordingChronos:
     def predict_quantiles(self, *, inputs, prediction_length, quantile_levels, **kwargs):
         self.received.extend(inputs)
         return [
-            np.ones((len(quantile_levels), prediction_length, np.asarray(entry["target"]).shape[0]))
+            np.ones((np.asarray(entry["target"]).shape[0], prediction_length, len(quantile_levels)))
             for entry in inputs
         ], None
 

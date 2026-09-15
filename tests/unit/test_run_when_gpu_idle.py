@@ -24,6 +24,45 @@ def _load_script() -> ModuleType:
 MODULE = _load_script()
 
 
+def test_state_write_retries_transient_reader_locks(tmp_path, monkeypatch):
+    path = tmp_path / "state.json"
+    path.write_text('{"status":"running"}', encoding="utf-8")
+    original_replace = Path.replace
+    attempts, delays = [], []
+
+    def temporarily_locked(source, target):
+        attempts.append(source)
+        if len(attempts) < 3:
+            assert json.loads(path.read_text(encoding="utf-8"))["status"] == "running"
+            raise PermissionError("transient Windows sharing conflict")
+        return original_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", temporarily_locked)
+    monkeypatch.setattr(MODULE.time, "sleep", delays.append)
+    MODULE._write_state(path, {"status": "completed"})
+    assert json.loads(path.read_text(encoding="utf-8")) == {"status": "completed"}
+    assert len(attempts) == 3
+    assert delays == [0.05, 0.1]
+
+
+def test_state_write_does_not_hide_persistent_permission_errors(tmp_path, monkeypatch):
+    path = tmp_path / "state.json"
+    path.write_text('{"status":"running"}', encoding="utf-8")
+    attempts, delays = [], []
+
+    def locked(source, target):
+        attempts.append(source)
+        raise PermissionError("persistent failure")
+
+    monkeypatch.setattr(Path, "replace", locked)
+    monkeypatch.setattr(MODULE.time, "sleep", delays.append)
+    with pytest.raises(PermissionError, match="persistent failure"):
+        MODULE._write_state(path, {"status": "completed"})
+    assert len(attempts) == 8
+    assert sum(delays) == pytest.approx(1.4)
+    assert json.loads(path.read_text(encoding="utf-8")) == {"status": "running"}
+
+
 class FakeClock:
     def __init__(self) -> None:
         self.value = 0.0

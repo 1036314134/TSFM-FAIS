@@ -1,0 +1,70 @@
+\section{Additional Source-Training Comparisons}
+\label{app:source-controls}
+
+\paragraph{Matched supervision.}
+The actual-future gate uses the same 33 features, network, training origins and schedule as the complete-history teacher gate. Table~\ref{tab:r6_source_labels} reports family-held-out source validation. Teacher supervision has lower mean errors for both backbones, while the ordering differs by family. This source validation was completed after the R6 readout; it did not guide the original primary-method choice. The corresponding complete-source actual-future controls were already fixed before R6 evaluation.
+
+\begin{table}[ht]
+\centering
+\small
+\caption{Matched source supervision at $L=H=96$. All values are training-prefix-standardized MAE/MSE under the original source aggregation.}
+\label{tab:r6_source_labels}
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{Chronos-2} & \multicolumn{2}{c}{TimesFM 2.5}\\
+Source procedure & MAE & MSE & MAE & MSE\\
+\midrule
+Teacher gate & .779079 & 1.543561 & .754242 & 1.492189\\
+Actual-future gate & .803794 & 1.630845 & .766743 & 1.525696\\
+Actual-future fixed mixture & .791536 & 1.591860 & .777307 & 1.561970\\
+Seven-candidate median & .780606 & 1.558757 & .772570 & 1.555558\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Adding original-missing source histories.}
+A later development comparison augments the original 165 source-training histories with other groups from 358 previously evaluated original-missing histories: 164 from the earlier seven-family subset, 192 from Beijing and two Bike Sharing grid-gap histories. The nine families form eight exclusion groups, with the two Singapore datasets excluded together. Each fit excludes the entire evaluation group, retains the original network and actual-future MSE objective, and has a fixed-mixture control fitted on exactly the same data. Future losses average only the original observed positions within each target, followed by equal weighting of targets.
+
+\begin{table}[ht]
+\centering
+\small
+\caption{Original-missing grouped source extension, $H=96$. Each family receives equal weight. Expanded procedures denote separate fits for the held-out groups; these results reuse previously examined data.}
+\label{tab:r6_native_source_extension}
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{Chronos-2} & \multicolumn{2}{c}{TimesFM 2.5}\\
+Procedure & MAE & MSE & MAE & MSE\\
+\midrule
+Expanded-source gate & .665873 & 1.055028 & .670679 & 1.008620\\
+Expanded-source fixed mixture & .665704 & 1.059362 & .668720 & 1.005430\\
+Original-source future gate & .668174 & 1.066995 & .669778 & 1.006209\\
+Original-source future fixed mixture & .666698 & 1.059734 & .668556 & 1.005133\\
+Seven-candidate median & .665574 & 1.066644 & .669916 & 1.019811\\
+Eight-candidate median with MoTM & .668717 & 1.074586 & .668807 & 1.011720\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The source extension modestly improves the Chronos gate and slightly worsens the TimesFM gate in this aggregation. Both expanded gates remain worse than the eight-candidate median on both metrics in the earlier seven-family subset. Averaging the eight exclusion groups instead of nine families changes some MSE comparisons but does not yield a joint MAE/MSE advantage over the matched fixed mixtures for either backbone. The expansion changes sample count, domain coverage and missingness jointly; these results do not identify an individual causal factor or supply a new independent confirmation.
+
+\clearpage
+\paragraph{Restoring reported quantile spans.}
+The point-only representation leaves two predefined interval fields unused. A matched source comparison restores quantile availability and the mean span between the reported 0.1 and 0.9 quantiles, retaining the other 31 fields, complete-history teacher objective, fitting population, network and schedule. The original point-only controls reproduce exactly. Table~\ref{tab:r6_interval_inputs} shows small metric tradeoffs; it does not establish an incremental improvement on both errors. The reported quantiles are retained without reordering or removing crossing cases. No additional forecaster calls are used, and no original-missing transfer result is claimed for this variant.
+
+\begin{table}[ht]
+\centering
+\small
+\caption{Restoring interval inputs in the original source comparison. Metrics and source aggregation match Table~\ref{tab:r6_source_labels}.}
+\label{tab:r6_interval_inputs}
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{Chronos-2} & \multicolumn{2}{c}{TimesFM 2.5}\\
+Procedure & MAE & MSE & MAE & MSE\\
+\midrule
+Interval-input gate & .777006 & 1.546373 & .754403 & 1.486513\\
+Point-only gate & .779079 & 1.543561 & .754242 & 1.492189\\
+Source-fixed teacher mixture & .780687 & 1.555598 & .771366 & 1.529399\\
+Seven-candidate median & .780606 & 1.558757 & .772570 & 1.555558\\
+\bottomrule
+\end{tabular}
+\end{table}

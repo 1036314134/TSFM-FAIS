@@ -1,0 +1,22 @@
+{
+  "jobs": [
+    {
+      "name": "r11_prepare_target_local_source",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_target_local_source.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r11/target-local-inputs-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r11/target-local-inputs-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r11_train_target_local_gate",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/train_target_local_gate.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r11/target-local-source-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r11/target-local-source-v001/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r11_audit_target_local_gate",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/audit_target_local_gate.py", "--study-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r11/target-local-source-v001", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r11/target-local-audit-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r11/target-local-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    }
+  ]
+}

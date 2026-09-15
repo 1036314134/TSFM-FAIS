@@ -1,0 +1,314 @@
+\documentclass{article}
+\usepackage{iclr2027_conference,times}
+\usepackage{amsmath,amssymb,amsthm,booktabs,array,microtype,graphicx}
+\usepackage{hyperref,url}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta}
+\hypersetup{hidelinks}
+\newtheorem{proposition}{Proposition}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\med}{\operatorname{median}}
+\newcommand{\MAE}{\operatorname{MAE}}
+\newcommand{\MSE}{\operatorname{MSE}}
+\title{Imputation Selection for Frozen Time-Series Forecasters:\\Transfer, Information, and Input Dependence}
+\author{Anonymous Authors}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Selecting an imputer for a frozen time-series forecaster requires evaluating the resulting forecast under the information available at deployment. We study source-trained selection, simple forecast aggregation, native missing-value handling, and imputer training budgets using training-prefix-standardized MAE and MSE. A selector trained to reproduce complete-history forecasts slightly improves on a seven-candidate forecast median in development. A subsequently frozen evaluation on 373 windows from nine new data families does not reproduce this advantage: both errors increase for Chronos-2 and TimesFM 2.5, including the 164 windows with naturally missing history. Controlled development interventions further show that a larger imputer training budget can have opposite downstream effects across forecasters. Replacing target and other input columns separately exposes interactions in joint forecasting. These results delimit the evidence for forecast-aware selection: complete-history supervision is a useful development control, while transfer, native input semantics, available history, and training budget require separate evaluation. The study does not establish a generally superior learned selector.
+\end{abstract}
+
+\section{Introduction}
+
+A frozen time-series forecaster receives the history produced by the data-processing pipeline. Missing observations therefore create a choice among several deployment procedures: complete the history with one imputer, let the forecaster process missing entries, or combine predictions obtained from multiple completions. These procedures can share the same observations and still return different forecasts. Their value must be measured against the observed future, with a common scale and a common information boundary.
+
+Consider TimeMixer++ completions of four current-velocity histories, each evaluated under six fixed masking conditions. Increasing the budget from 10 epochs and 64 masked training windows to 50 epochs and 512 windows changes Chronos-2 MSE from 0.827770 to 0.872270, TimesFM 2.5 MSE from 0.683377 to 0.664951, and TiRex MSE from 0.620702 to 0.635902. These forecasters receive the same respective completions. The two independent-target forecasters, TimesFM and TiRex, disagree on the direction of the change. A budget change therefore cannot be assigned a forecaster-independent benefit, and joint versus independent input handling alone does not explain these outcomes.
+
+The distinction between accurate imputation and accurate prediction is established in missing-data research \citep{lemorvan2021good}. Downstream evaluation is also present in TSI-Bench, CleanIMP, and ImputeGAP \citep{du2024tsibench,cleanimp,nater2025imputegap}. Our question concerns the behavior of selection under a fixed predictor and explicit deployment information. An adaptive selector must learn from source histories without seeing the current future or the hidden values of a naturally incomplete target history. Its comparison set must include the forecaster's supported missing-input procedure and simple aggregation over the same candidate predictions.
+
+We examine a complete-history forecast teacher for this selection problem. During source training, artificial masks hide values that remain available to the experimenter. The frozen forecaster's prediction from the complete source history defines a reference for ranking candidate completions. A matched control ranks candidates using actual source future MSE. At deployment, both rankers receive the same observed-history, completion, and candidate-prediction features. The complete-history reference is unavailable at deployment and is never supplied to the deployed selector.
+
+The development comparison favors complete-history supervision, but the independent confirmation does not establish superiority over the untrained forecast median. This distinction motivates three research questions. Does the development advantage survive a change in data families and original missingness? How do native missing-input handling and extra historical observations affect the comparison? Can changes in imputer training budget be interpreted without accounting for the forecaster's input dependence? We report the frozen confirmation together with controlled development interventions, retaining the boundaries between them. A simple output-space argument also explains why selecting a single completion and aggregating forecasts are different decision classes; it does not guarantee that an empirical candidate ensemble improves prediction.
+
+\section{Setting and Evaluation Objects}
+
+Let $C\in(\R\cup\{\mathrm{NaN}\})^{L\times D}$ denote the available context, $M$ its observation mask, and $Y\in\R^{H\times K}$ the future of $K$ target variables. A completion $I_a(C,M)$ must preserve every observed entry. A frozen forecaster $F$ maps its supported input representation to a point prediction. Chronos-2 is evaluated with a joint multivariate input; TimesFM 2.5 is invoked independently for each target \citep{ansari2025chronos2,google2025timesfm25}. Consequently, changing a non-target input can affect the former implementation, whereas the latter does not receive that input.
+
+\paragraph{Candidate procedures.}
+The finite candidate pool contains last observation carried forward (LOCF), linear interpolation, seasonal copying, multivariate nearest-neighbor imputation, SAITS, and TimeMixer++ \citep{du2023saits,wang2025timemixerpp}. A common completion fallback handles any unresolved entry. LOCF extends the first available context observation backwards over a leading gap; a wholly unobserved variable uses a statistic fitted on the historical prefix. The seventh candidate uses the forecaster's native missing-input path with a declared fallback. For joint Chronos-2 input, any wholly missing channel triggers the complete LOCF context. For independent TimesFM targets, only a wholly missing target falls back. An unguarded native call is a separate diagnostic and is excluded from the seven-candidate pool.
+
+Write the resulting predictions as $p_a\in\R^{H\times K}$, $a=1,\ldots,7$. The forecast median is the coordinate-wise median of these seven predictions. The input median instead combines the six finite completions, restores observed values, and queries $F$ once. These operations need not agree. A selector that uses candidate-prediction features requires the seven candidate predictions before ranking. Returning the median of three selected predictions does not reduce this acquisition requirement to three calls. Identical effective inputs may be reused without changing the logical candidate set.
+
+\paragraph{Primary outcomes.}
+For each variable, the mean $\mu_k$ and population standard deviation $s_k$ are fitted using its observed values in the earliest 20\% training prefix. At least two prefix observations are required. A standard deviation at most $10^{-12}$ is replaced by one and recorded. All procedures share these statistics. Main model inputs use the original scale; standardized outcomes are computed after forecasting. If $V_{hk}$ is the original future-observation indicator and $n_k=\sum_hV_{hk}$, the window scores are
+\begin{align}
+ \MAE &= \frac1K\sum_{k=1}^K\frac1{n_k}
+  \sum_{h:V_{hk}=1}\left|\frac{p_{hk}-Y_{hk}}{s_k}\right|,\\
+ \MSE &= \frac1K\sum_{k=1}^K\frac1{n_k}
+  \sum_{h:V_{hk}=1}\left(\frac{p_{hk}-Y_{hk}}{s_k}\right)^2.
+ \label{eq:metrics}
+\end{align}
+Future entries that were originally missing do not receive imputed scoring labels. Confirmation requires at least 48 observed future values for each of two targets over a horizon of 96. We average targets within a window, windows within an item, items within a dataset, and datasets within a family before assigning equal weight to families. Raw-scale errors are retained separately; imputation error is auxiliary.
+
+\section{Complete-History Supervision for Selection}
+
+At source episode $e$, let $X_e$ be the complete history before artificial masking, $p_{e,a}$ a candidate prediction, and $t_e=F(X_e)$ the complete-history forecast. After applying the common prefix transformation, the teacher cost is
+\begin{equation}
+ c^{\mathrm{teacher}}_{e,a,k}
+ =\frac1H\sum_{h=1}^H(p_{e,a,h,k}-t_{e,h,k})^2.
+ \label{eq:teacher}
+\end{equation}
+The matched outcome-supervised cost substitutes the observed source future for $t_e$. Chronos-2 averages costs over targets and uses joint-context features to learn one shared ranking. TimesFM 2.5 retains target-specific decision rows. Neither teacher construction nor selection updates the forecaster's parameters.
+
+\paragraph{Observable representation.}
+Each candidate has 33 declared features: 21 summaries of visible history and its completion, and 12 prediction-response summaries. Responses describe change from the LOCF prediction, temporal change, distance to the median of the six finite-candidate predictions, and departure from the last LOCF context value. The two quantile-related fields are zero in this point-prediction evaluation. Pairwise classifiers concatenate the two candidates' feature vectors, yielding 66 inputs. Dataset names, missingness-generator labels, current future outcomes, and artificially hidden historical truth do not enter these vectors.
+
+\paragraph{Cost-sensitive ranking.}
+For each of the 21 candidate pairs $(a,b)$, a binary gradient-boosted tree model predicts whether $c_{e,a}<c_{e,b}$. Sample weights multiply the absolute cost difference by the source family-balancing weight. This follows the established cost-sensitive pairwise selection approach \citep{xu2012evaluating}; the pairwise architecture itself is not a new contribution. All models use 160 trees, 15 leaves, learning rate 0.05, minimum leaf sample count 25, regularization coefficient 5, and seed 5101. A preferred candidate is fixed from source cost for deterministic vote ties; remaining ties use a fixed candidate order.
+
+The primary procedure returns the coordinate-wise median of the top three candidate predictions. This aggregation size is identical for both forecasters and was fixed before confirmation. Single-candidate output is an ablation. We also select fixed triples by source training cost, using the same teacher or outcome objective, to distinguish adaptive ranking from a source-selected portfolio. A complete-history teacher can reduce dependence on noisy realized future labels, as motivated by statistical analyses of distillation \citep{menon2021statistical}. Here it is a model-generated reference, and its agreement with a candidate is not an estimate of that candidate's target-domain accuracy without further assumptions.
+
+\section{Why the Decision Class Matters}
+
+Fix the observed information $O=(C,M)$ and a nonempty compact set $\mathcal C(O)$ of allowed completions. Flatten the $H\times K$ prediction to $q=HK$ coordinates, and suppose $F$ is continuous on $\mathcal C(O)$. Let $m(O)=\E[Y\mid O]$ and assume a finite conditional second moment.
+
+\begin{proposition}
+The smallest conditional squared risk attainable by a single completion satisfies
+\begin{equation}
+ \min_{u\in\mathcal C(O)}\frac1q\E[\|Y-F(u)\|^2\mid O]
+ =\frac1q\E[\|Y-m(O)\|^2\mid O]
+ +\frac1q\operatorname{dist}(m(O),F(\mathcal C(O)))^2.
+ \label{eq:image}
+\end{equation}
+\end{proposition}
+\begin{proof}
+For a fixed $u$, expand $Y-F(u)=(Y-m)+(m-F(u))$. The conditional expectation of the cross term is zero. The first term is independent of $u$, and the second is minimized over the compact continuous image of $\mathcal C(O)$.
+\end{proof}
+
+This is the conditional squared-loss decomposition applied to the set of forecasts reachable by completion. It provides a distinction between decision classes, with no claim that this elementary identity is new. For vector forecasts, coordinate-wise aggregation can leave this image. Suppose $Z$ is uniform on $[-1,1]$, no observation reveals $Z$, $Y=(Z,Z^2)$, and $F(a)=(a,a^2)$. Even allowing any real-valued completion $a$, the best single-completion MSE is $4/15$ and the best MAE is $79/192$. The posterior forecast median $(0,1/4)$ attains MSE $103/480$ and MAE $3/8$, each below the corresponding optimum for one completion. The derivation is in Appendix~\ref{app:example}.
+
+The example uses the correct conditional distribution and a forecaster that exactly maps complete input to future output. Real candidate imputers need not sample that distribution. Model error can also reverse the comparison: if the actual future becomes $Y=(Z,0)$, the completion $a=0$ has MSE $1/6$, whereas averaging $F(Z)$ gives $(0,1/3)$ and MSE $2/9$. Figure~\ref{fig:vector-geometry} contrasts these two cases. Thus, a forecast ensemble's departure from the single-completion image does not establish a real-data accuracy advantage. Both MAE and MSE in Equation~\ref{eq:metrics} remain necessary empirical outcomes.
+
+\begin{figure}[t]
+\centering
+\input{figures/r5_vector_forecast_geometry.tex}
+\caption{The same forecast mean can improve or worsen prediction error while lying outside the single-completion output set. In both exact examples, $Z\sim\mathrm{Uniform}[-1,1]$, $F(a)=(a,a^2)$, the gray curve shows $F([-1,1])$, and the blue diamond is $\bar p=\mathbb E F(Z)$. The open circle is the best completion forecast under MSE. In (a), the actual conditional mean $m=\mathbb E Y$ equals $\bar p$; in (b), it equals $F(0)$. Reported MSE averages the two outputs in the example's units. These are analytical examples, not empirical foundation-model results.}
+\label{fig:vector-geometry}
+\end{figure}
+
+\section{Experimental Protocol}
+
+\paragraph{Development and frozen confirmation.}
+Development contains 7,812 masked episodes from 15 data families, with one evaluated item per dataset. The 5,940 source-training episodes cover 165 distinct historical origins; 1,872 validation episodes cover 52 origins. Each history has six masking mechanisms, three rates (0.1, 0.3, 0.5), and two mask seeds. Context and forecast lengths are both 96, with targets given by the first two channels. Neural imputer fitting is restricted to historical prefixes. Source training futures precede the 60\% temporal boundary, and validation contexts follow it. All variants of a history remain in the same group. Family-held-out development fits exclude the evaluated family's training episodes.
+
+After development, the feature specification, learner settings, and three-prediction aggregation rule were frozen. Final source selectors use all 15 source families and 165 training origins, with no validation or confirmation episodes used in fitting. Confirmation contains 373 windows from 18 items in nine new families. Of these, 164 windows from seven families contain at least one original missing historical entry. The nine datasets are AustraliaSolar\_H, WaterDarwin\_15T, Crypto\_D, MetroPT3\_5T, OilPrice\_B, SGPM25\_H, SGWeather\_D, SmartManufacturing\_H, and USTerm\_B. ``New'' refers to exclusion from this selector's development; it is not a claim about absence from foundation-model pretraining.
+
+Target-data neural imputers fit the registered items' initial 20\% prefixes for 10 epochs using a batch size of 16 and at most 64 training windows. Artificial training masks apply only to originally observed prefix values. This constitutes historical target-data adaptation by the imputers; the forecasters and source selectors remain frozen. Confirmation adds no artificial missing values to evaluation contexts. It changes both data families and missingness conditions relative to development, so its outcome cannot isolate either shift by itself.
+
+\paragraph{Controls and uncertainty.}
+Controls include every individual candidate, forecast means and medians over the shared pool, input means and medians, source-selected fixed triples, and matched future-supervised rankings. MoTM is included as a pretrained imputer reference and as an additional forecast in the median \citep{motmsoftware}. Two native-input controls use the common prefix transformation with context lengths 96 and 1,024. The longer context provides additional past observations and is an information control, not a same-history selection competitor. Methods that fail do not obtain a summary computed only from their successful windows.
+
+We report paired differences between family-level scores. Descriptive percentile intervals use 20,000 resamples of the nine families, or seven families in the naturally missing subset, with seed 4101. These exploratory intervals have no adjustment for the number of comparisons and do not justify a population-wide guarantee. Repeated windows and mask realizations are not independent families. Development choices and the frozen confirmation are reported separately.
+
+\section{Results}
+
+\subsection{The development improvement does not transfer consistently}
+
+On family-held-out development, the complete-history rank-three procedure obtains MAE/MSE of 0.776350/1.553672 for Chronos-2 and 0.760947/1.520308 for TimesFM 2.5. The corresponding seven-candidate median scores are 0.780606/1.558757 and 0.772570/1.555558. Matched future-MSE supervision yields 0.792008/1.613341 and 0.779326/1.599547. These comparisons support the teacher objective within this development protocol.
+
+Table~\ref{tab:confirmation} shows the frozen confirmation. The teacher-ranked triple is worse than the seven-candidate median on both metrics for both forecasters. On all 373 windows, the relative MAE/MSE increases are 0.38\%/0.12\% for Chronos-2 and 0.58\%/0.88\% for TimesFM. On naturally missing windows they increase to 0.48\%/0.63\% and 1.31\%/2.97\%. The source-selected fixed triple and the outcome-supervised adaptive triple also fail to exceed the seven-candidate median on both metrics. The evidence therefore does not support replacing that baseline with the learned primary selector.
+
+\begin{table}[t]
+\centering\small
+\caption{Frozen confirmation, with equal family weighting. All inputs have length 96. Lower is better. The upper panel has 373 windows and nine families; the lower panel contains 164 naturally missing windows and seven families.}
+\label{tab:confirmation}
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{Chronos-2} & \multicolumn{2}{c}{TimesFM 2.5}\\
+Procedure & MAE & MSE & MAE & MSE\\
+\midrule
+\multicolumn{5}{l}{All registered windows}\\
+Native with fallback & .616883 & .979226 & .638258 & 1.135236\\
+Input median (six) & .617351 & .967528 & .636082 & 1.091105\\
+Forecast median (seven) & .613878 & .967431 & .629299 & 1.082309\\
+Source fixed triple (teacher) & .618912 & .980854 & .630225 & 1.084390\\
+Adaptive triple (future MSE) & .617585 & .972307 & .631497 & 1.084080\\
+Adaptive triple (teacher) & .616206 & .968553 & .632972 & 1.091863\\
+Forecast median (seven + MoTM) & .614549 & .965475 & .629300 & 1.080341\\
+\midrule
+\multicolumn{5}{l}{Naturally missing histories}\\
+Native with fallback & .618658 & .851586 & .652929 & 1.073149\\
+Input median (six) & .615408 & .808574 & .626384 & .817979\\
+Forecast median (seven) & .609736 & .807308 & .614370 & .803062\\
+Source fixed triple (teacher) & .620426 & .852170 & .615558 & .806765\\
+Adaptive triple (future MSE) & .621401 & .843630 & .623500 & .822866\\
+Adaptive triple (teacher) & .612649 & .812422 & .622398 & .826889\\
+Forecast median (seven + MoTM) & .609386 & .797358 & .613597 & .793853\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The uncertainty is material. For all registered windows, the Chronos-2 teacher-minus-median MAE difference is 0.002328 with interval $[-0.001364,0.007098]$; the MSE difference is 0.001122 with interval $[-0.007220,0.008035]$. TimesFM differences are 0.003673 $[0.000862,0.006841]$ and 0.009555 $[0.000290,0.018949]$. Both latter intervals are positive under this descriptive resampling, providing evidence of higher error. In the naturally missing subset, the TimesFM MAE interval is also positive, whereas its MSE interval includes zero. These results neither establish equivalence nor rule out improvements from other selectors with new evidence.
+
+\subsection{Available history changes the comparison}
+
+The native prefix-standardized 1,024-step control obtains MAE/MSE 0.559239/0.882204 for Chronos-2 and 0.573363/0.906377 for TimesFM on all registered windows. Its naturally missing scores are 0.552097/0.661189 and 0.602422/0.935539, respectively. More history improves both overall aggregates, but TimesFM's naturally missing MSE is higher than the 96-step forecast median's 0.803062 despite its lower MAE. A gain from this control cannot be credited to imputer selection. The same-length prefix-standardized native control closely reproduces the raw-input native procedure in this cohort; input rescaling alone does not explain the seven-candidate median's differences here.
+
+Adding MoTM's prediction to the median slightly lowers both naturally missing aggregates for the two forecasters (Table~\ref{tab:confirmation}). The all-window Chronos comparison instead has lower MSE and higher MAE. We therefore retain this reference without choosing the aggregation pool separately for each evaluated subset. The result concerns the specified imputer implementation and pool, not a general guarantee from increasing the number of candidates.
+
+\subsection{Individual teacher ranking and portfolio objectives differ}
+
+The deployed rule ranks individual candidates and then takes the median of three predictions. Minimizing the individual teacher costs need not minimize this aggregate's teacher cost. We enumerate all 35 triples on the original 1,872 development tasks to compare these objectives. The comparison supplies complete current history to two diagnostic rules: one selects the three individually closest predictions, and the other directly selects the triple whose median is closest to the teacher. Chronos shares the selected triple across targets; TimesFM selects independently by target.
+
+Direct triple minimization strictly lowers teacher MSE on 1,174 Chronos tasks and 1,326 TimesFM tasks. It also improves the family-mean downstream scores in Table~\ref{tab:objective-gap}. This establishes a measurable objective difference in development. The distance between the learned rule and these diagnostic rules also includes the information supplied by hidden current history. It cannot be interpreted entirely as estimation error that additional training will remove.
+
+\begin{table}[t]
+\centering\small
+\caption{Source-development diagnostics: 1,872 tasks, 52 historical origins, and 15 families. $\dagger$ uses unavailable complete current history; $\ddagger$ uses the actual current future and optimizes MSE. These marked rows are diagnostic references. Their MAE columns describe the resulting choices and are not separate MAE optima.}
+\label{tab:objective-gap}
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{Chronos-2} & \multicolumn{2}{c}{TimesFM 2.5}\\
+Procedure & MAE & MSE & MAE & MSE\\
+\midrule
+Forecast median (seven) & .780606 & 1.558757 & .772570 & 1.555558\\
+Learned teacher ranking, top three & .776350 & 1.553672 & .760947 & 1.520308\\
+Individual teacher ranking, top three $\dagger$ & .766143 & 1.514401 & .743840 & 1.474997\\
+Best triple under teacher MSE $\dagger$ & .763035 & 1.502305 & .736004 & 1.454019\\
+Best single under future MSE $\ddagger$ & .700491 & 1.308212 & .675787 & 1.250714\\
+Best triple under future MSE $\ddagger$ & .712153 & 1.350141 & .697719 & 1.324472\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Future-aware single-candidate choices also have lower mean MSE than future-aware triple choices in this panel. The two output classes are not nested: a median of three distinct candidates cannot always reproduce a particular single candidate over the complete horizon. The corresponding future-MAE optima favor the single-candidate class on average as well. These finite-pool comparisons leave substantial room below the learned selector's error, but future-aware choices are unavailable at deployment. They do not establish that the reachability limitation of Section~4 explains the observed selector failure.
+
+\subsection{Training budget has model-dependent, nonmonotonic effects}
+
+We performed a separate development sensitivity study on ETTh1, current\_velocity\_H, and electricity. Each dataset contributes four registered validation histories under six masking conditions, giving 12 histories and 72 masked tasks. One history per dataset was used in the initial analysis; the remaining three were added with all settings fixed and no new fitting. SAITS and TimeMixer++ use their original architecture and initialization for three budgets: 10 epochs/64 masked training windows, 50 epochs/64 windows, and 50 epochs/512 windows. The 512-window batch contains all original 64 windows, and all additional windows come from the same fitting prefixes. There are 18 fitted models in total. Original frozen checkpoints are retained as a reproduction reference, and the four classical candidate inputs remain unchanged. TiRex \citep{auer2025tirex} supplies a third forecaster for this budget study, with a fixed batch size of one, the torch backend, and unchanged weights.
+
+Across the four histories per dataset, the 50/512 forecast median improves both mean metrics on ETTh1 for all three forecasters and worsens both on current\_velocity\_H and electricity. This direction is not universal across individual histories: Chronos improves both metrics on two ETTh1 histories and worsens both on the other two. The initially observed electricity TimeMixer++ improvement under Chronos occurs on one history, while both errors increase on the other three. Its four-history average changes from MAE/MSE 0.509804/0.702200 to 0.520258/0.711488. The initial gain is therefore a local finding. Nonmonotonicity also occurs within a fixed history: the initial electricity SAITS case under Chronos changes from 0.544629/0.678087 at 10/64 to 0.418077/0.466078 at 50/64, then to 0.647737/0.911696 at 50/512.
+
+\begin{table}[t]
+\centering\small
+\caption{TimeMixer++ on current\_velocity\_H. Scores average six masks within each history and then four histories equally. A common budget change improves TimesFM and worsens Chronos and TiRex on both mean metrics.}
+\label{tab:budget-origins}
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{10 epochs / 64 windows} & \multicolumn{2}{c}{50 epochs / 512 windows}\\
+Forecaster & MAE & MSE & MAE & MSE\\
+\midrule
+Chronos-2 & .737114 & .827770 & .763693 & .872270\\
+TimesFM 2.5 & .669345 & .683377 & .657149 & .664951\\
+TiRex & .616648 & .620702 & .626207 & .635902\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:budget-origins} gives the current-velocity example used in the introduction. Both metrics improve on three of four TimesFM histories, zero Chronos histories, and one TiRex history. TimesFM and TiRex both use independent target inputs, so that input-scope property alone does not explain the difference. These findings describe fixed architectures and fitting prefixes; they do not constitute algorithm-capacity estimates or fully tuned rankings.
+
+\subsection{Target and other input changes interact in joint forecasting}
+
+For each budget comparison, let $C^{00}$ use the refitted 10/64 completion, $C^{10}$ replace only the target columns with the new completion, $C^{01}$ replace only other columns, and $C^{11}$ replace both. All four contexts preserve original observations. We evaluated both imputers and both larger budgets on the same 18 development episodes. Table~\ref{tab:crossed} gives the electricity TimeMixer++ 50/512 intervention under Chronos-2.
+
+\begin{table}[t]
+\centering\small
+\caption{Crossed input replacement for Chronos-2, electricity, TimeMixer++ 50/512 versus 10/64. Values average six masks of one development history.}
+\label{tab:crossed}
+\begin{tabular}{lrr}
+\toprule
+Completion & MAE & MSE\\
+\midrule
+Original budget, $C^{00}$ & .637103 & .872041\\
+Replace target columns, $C^{10}$ & .598389 & .720084\\
+Replace other columns, $C^{01}$ & .673980 & 1.003593\\
+Replace both, $C^{11}$ & .554625 & .619763\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Target replacement alone reduces error; replacing only other inputs increases it; the joint replacement gives the lowest error. The joint improvement therefore cannot be attributed simply to a beneficial non-target replacement. To distinguish non-additivity of predictions from nonlinearity of squared loss, we retain the forecast-vector interaction $F(C^{11})-F(C^{10})-F(C^{01})+F(C^{00})$ separately from the analogous contrast of MSE. TimesFM's independent-target implementation gives identical forecasts for $C^{00}$ and $C^{01}$, and for $C^{10}$ and $C^{11}$, providing a structural control. This equality follows from the inputs it receives and is not itself a new empirical property of time-series models.
+
+\section{Related Work and Scope}
+
+\paragraph{Prediction with missing values.}
+\citet{lemorvan2021good} analyze imputation followed by prediction and the conditions under which powerful regression can accommodate an imputation rule. They also study consequences of retaining a complete-data regression function. Our frozen vector-output setting prevents the downstream predictor from adapting during evaluation. Equation~\ref{eq:image} states the resulting restriction on the output set; it does not replace that literature or establish a general ensemble guarantee. Complete-history teacher targets also relate to distillation \citep{menon2021statistical}; the current empirical comparison concerns which source objective transfers for an imputer selector.
+
+\paragraph{Imputation evaluation and algorithm selection.}
+TSI-Bench evaluates 28 algorithms on eight datasets and includes downstream tasks \citep{du2024tsibench}. CleanIMP studies data cleaning with downstream classification and forecasting, while ImputeGAP provides missing-data simulation, tuning, benchmarking, and downstream evaluation \citep{cleanimp,nater2025imputegap}. Thus, downstream imputation evaluation is established. Our experiments restrict the predictor's adaptation, distinguish prediction aggregation from a single completed input, and preserve naturally missing future labels in scoring. They do not establish comprehensive coverage of imputation or forecasting. Cost-sensitive pairwise selection is also established \citep{xu2012evaluating}; its inclusion here supplies a controlled implementation for comparing source objectives.
+
+\paragraph{Selection and aggregation.}
+Forecasting-oriented pairwise comparison followed by top-three imputation aggregation has also been studied by \citet{utama2026duel}. Their aggregation operates on candidate filled values before recurrent forecaster training. Learned coordination of forecasting-model ensembles is examined by \citet{cao2025conversational}. These precedents further motivate explicit comparisons of source supervision and returned decision classes; pairwise voting, top-three aggregation, and ensemble coordination are established ingredients.
+For positively weighted forecast means, the difference between weighted member squared error and ensemble squared error is the established ensemble-dispersion term \citep{krogh1994ensembles}. This identity distinguishes training objectives for weighted means; it is not an identity for median aggregation or a guarantee of transfer to new data.
+
+\paragraph{Evaluation limits.}
+The main confirmation has two forecasters, one horizon, limited items per family, and only 165 distinct source-training histories. Source masking multiplicity does not increase that last count. Confirmation changes both family and missingness conditions, preventing causal attribution of transfer failure to one factor. Metrics on original observed futures describe that observed subset; unobserved future outcomes may follow a different distribution. The expanded-budget study covers three forecasters and 12 histories, but only three datasets with one evaluated item each and unchanged imputer architectures. Theoretical examples demonstrate possible behavior, not its prevalence in real models. Teacher and future oracles also use information absent at deployment. These limits preclude a general ranking of imputers or a claim that learned selection cannot succeed.
+
+\section{Conclusion}
+
+For the evaluated frozen forecasters, selecting an imputer requires explicit treatment of candidate information, native missing-input semantics, and the decision class of the output. Complete-history supervision improves the examined source-development selector but fails to produce a consistent advantage over a simple forecast median in frozen confirmation. Training-budget and crossed-input interventions further show that downstream gains depend on the forecaster and on interactions among its inputs. The supported conclusion is conditional: learned selection must demonstrate transfer beyond development gains while being compared with aggregation and information-matched native procedures under both MAE and MSE.
+
+\bibliography{tsfm_fais_iclr2027,tsfm_fais_r5_draft}
+\bibliographystyle{iclr2027_conference}
+
+\appendix
+\section{Calculation for the Two-Output Example}
+\label{app:example}
+
+For $Y=(Z,Z^2)$, $Z\sim\mathrm{Uniform}[-1,1]$, and $F(a)=(a,a^2)$, direct integration gives
+\begin{equation}
+ \frac12\E\|Y-F(a)\|^2=\frac4{15}+\frac{a^2}{6}+\frac{a^4}{2}.
+\end{equation}
+Its minimum is $4/15$ at $a=0$. Writing $r=|a|$, for $0\le r\le1$ the mean absolute error is
+\begin{equation}
+ \frac12\E\|Y-F(a)\|_1
+ =\frac5{12}-\frac{r^2}{4}+\frac{2r^3}{3}
+ =\frac{79}{192}+(r-\tfrac14)^2(\tfrac{2r}{3}+\tfrac1{12}).
+\end{equation}
+For $r\ge1$ it equals $(r+r^2-1/3)/2\ge5/6$. Thus its global minimum is $79/192$. The coordinate median of $F(Z)$ is $(0,1/4)$, giving MAE $3/8$ and MSE $103/480$. The coordinate mean $(0,1/3)$ gives MSE $19/90$ and MAE $1/4+2/(9\sqrt3)$. Both outputs improve on the respective best single-completion scores in this example. These values use the example's units and are unrelated to the benchmark's training-prefix standardization.
+
+\section{Additional Confirmation Uncertainty}
+
+For the naturally missing subset, teacher-minus-seven-median Chronos-2 differences are MAE 0.002913 with descriptive 95\% interval $[-0.002198,0.009158]$, and MSE 0.005113 with interval $[-0.007537,0.016477]$. TimesFM differences are MAE 0.008028 $[0.002476,0.015045]$ and MSE 0.023827 $[-0.003917,0.061035]$. These are paired family-resampling intervals over seven families and are not corrected for multiple comparisons. A positive difference denotes higher error for the teacher-ranked triple.
+
+\section{Development Data Coverage and Imputer Settings}
+
+Table~\ref{tab:source-inventory} gives the actual evaluated source population. Each dataset contributes one evaluated multivariate item. The five smallest training families contain only 12 of the 165 source origins in total; under the full equal-family objective they receive one third of the family weight. Family-held-out fits renormalize weights over the remaining families. This describes source-weight concentration and does not establish its effect on generalization.
+
+\begin{table}[h]
+\centering\small
+\caption{Source-development coverage. Periods and horizons are measured in sampling steps. Each origin has 36 configured masking conditions. The local traffic snapshot has 21 channels and is not treated as the full traffic panel.}
+\label{tab:source-inventory}
+\begin{tabular}{lrrrr}
+\toprule
+Dataset & Variables & Period & Train origins & Validation origins\\
+\midrule
+azure2019\_D\_5T & 3 & 288 & 16 & 4\\
+Coastal\_T\_S\_H & 3 & 24 & 16 & 4\\
+current\_velocity\_H & 6 & 24 & 10 & 4\\
+electricity & 321 & 24 & 16 & 4\\
+ETTh1 & 7 & 24 & 16 & 4\\
+EWELD\_Load\_15T & 10 & 96 & 16 & 4\\
+exchange\_rate & 8 & 7 & 15 & 4\\
+national\_illness & 7 & 52 & 2 & 2\\
+NE\_China\_Wind\_H & 4 & 24 & 16 & 4\\
+OpenElectricity\_NEM\_5T & 10 & 288 & 16 & 4\\
+Port\_Activity\_D & 2 & 7 & 4 & 4\\
+Supply\_Chain\_Customer\_D & 36 & 7 & 4 & 4\\
+traffic & 21 & 24 & 16 & 4\\
+Uncertainty\_1M\_M & 3 & 12 & 1 & 1\\
+Vehicle\_Sales\_M & 10 & 12 & 1 & 1\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The masking mechanisms are random points, independent blocks, synchronous blocks, staggered blocks in correlated variables, value-dependent blocks, and mixed outages. The generator acts on the complete trajectory before contexts are extracted. Dataset, item, split, mechanism, nominal rate, and seed identify a realization. Origins in the same split inherit that realization; source training and validation use separate realizations. Correlation and value-score calibration use the fitting prefix. Nominal rates of 0.1, 0.3, and 0.5 refer to the trajectory-level generator setting, so a context's realized rate may differ. Value-dependent locations are selected offline over the trajectory; this is a controlled contamination procedure rather than a general model of online sensor failure.
+
+In the budget study, SAITS uses two layers, model dimension 64, feed-forward dimension 128, four attention heads, key and value dimensions 16, zero dropout, and unit weights for its observed and masked reconstruction terms. TimeMixer++ uses one layer, model dimension 32, feed-forward dimension 64, four heads, six kernels, top-$k=3$, one downsampling layer with window two, and zero dropout. Its channel-independence and nonstationary-normalization options are disabled. Both use a batch size of 16 and no early-stopping patience. Input dimension follows the dataset. These are fixed experimental configurations, not optimized capacity estimates.
+
+Evaluated-item counts differ from neural-imputer fitting-item counts. The dataset-level imputer artifacts can use prefixes from additional items declared in their fit records; source selection reuses those artifacts. In particular, the current-velocity fitting items differ from the single evaluated source item. The 165 selector-training origins therefore do not describe all data used to fit the neural imputers.
+
+\end{document}

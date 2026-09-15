@@ -1,5 +1,5 @@
 schema_version: 1
-data_root: ../../../TSFM-SPImpute/data/Origin
+data_root: ../../../TSFM-SPImpute/data/original
 datasets:
   # Complete multivariate CSV releases.
   - {dataset_id: electricity, family_id: electricity, format: csv, path: csv/electricity.csv, frequency: H, period: 24, domain: energy, timestamp_column: date, expected_num_variates: 321, provenance: release_complete}

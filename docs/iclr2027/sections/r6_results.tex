@@ -1,0 +1,33 @@
+\section{Confirmation Results and Transfer Limits}
+\label{sec:r6_results}
+
+\paragraph{Main synthetic-missingness comparison.}
+Table~\ref{tab:r6_main} reports the prespecified $H=96$ comparison across the four new source families. Relative to the seven-candidate median, the primary ensemble-loss gate changes Chronos-2 MAE/MSE by $-1.02\%/-5.90\%$ and TimesFM~2.5 by $+0.80\%/-4.72\%$. Both MSEs decrease, while the MAE effects differ. Relative to the median that additionally includes MoTM, the primary gate has higher MAE and lower MSE for both backbones. Its two errors are also slightly higher than those of the source-fixed convex mixture. The confirmation therefore does not support a consistent advantage for the adaptive ensemble-loss gate over the stronger static controls.
+
+\begin{table}[t]
+\caption{Frozen confirmation on artificially masked histories at $H=96$. Entries are training-prefix-standardized downstream MAE/MSE, averaged equally across four source families. The cohort has 32 original histories and 1,152 masking tasks. The MoTM median uses one additional candidate. Lower values are better.}
+\label{tab:r6_main}
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{Chronos-2} & \multicolumn{2}{c}{TimesFM 2.5} \\
+Procedure & MAE & MSE & MAE & MSE \\
+\midrule
+Ensemble teacher loss (primary) & .608321 & 1.110985 & .624733 & 1.158096 \\
+Member teacher loss & .593649 & 1.134564 & .605122 & 1.132753 \\
+Source future supervision & .616020 & 1.147136 & .600364 & 1.130239 \\
+Source-fixed convex mixture & .600751 & 1.109923 & .616414 & 1.148950 \\
+Seven-candidate median & .614601 & 1.180633 & .619774 & 1.215528 \\
+Median including MoTM & .605507 & 1.139357 & .611607 & 1.171881 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Matched objectives do not preserve their development ordering.}
+For Chronos-2, the member-loss control has lower MAE and higher MSE than the primary gate. For TimesFM, it improves both metrics. The primary TimesFM gate achieves no joint MAE/MSE family win against the member-loss control and incurs three joint losses. Replacing the complete-history teacher with actual source future supervision also improves both aggregate TimesFM errors. Chronos shows the opposite aggregate ordering for this supervision comparison, but its primary gate wins jointly on only one family and loses jointly on three. This concentration of the aggregate benefit prevents a source-independent interpretation of teacher superiority.
+
+\paragraph{Original missingness.}
+The Beijing subset with originally incomplete histories contains 192 origins from 12 stations within one source family. The primary Chronos gate obtains MAE/MSE of .955657/1.950378, compared with .951353/1.941988 for guarded native input. The corresponding TimesFM values are .982291/2.050711 and .971437/2.021100. Neither backbone gains from the primary gate in this comparison. Appendix~\ref{app:r6_full} retains the classical, fixed-mixture and median controls as well. The 128 complete-history controls return identical predictions across the imputation-preserving mixture procedures and are reported separately. Gaps introduced by nominal time-grid reconstruction remain a separate observation category.
+
+\paragraph{Scope of the evidence.}
+The primary method was fixed before the new cohort's outcomes were examined. All 23 procedures, both horizons and the registered observation panels are retained. Independent reconstruction checks cover 140,024 method forecast vectors and 27,396 gate decisions; prediction reconstruction differences are zero, and metric recomputation differs by at most $3.49\times10^{-10}$, including raw-scale metrics. These checks establish computational consistency. Four purposively selected source families, shared histories across masks and horizons, and a single source family with original missingness limit broader conclusions. Subsequent analysis of this cohort is developmental reuse and cannot replace its original confirmation result.

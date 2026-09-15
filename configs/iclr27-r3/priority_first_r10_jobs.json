@@ -1,0 +1,16 @@
+{
+  "jobs": [
+    {
+      "name": "r10_train_metric_source_gates",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/train_metric_source_gates.py", "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R10_METRIC_OBJECTIVE_PROTOCOL_V002.md", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r10/metric-source-v002"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r10/metric-source-v002/manifest.json",
+      "hard_timeout_seconds": 21600
+    },
+    {
+      "name": "r10_audit_metric_source_gates",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/audit_metric_source_gates.py", "--protocol", "E:/ZMY/Github/TSFM-FAIS/docs/iclr2027/R10_METRIC_OBJECTIVE_PROTOCOL_V002.md", "--previous-attempt", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r10/metric-source-v001", "--study-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r10/metric-source-v002", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r10/metric-source-audit-v002"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r10/metric-source-audit-v002/manifest.json",
+      "hard_timeout_seconds": 7200
+    }
+  ]
+}

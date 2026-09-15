@@ -1,0 +1,19 @@
+{
+  "budget": 3,
+  "models": {
+    "chronos2": {
+      "representation": "forecast_response",
+      "students": {
+        "clean_forecast_mse": "artifacts/iclr27-r5/forecast-response-clean-teacher-v001",
+        "future_mse": "artifacts/iclr27-r5/forecast-response-future-mse-v001"
+      }
+    },
+    "timesfm2p5": {
+      "representation": "forecast_response",
+      "students": {
+        "clean_forecast_mse": "artifacts/iclr27-r5/forecast-response-clean-teacher-v001",
+        "future_mse": "artifacts/iclr27-r5/forecast-response-future-mse-v001"
+      }
+    }
+  }
+}

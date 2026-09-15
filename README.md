@@ -1,14 +1,24 @@
 # TSFM-FAIS：面向冻结时序预测器的填补算法选择
 
-当前研究主线为 R3 序列级预测收益估计：使用历史上下文、候选填补结果及冻结预测器的响应选择处理流程。新流程统一训练与评价的 MASE 尺度，按时间隔离监督窗口，并纳入 Chronos-2 原生缺失输入、同监督选择器、预测集成和观测历史回测。R3 结果均处于开发阶段，尚未构成独立确认或投稿结论。
+2026-09-13 更新：主指标为训练前缀标准化后的下游预测 MAE/MSE，填补误差仅作辅助。完整源历史预测教师监督的三候选方法已完成冻结确认：9 个新家族、18 条序列、373 个窗口，其中 164 个窗口保留原生历史缺失。该方法在 Chronos-2 和 TimesFM 2.5 上均未复现开发阶段相对七候选预测中位数的优势；原始确认结果及范围见 [研究判断](docs/iclr2027/R5_RESEARCH_DECISION_20260913.md)。当前没有已验证的普遍方法优势或投稿就绪结论。
 
-研究范围见 [R3 研究计划](docs/iclr2027/R3_RESEARCH_PLAN.md)，已完成的实验和结果限制见 [R3 工作记录](docs/iclr2027/R3_PROGRESS.md)。紧凑试跑和扩大实验分别使用 `configs/iclr27-r3/development_pilot.yaml` 与 `configs/iclr27-r3/development_expanded.yaml`。在已配置模型检查点和填补器历史拟合产物的环境中运行：
+当前方法以 21 个历史/填补特征和 12 个当前预测响应特征进行成本敏感配对排序，两个预测器均组合排名前三的预测；决策前需要七个候选预测。源教师使用人工遮盖之前的完整历史，部署时不读取当前未来或隐藏历史。预算研究已扩展到三个预测器、三个数据集各四个历史，共 12 个历史和 72 个掩码任务，详见[跨历史预算检查](docs/iclr2027/R5_BUDGET_ORIGIN_EXTENSION.md)；目标/其他变量交叉替换仍限定于最初三个历史。[组合目标诊断](docs/iclr2027/R5_TRIPLE_OBJECTIVE_DIAGNOSTIC.md)进一步区分个体排序、组合误差及使用额外信息的理想参照。方法和已完成证据见[新版英文工作稿](docs/iclr2027/tsfm_fais_r5_draft.tex)，编译及版面核查状态见[运行记录](docs/iclr2027/R4_AUTONOMOUS_CONTINUATION.md)。前期组合器及历史反馈保存在[早期 R5 工作记录](docs/iclr2027/R5_BLOCK_COMPOSER_PROGRESS.md)。
+
+早期 R3 序列级收益估计采用 MASE，历史方案与限制见 [R3 研究计划](docs/iclr2027/R3_RESEARCH_PLAN.md)和 [R3 工作记录](docs/iclr2027/R3_PROGRESS.md)。紧凑试跑和扩大实验分别使用 `configs/iclr27-r3/development_pilot.yaml` 与 `configs/iclr27-r3/development_expanded.yaml`。以下是数据准备与历史流程入口，在共享机器上优先使用后述队列：
 
 ```powershell
 python scripts/run_utility_experiment.py run --config configs/iclr27-r3/development_expanded.yaml
 ```
 
-下文保留原 B-FAIS 的系统说明与早期实验口径。2026 年 8 月的 R2 评估未通过注册的优越性检验，现有[论文草稿](docs/iclr2027/tsfm_fais_iclr2027.tex)报告该结果；下述 7 月胜出计数不代表当前论文已验证的贡献。
+本项目在共享机器上排第三，TSFM-SPImpute 与 TSFM-RECA 优先。当前 R4/R5 队列入口如下，已有等待程序时不要重复启动。资源保留、恢复条件与自动推进约定见 [运行约定](docs/iclr2027/R4_AUTONOMOUS_CONTINUATION.md)，实际状态位于 `artifacts/iclr27-r4/gpu-queue-v001/state.json`，需同时核验进程存活。
+
+队列结束通知由 Windows 进程退出事件触发，正常完成、失败和中断各提醒一次；配置位于 `configs/iclr27-r3/queue_notifications.json`。原两小时一次的进度查询已停用。通知本身不轮询进度，实验中的资源让路检查继续保留。队列启动时自动挂接通知，发送结果保存在队列目录的 `notification-<进程号>.json`。
+
+```powershell
+python scripts/resume_utility_when_idle.py --run-root artifacts/iclr27-r4 --config configs/iclr27-r3/development_expanded.yaml --jobs-json configs/iclr27-r3/r4_accuracy_gpu_jobs.json --queue-name gpu-queue-v001 --priority-hold-file artifacts/iclr27-r4/priority_hold.json --max-gpu-utilization 60
+```
+
+下文保留原 B-FAIS 的系统说明与早期实验口径。2026 年 8 月的 R2 评估未通过注册的优越性检验，[R2 历史论文稿](docs/iclr2027/tsfm_fais_iclr2027.tex)报告该结果；下述 7 月胜出计数不代表当前论文已验证的贡献。
 
 TSFM-FAIS 实现 B-FAIS（Block-wise Forecast-Aware Imputer Selection）。系统接收带缺失的多变量时间序列，将每个变量上的极大连续缺失区间表示为原子块，从可扩展候选池中为不同缺失块选择填补算法，再组装成完整上下文供下游时间序列基础模型（TSFM）预测。填补阶段始终使用全部变量；预测阶段既支持原生联合多变量模型，也支持将一个或多个目标变量分别交给单变量模型。
 

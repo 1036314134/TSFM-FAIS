@@ -118,7 +118,9 @@ class SmallChronosBackend:
             target = np.asarray(entry["target"])
             level = np.nan_to_num(np.nanmean(target, axis=1))
             outputs.append(
-                np.broadcast_to(level, (len(quantile_levels), prediction_length, len(level))).copy()
+                np.broadcast_to(
+                    level[:, None, None], (len(level), prediction_length, len(quantile_levels))
+                ).copy()
             )
         return outputs, None
 

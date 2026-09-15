@@ -22,9 +22,9 @@ class FakeChronos2:
             target = np.asarray(entry["target"])
             n_targets = 1 if target.ndim == 1 else target.shape[0]
             value = np.arange(n_targets, dtype=float)
-            output = np.empty((len(quantile_levels), prediction_length, n_targets))
+            output = np.empty((n_targets, prediction_length, len(quantile_levels)))
             for q_index in range(len(quantile_levels)):
-                output[q_index] = value + q_index
+                output[:, :, q_index] = (value + q_index)[:, None]
             outputs.append(output)
         return outputs, None
 
@@ -145,6 +145,27 @@ def test_tirex_mock_native_quantiles_are_selected():
     np.testing.assert_allclose(result.quantiles[0, 0, 0], [0.0, 4.0, 8.0])
 
 
+def test_tirex_native_missing_preserves_nan_inputs_and_uses_single_series_batches():
+    class CapturingTiRex(FakeTiRex):
+        def forecast(self, *, context, prediction_length, **kwargs):
+            self.context = (
+                context.detach().cpu().numpy()
+                if hasattr(context, "detach")
+                else np.asarray(context)
+            )
+            self.batch_size = kwargs["batch_size"]
+            return super().forecast(context=context, prediction_length=prediction_length, **kwargs)
+
+    backend = CapturingTiRex()
+    adapter = TiRexAdapter(backend=backend)
+    contexts = np.array([[[1.0], [np.nan], [2.0]], [[np.nan], [np.nan], [np.nan]]])
+    spec = ForecastSpec("tirex", "independent_univariate", horizon=3)
+    result = adapter.predict_missing(contexts, spec)
+    np.testing.assert_array_equal(backend.context, contexts[:, :, 0])
+    assert backend.batch_size == adapter.batch_size == 1
+    assert np.isfinite(result.point).all()
+
+
 def test_tirex_loads_a_local_snapshot_checkpoint(monkeypatch, tmp_path):
     checkpoint = tmp_path / "model.ckpt"
     checkpoint.write_bytes(b"checkpoint")
@@ -159,9 +180,7 @@ def test_tirex_loads_a_local_snapshot_checkpoint(monkeypatch, tmp_path):
 
     module = SimpleNamespace(
         load_model=lambda *args, **kwargs: None,
-        base=SimpleNamespace(
-            PretrainedModel=SimpleNamespace(REGISTRY={"TiRex": Model})
-        ),
+        base=SimpleNamespace(PretrainedModel=SimpleNamespace(REGISTRY={"TiRex": Model})),
     )
     monkeypatch.setattr(
         "tsfm_fais.forecasting.adapters.tirex.importlib.import_module",

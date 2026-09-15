@@ -1,0 +1,22 @@
+{
+  "jobs": [
+    {
+      "name": "r13_prepare_real_pool",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/real_pool_inputs.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r13/real-inputs-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r13/real-inputs-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r13_train_real_pool",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/train_real_pool.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r13/real-source-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r13/real-source-v001/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r13_audit_real_pool",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/audit_real_pool.py", "--study-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r13/real-source-v001", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r13/real-source-audit-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r13/real-source-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    }
+  ]
+}

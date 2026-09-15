@@ -1,0 +1,139 @@
+\documentclass{article}
+\usepackage{iclr2027_conference,times}
+\usepackage{amsmath,amssymb,booktabs,array,microtype,graphicx}
+\usepackage{hyperref,url}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta}
+\hypersetup{hidelinks}
+\title{Forecast-Aware Imputation Portfolios:\\Objective Alignment and Transfer}
+\author{Anonymous Authors}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Choosing how to complete a missing history changes the input to a frozen time-series forecaster. A useful selection rule must improve downstream prediction under the information available at deployment. We compare source-trained forecast portfolios using complete-history teacher supervision, matched aggregation objectives, and fixed combinations of the same candidate predictions. A small shared gate trained on the error of its returned forecast improves on a matched member-error objective during source development. A subsequent frozen confirmation on four new source families does not preserve that ordering. At horizon 96, the primary gate reduces MSE relative to a seven-candidate median by 5.90\% for Chronos-2 and 4.72\% for TimesFM 2.5, while MAE changes by $-1.02\%$ and $+0.80\%$, respectively. It also fails to improve on source-fixed convex combinations. Original missing histories show no consistent advantage. A separate three-forecaster budget study finds that the same change in imputer training can have opposite downstream effects. These results distinguish objective alignment during source fitting from reliable transfer of an imputation portfolio, and identify static aggregation and available historical information as necessary comparison conditions.
+\end{abstract}
+
+\section{Introduction}
+
+A frozen time-series forecaster receives the history supplied by a data-processing procedure. Missing observations introduce several choices: complete the history with one imputer, use the forecaster's supported missing-input interface, or combine forecasts obtained from multiple completions. Each choice can preserve the same observed values and still produce a different future prediction. Selection must therefore be evaluated through the resulting forecast, with common information boundaries and a common outcome scale.
+
+An objective that accurately describes the returned forecast can improve source fitting without producing a better transferable rule. In our source-development experiment, training the same small TimesFM portfolio gate on the error of its weighted prediction gives MSE 1.492189, compared with 1.499097 for a weighted member-error objective. After freezing both gates and evaluating new sources, the ordering reverses: the corresponding MSEs are 1.158096 and 1.132753. The candidate pool, representations and fitting budgets are matched within each comparison. This example motivates examining objective choice together with transfer and strong fixed combinations.
+
+The distinction between imputation accuracy and prediction accuracy is established in missing-data research~\citep{lemorvan2021good}. Downstream evaluation is included in TSI-Bench, CleanIMP and ImputeGAP~\citep{du2024tsibench,cleanimp,nater2025imputegap}. Forecasting-oriented pairwise imputation selection and aggregation also have precedents~\citep{utama2026duel}, and forecast portfolios can be fitted using historical validation windows~\citep{kayaalp2025chroma}. The question studied here is narrower: whether source supervision for a fixed forecaster's imputation portfolio yields reliable improvements over aggregation using the same candidate forecasts.
+
+Two difficulties affect this comparison. First, individual candidate costs do not describe the cost of their returned combination: aggregation changes the decision being optimized. Second, source-generated supervision may order candidates differently from the actual future in a new setting. Matching the learner across objectives addresses the first comparison, while freezing it before evaluating new sources addresses the second. Native missing-input semantics, target-prefix fitting, and originally unobserved future labels must be held explicit in both stages.
+
+We study a shared gate that combines seven forecasts from six imputers and a native-input procedure. The complete-history prediction of the same frozen backbone supplies source supervision. Matched controls change the aggregation objective or replace this teacher with actual source future labels. We evaluate both MAE and MSE after training-prefix standardization, preserve the original future observation mask, and retain fixed convex combinations and forecast medians as strong controls. The empirical contribution is the resulting separation of source objective effects, confirmation behavior, and imputer-budget effects. The evidence supports conditional comparisons among these procedures; it does not establish a generally superior learned selector.
+
+\section{Prediction Task and Comparison Conditions}
+\label{sec:setting}
+
+An observed context has length $L$ and $D$ variables, with unavailable values represented by an observation mask. A finite imputer preserves every observed entry. The evaluated finite procedures are LOCF, linear interpolation, seasonal lag, multivariate nearest neighbors, SAITS and TimeMixer++. The last two fit historical target-data prefixes; their backbones are not retrained jointly with the forecaster. The seventh candidate uses the forecasting model's missing-input behavior with an explicit empty-input fallback. MoTM supplies an additional pretrained imputation reference~\citep{motmsoftware}. Chronos-2 receives a joint multivariate context, whereas TimesFM 2.5 is invoked separately for each target~\citep{ansari2025chronos2,google2025timesfm25}.
+
+Let $Y\in\mathbb R^{H\times K}$ denote the future, $V$ its original observation mask, and $P$ a point prediction. With target scale $s_k$ fitted from the observed training prefix and $n_k=\sum_hV_{hk}$, the principal errors are
+\begin{align}
+ \operatorname{MAE}(P,Y)&=\frac1K\sum_{k=1}^{K}\frac1{n_k}\sum_{h:V_{hk}=1}\frac{|P_{hk}-Y_{hk}|}{s_k},\\
+ \operatorname{MSE}(P,Y)&=\frac1K\sum_{k=1}^{K}\frac1{n_k}\sum_{h:V_{hk}=1}\frac{(P_{hk}-Y_{hk})^2}{s_k^2}.
+\end{align}
+Unknown future entries are not filled to create scoring labels. Raw-scale errors and imputation reconstruction errors are auxiliary. All compared procedures share the evaluation contexts and prefix statistics. A procedure that queries multiple candidate histories must account for all corresponding forecasting work; the small size of a gate does not remove that cost.
+
+\input{sections/r6_method.tex}
+
+\begin{figure}[t]
+\centering
+\input{figures/r6_forecast_portfolio.tex}
+\caption{The shared imputation portfolio. Solid arrows show prediction-time computation; dashed arrows show source teacher supervision of the gate. The feature block uses observed history, candidate completions and queried forecasts. The forecaster remains frozen. Deployment does not receive the complete source history or its teacher output, and the returned combination is a forecast rather than a unique completed history.}
+\label{fig:r6_portfolio}
+\end{figure}
+
+\section{Source Development and Earlier Confirmation}
+\label{sec:development}
+
+The source population contains 15 data families with one evaluated multivariate item per dataset. It provides 165 training origins and 52 later validation origins, corresponding to 5,940 training and 1,872 validation masking tasks. Each origin contributes six masking mechanisms, three rates and two seeds. Source training futures end before the 60\% temporal boundary; validation contexts follow that boundary. Imputers use historical prefixes, and held-family selector fits exclude that family's training origins. Multiple masks of one history remain in the same group. Appendix~\ref{app:source} reports the actual source coverage and fitting settings.
+
+Table~\ref{tab:r6_source} compares the two teacher objectives using the same shared network and three fixed seeds. Direct ensemble-error training improves both mean metrics for both forecasters relative to member-error training. Its improvement over the seven-candidate median is small for Chronos: 0.20\% in MAE and 0.97\% in MSE, with five joint family wins and eight joint losses. TimesFM improves by 2.37\% and 4.07\%, with eleven joint family wins and four joint losses. Family heterogeneity therefore matters even before independent confirmation.
+
+\begin{table}[t]
+\caption{Held-family source development at $L=H=96$. Equal-family standardized MAE/MSE are shown. Both gates have the same architecture, representation and fitting schedule.}
+\label{tab:r6_source}
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{Chronos-2} & \multicolumn{2}{c}{TimesFM 2.5}\\
+Procedure & MAE & MSE & MAE & MSE\\
+\midrule
+Ensemble teacher loss & .779079 & 1.543561 & .754242 & 1.492189\\
+Member teacher loss & .795789 & 1.639266 & .758550 & 1.499097\\
+Source-fixed convex mixture & .780687 & 1.555598 & .771366 & 1.529399\\
+Seven-candidate median & .780606 & 1.558757 & .772570 & 1.555558\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The gate study followed earlier source-trained ranking experiments. A cost-sensitive pairwise ranker, using the established portfolio-selection construction~\citep{xu2012evaluating}, selected three candidate forecasts. Its frozen confirmation on 373 windows from nine new families did not reproduce its development advantage, including 164 histories with original missingness. A later matched comparison over 35 candidate triples improved development results but failed to transfer consistently in an 823-task follow-up: gains on new synthetic histories occurred for Chronos and reversed for TimesFM. These outcomes remain part of the evidence. Subsequent gate evaluation on that already-used follow-up data is a development diagnostic, not a fresh confirmation. The gate was then fixed for the four-source confirmation described below.
+
+Appendix~\ref{app:source-controls} reports subsequent matched source-supervision and original-missing source-extension checks, retaining their retrospective development status.
+
+\input{sections/r6_evaluation_setup.tex}
+
+\paragraph{Candidate evaluation budget.}
+On the synthetic confirmation panel, the seven-candidate bank contains an average of 6.332 distinct effective contexts per Chronos input and 5.989 per TimesFM input, after reuse of identical effective inputs. Adding MoTM raises these averages to 7.242 and 6.832. The maxima are seven and eight, respectively. These counts describe candidate-context evaluations in the recorded implementation, not backend invocation counts, FLOPs or latency. Imputer fitting and completion add separate costs. A static combination with zero weights could omit candidates in a dedicated implementation; sharing the full bank here does not imply equal minimum deployment cost for every policy.
+
+\input{sections/r6_results.tex}
+
+\section{Imputer Training Budget and Predictor Dependence}
+\label{sec:budget}
+
+A separate development sensitivity study evaluates ETTh1, current-velocity and electricity data. Each contributes four registered validation histories under six masking conditions. SAITS and TimeMixer++ retain their architecture and initialization under budgets of 10 epochs/64 masked windows, 50 epochs/64 windows and 50 epochs/512 windows. The larger batch includes the original windows, with all additional data taken from the same fitting prefixes. This produces 18 fitted imputers. One history per dataset was examined first; three further histories were evaluated with the settings and fitted models fixed. TiRex provides a third frozen forecaster for this study~\citep{auer2025tirex}.
+
+\begin{table}[t]
+\caption{TimeMixer++ on four current-velocity histories. Six masks are averaged within a history and then histories are equally weighted. The same larger imputation budget has different downstream effects across forecasters.}
+\label{tab:budget-origins}
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+ & \multicolumn{2}{c}{10 epochs / 64 windows} & \multicolumn{2}{c}{50 epochs / 512 windows}\\
+Forecaster & MAE & MSE & MAE & MSE\\
+\midrule
+Chronos-2 & .737114 & .827770 & .763693 & .872270\\
+TimesFM 2.5 & .669345 & .683377 & .657149 & .664951\\
+TiRex & .616648 & .620702 & .626207 & .635902\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:budget-origins} shows opposite responses to a common change in imputation budget. Both metrics improve on three of four TimesFM histories, zero Chronos histories and one TiRex history. The two independent-target forecasters also disagree, so joint versus independent input handling alone does not explain this comparison. Across the three datasets, the 50/512 seven-candidate forecast median improves both mean metrics on ETTh1 and worsens both on current velocity and electricity for all three forecasters. The direction is not universal at the individual-history level.
+
+Increasing the budget can also yield nonmonotonic effects. For the initial electricity SAITS history under Chronos, MAE/MSE changes from .544629/.678087 at 10/64 to .418077/.466078 at 50/64, then to .647737/.911696 at 50/512. Separate crossed replacements of target and other input columns expose interactions in joint-context forecasts. These are controlled observations within fixed architectures and fitting prefixes. They do not estimate fully tuned imputer capacity or establish a general ranking of imputation algorithms.
+
+\section{Related Work and Limitations}
+
+\paragraph{Missing-data prediction and aggregation.}
+\citet{lemorvan2021good} study imputation followed by prediction, including consequences of retaining a complete-data regression function. Our experiment holds a pretrained vector-output forecaster fixed while changing its input completion or combining candidate forecasts. Complete-history supervision relates to distillation~\citep{menon2021statistical}, and the member-versus-ensemble squared-loss identity is established~\citep{krogh1994ensembles}. These ingredients motivate matched controls; they do not supply a new general theorem or a transfer guarantee.
+
+\paragraph{Evaluation and portfolio selection.}
+TSI-Bench, CleanIMP and ImputeGAP include downstream evaluation of imputation~\citep{du2024tsibench,cleanimp,nater2025imputegap}. Pairwise forecasting-oriented imputation comparison and top-three aggregation are studied by \citet{utama2026duel}. Chroma fits pretrained forecasting portfolios using historical validation~\citep{kayaalp2025chroma}. Learning how weights vary across series, forecast positions and quantiles also has established precedents~\citep{hasson2023ensembling}. SwiftTS estimates pretrained models' post-fine-tuning performance for model selection~\citep{zhang2025swiftts}. Our comparisons instead hold the forecaster fixed and vary its input completion or combine the resulting forecasts. Neither forecast aggregation nor position-dependent combination is claimed as a new construction. Static combinations and historical information remain essential controls.
+
+\paragraph{Scope.}
+Confirmation covers two backbones, two horizons and four purposively selected source families; only one contributes original-NA histories. Repeated masks do not enlarge the 165-history source-training population. Source and confirmation conditions differ along several dimensions, preventing attribution to one failure mechanism. Missing future labels restrict scoring to observed outcomes, and forecaster pretraining exclusion is not established for every source. The budget study covers three forecasters but only three datasets and 12 histories. These conditional comparisons do not establish that learned selection cannot succeed.
+
+\section{Conclusion}
+
+Forecast-aware imputation portfolios must be assessed through downstream prediction under explicit deployment information. Matching the objective to the returned forecast improves the studied source-development gates, but the frozen confirmation does not establish a consistent advantage over fixed convex mixtures and strong forecast medians. Original missingness and a separate imputer-budget study further expose conditional behavior across forecasting models. Reliable evidence for learned imputation selection therefore requires strong fixed combinations, distinct source and confirmation stages, both MAE and MSE, and clear accounting of available history and forecasting cost.
+
+\bibliography{tsfm_fais_iclr2027,tsfm_fais_r5_draft,tsfm_fais_r6_additions}
+\bibliographystyle{iclr2027_conference}
+
+\clearpage
+\appendix
+\input{sections/r6_full_results.tex}
+\clearpage
+\input{sections/r6_source_inventory.tex}
+\clearpage
+\input{sections/r6_prefix_results.tex}
+\clearpage
+\input{sections/r6_source_controls.tex}
+
+\end{document}

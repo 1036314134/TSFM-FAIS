@@ -1,0 +1,28 @@
+{
+  "jobs": [
+    {
+      "name": "r6_latent_interface_probe",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/probe_frozen_latent_interfaces.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/latent-interface-probe-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/latent-interface-probe-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r6_manuscript_evidence_build_v003",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/build_r6_manuscript.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/manuscript-render-v003"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r6/manuscript-render-v003/manifest.json",
+      "hard_timeout_seconds": 3600
+    }
+  ]
+}

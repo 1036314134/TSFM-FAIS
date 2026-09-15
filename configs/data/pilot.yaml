@@ -1,5 +1,5 @@
 schema_version: 1
-data_root: ../../../TSFM-SPImpute/data/Origin
+data_root: ../../../TSFM-SPImpute/data/original
 datasets:
   - dataset_id: ETTh1
     family_id: ett

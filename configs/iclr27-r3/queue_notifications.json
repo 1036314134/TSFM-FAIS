@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "delivery": "windows_toast",
+  "trigger": "worker_process_exit",
+  "app_id": "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe",
+  "messages": {
+    "completed": {"title": "FAIS 实验队列已完成", "body": "当前队列已正常结束，可以查看结果。"},
+    "failed": {"title": "FAIS 实验队列运行失败", "body": "当前队列未正常完成，请回到实验任务查看详情。"},
+    "interrupted": {"title": "FAIS 实验队列已中断", "body": "队列进程已退出，尚未确认全部完成。"},
+    "test": {"title": "FAIS 完成通知测试", "body": "已启用队列结束通知；这是一条测试消息。"}
+  }
+}

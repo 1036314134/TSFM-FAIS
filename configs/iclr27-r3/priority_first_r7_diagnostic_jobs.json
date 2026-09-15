@@ -1,0 +1,16 @@
+{
+  "jobs": [
+    {
+      "name": "r7_latent_generalization_diagnostic",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/diagnose_latent_generalization.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r7/latent-generalization-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r7/latent-generalization-v001/manifest.json",
+      "hard_timeout_seconds": 1800
+    }
+  ]
+}

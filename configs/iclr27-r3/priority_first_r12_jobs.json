@@ -1,0 +1,28 @@
+{
+  "jobs": [
+    {
+      "name": "r12_prepare_source_motm",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_source_motm.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r12/source-motm-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r12/source-motm-v001/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r12_collect_motm_pool",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/collect_motm_pool.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r12/motm-pool-inputs-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r12/motm-pool-inputs-v001/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r12_train_motm_pool",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/train_motm_pool.py", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r12/motm-pool-source-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r12/motm-pool-source-v001/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r12_audit_motm_pool",
+      "argv": ["D:/Programme/Anaconda/envs/TSFM/python.exe", "-u", "E:/ZMY/Github/TSFM-FAIS/scripts/audit_motm_pool.py", "--study-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r12/motm-pool-source-v001", "--output-root", "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r12/motm-pool-audit-v001"],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r12/motm-pool-audit-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    }
+  ]
+}

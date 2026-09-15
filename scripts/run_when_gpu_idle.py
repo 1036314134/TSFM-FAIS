@@ -88,7 +88,15 @@ def _write_state(path: Path, state: dict[str, Any]) -> None:
         json.dumps(state, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    temporary.replace(path)
+    for attempt in range(8):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError:
+            if attempt == 7:
+                raise
+            # Windows readers can briefly prevent replacing an otherwise writable file.
+            time.sleep(0.05 * (attempt + 1))
 
 
 def _append_bounded_history(

@@ -1,0 +1,11 @@
+# 概率输出的现有证据与下一项检查
+
+2026-09-14更新。原源分位数及恢复区间字段的匹配源对照均已完成独立审查。主评价仍为训练前缀标准化后的下游MAE/MSE；区间信息只作为候选选择的输入或辅助诊断，不替换主要指标。
+
+当前33维输入中有response.has_quantiles和response.interval_width两个字段，但开发导出明确采用仅点预测的响应特征。该选择记录在accuracy-development-v002的manifest及export_downstream_accuracy.py中。原源开发的Chronos预测文件实际保留point与quantiles；已检查首个ETTh1缓存的文件目录。R6预测文件只保存point_z，且run_r6_forecasts.py与r6_runtime.py也只保存点输出。旧原始缺失run_native_confirmation.py同样只写point_z。这意味着不能把原始缺失上的区间特征假称为已有完整缓存。
+
+全体源预测的形状、数值、修正覆盖和原生回退现已核验。Chronos的1,512个修正输入与TimesFM独立原生缓存均已采用；两个模型的七候选点预测重放差为零，分位数均为有限值。Chronos的536个交叉位置和1个端点倒置位置原样保留，详见 `R6_SOURCE_QUANTILE_AUDIT_RESULTS.md`。原始缺失评价仍只有点缓存，尚未安排其概率输出重新收集。
+
+已有研究《Beyond Accuracy: Are Time Series Foundation Models Well-Calibrated?》评价了五个时序基础模型、预测头和长跨度递归预测的校准表现。当前已读取其arXiv v2摘要、引言及背景开头，尚未完整审阅全部实验及缺失输入相关设置。因此不能声称首次研究基础模型校准；较窄的区间也不自动代表更低的预测误差。区间信息在本项目中是否有助于选择，尚无实验结论。[公开论文](https://arxiv.org/html/2510.16060)
+
+接续试验见 `R6_INTERVAL_GATE_PLAN.md` 与 `R6_INTERVAL_GATE_RESULTS.md`：只恢复两个既有字段，其余31维、原教师组合MSE、源训练人口与训练日程保持不变。96个模型已独立核验，两个point-only控制逐参数复现；Chronos的MAE略降/MSE略升，TimesFM的MSE略降/MAE略升。没有形成稳定双指标增益，暂不优先安排原始缺失分位数全量重算。原始缺失训练扩展与位置组合的结果继续保留。后续只检查本地模型表示接口，尚未执行或登记大规模表示收集和新学习器。

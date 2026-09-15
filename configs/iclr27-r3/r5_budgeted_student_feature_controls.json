@@ -1,0 +1,26 @@
+{
+  "budget": 3,
+  "models": {
+    "chronos2_temporal": {
+      "model_id": "chronos2",
+      "representation": "target_temporal",
+      "students": {
+        "clean_forecast_mse": "artifacts/iclr27-r5/clean-teacher-student-temporal-v001"
+      }
+    },
+    "chronos2_dependency": {
+      "model_id": "chronos2",
+      "representation": "full_dependency",
+      "students": {
+        "clean_forecast_mse": "artifacts/iclr27-r5/clean-teacher-student-dependency-v001"
+      }
+    },
+    "timesfm2p5_base": {
+      "model_id": "timesfm2p5",
+      "representation": "base_static",
+      "students": {
+        "clean_forecast_mse": "artifacts/iclr27-r5/clean-teacher-student-base-v001"
+      }
+    }
+  }
+}
