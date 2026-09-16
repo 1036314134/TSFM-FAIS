@@ -1,0 +1,80 @@
+{
+  "jobs": [
+    {
+      "name": "r25_prepare_long_long_pool",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "prepare_long",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r25/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_long_pool.py",
+        "--",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r25/long-inputs-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r25/long-inputs-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r25_forecast_long_pool",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "forecast",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r25/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/forecast_long_pool.py",
+        "--",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r25/long-forecasts-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r25/long-forecasts-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r25_evaluate_long_pool",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "evaluate",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r25/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/readout_long_pool.py",
+        "--",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r25/long-results-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r25/long-results-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r25_audit_long_pool",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "audit",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r25/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_long_pool.py",
+        "--",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r25/long-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r25/long-audit-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    }
+  ]
+}

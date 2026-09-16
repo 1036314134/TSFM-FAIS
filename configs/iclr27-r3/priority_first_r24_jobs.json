@@ -1,0 +1,82 @@
+{
+  "jobs": [
+    {
+      "name": "r24_train_patch_repair",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_patch_repair.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r24/repair-training-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r24/repair-training-v001/manifest.json",
+      "hard_timeout_seconds": 14400
+    },
+    {
+      "name": "r24_freeze_repair_predictions",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "forecast",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r24/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_patch_repair.py",
+        "--",
+        "--training-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r24/repair-training-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r24/repair-evaluation-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r24/repair-evaluation-v001/predictions_frozen.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r24_readout_patch_repair",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "evaluate",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r24/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_patch_repair.py",
+        "--",
+        "--training-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r24/repair-training-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r24/repair-evaluation-v001",
+        "--readout-only"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r24/repair-evaluation-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r24_audit_patch_repair",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "audit",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r24/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_patch_repair.py",
+        "--",
+        "--training-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r24/repair-training-v001",
+        "--evaluation-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r24/repair-evaluation-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r24/repair-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r24/repair-audit-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    }
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "jobs": [
+    {
+      "name": "r23_forecast_conditioning",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "forecast",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r23/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/forecast_observation_conditioning.py",
+        "--",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r23/conditioning-forecasts-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r23/conditioning-forecasts-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r23_evaluate_conditioning",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "evaluate",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r23/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_observation_conditioning.py",
+        "--",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r23/conditioning-results-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r23/conditioning-results-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r23_audit_conditioning",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "audit",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r23/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_observation_conditioning.py",
+        "--",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r23/conditioning-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r23/conditioning-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    }
+  ]
+}

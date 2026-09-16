@@ -1,0 +1,82 @@
+{
+  "jobs": [
+    {
+      "name": "r26_train_mae_repair",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/train_mae_patch_repair.py",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r26/mae-training-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r26/mae-training-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r26_freeze_mae_predictions",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "forecast",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r26/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_mae_patch_repair.py",
+        "--",
+        "--training-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r26/mae-training-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r26/mae-evaluation-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r26/mae-evaluation-v001/predictions_frozen.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r26_readout_mae_repair",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "evaluate",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r26/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_mae_patch_repair.py",
+        "--",
+        "--training-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r26/mae-training-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r26/mae-evaluation-v001",
+        "--readout-only"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r26/mae-evaluation-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r26_audit_mae_repair",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "audit",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r26/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_mae_patch_repair.py",
+        "--",
+        "--training-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r26/mae-training-v001",
+        "--evaluation-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r26/mae-evaluation-v001",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r26/mae-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r26/mae-audit-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    }
+  ]
+}

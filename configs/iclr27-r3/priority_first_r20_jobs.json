@@ -1,0 +1,80 @@
+{
+  "jobs": [
+    {
+      "name": "r20_prepare_tail_bridge",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "prepare",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r20/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/prepare_tail_bridge.py",
+        "--",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r20/tail-inputs-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r20/tail-inputs-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r20_forecast_tail_bridge",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "forecast",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r20/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/forecast_tail_bridge.py",
+        "--",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r20/tail-forecasts-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r20/tail-forecasts-v001/manifest.json",
+      "hard_timeout_seconds": 10800
+    },
+    {
+      "name": "r20_evaluate_tail_bridge",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "evaluate",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r20/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_tail_bridge.py",
+        "--",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r20/tail-results-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r20/tail-results-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r20_audit_tail_bridge",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "audit",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r20/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_tail_bridge.py",
+        "--",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r20/tail-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r20/tail-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    }
+  ]
+}

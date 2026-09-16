@@ -1,0 +1,61 @@
+{
+  "jobs": [
+    {
+      "name": "r21_forecast_provenance",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "forecast",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r21/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/forecast_provenance_pilot.py",
+        "--",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r21/provenance-forecasts-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r21/provenance-forecasts-v001/manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r21_evaluate_provenance",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "evaluate",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r21/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/evaluate_provenance_pilot.py",
+        "--",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r21/provenance-results-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r21/provenance-results-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    },
+    {
+      "name": "r21_audit_provenance",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/run_replay_stage.py",
+        "--stage",
+        "audit",
+        "--record-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r21/execution",
+        "--script",
+        "E:/ZMY/Github/TSFM-FAIS/scripts/audit_provenance_pilot.py",
+        "--",
+        "--output-root",
+        "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r21/provenance-audit-v001"
+      ],
+      "completion_marker": "E:/ZMY/Github/TSFM-FAIS/artifacts/iclr27-r21/provenance-audit-v001/manifest.json",
+      "hard_timeout_seconds": 3600
+    }
+  ]
+}
