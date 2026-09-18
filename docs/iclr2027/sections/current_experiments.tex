@@ -1,0 +1,120 @@
+\section{Experimental Evaluation}
+\label{sec:experiments}
+
+We evaluate the fixed procedure in Equation~\ref{eq:fusion} on three Beijing panels, and examine statistical-component transfer on three HDB panels. All reported errors use one consistent result snapshot and the original future observation masks. The method and its application focus were selected retrospectively using these development results. Consequently, the experiments characterize performance on the observed cohorts and do not constitute independent confirmation of the selected method. The same primary definition is retained across the three Beijing panels.
+
+\subsection{Data, Information and Metrics}
+
+\paragraph{Beijing sensor forecasting.}
+The Beijing Multi-Site Air Quality dataset contains hourly measurements from 12 stations between March 2013 and February 2017~\citep{uci2017beijing}. We predict PM2.5 and PM10 from eleven numerical station variables and six prefix-selected peer PM channels. All statistical fitting uses the first 7012 hours of each augmented station series. Evaluation origins follow the 60\% temporal boundary, with the current 192-hour context entirely after that boundary. The primary and matched long-history controls use 8192 pre-origin hours. Related measurements use the provider's aligned hourly clock; their availability before the origin is assumed, without a separate publication-delay model.
+
+Natural-outage origins require both PM targets to have been continuously missing for at least six hours. Origins occur at outage ages $6+24k$ hours, with nonoverlapping 24-hour forecast intervals within a station. Each target must have at least twelve observed future values to be scored. The resulting panel contains 45 windows across 12 stations; 32 additional candidate origins lack sufficient observed future labels. This ascertainment can favor events that recover observations sooner. Artificial outages use four complete histories per station, selected at evenly spaced chronological positions, and hide only the last 24 hours of the two targets. The 138-window horizon-96 panel retains original target missingness and requires at least 48 observed future values per target. Table~\ref{tab:data} summarizes these populations and the HDB component study.
+
+\begin{table}[t]
+\caption{Evaluation populations. Windows are prediction tasks, and sites within a source are correlated. All panels are developmental. The HDB study evaluates available statistical-component variants, with no recorded result for the exact peer-regression primary.}
+\label{tab:data}
+\centering\small
+\begin{tabular}{llrrr}
+\toprule
+Source & Panel & Sites & Windows & Horizon (h)\\
+\midrule
+Beijing & Natural target outage & 12 & 45 & 24\\
+Beijing & Artificial target outage & 12 & 48 & 24\\
+Beijing & Original missing history & 12 & 138 & 96\\
+HDB & Natural availability gap & 18 & 19 & 24\\
+HDB & Artificial target outage & 18 & 32 & 24\\
+HDB & Native hourly grid & 18 & 32 & 24\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{HDB component-transfer population.}
+The second source is Singapore HDB carpark availability~\citep{hdbavailability}. Hourly snapshots cover 1 June--26 July 2025, yielding 1344 time positions and 2005 C-type carpark series. The first 336 hours supply fitting statistics and peer selection; the next 336 hours supply the development cohort. All eighteen prefix-eligible carparks with natural events in that development period are retained. The remaining two 336-hour intervals are unscored. Natural gaps, missing records, stale observations and collection failures are distinguished, with technical failures excluded from the natural-missingness interpretation. A target is accompanied by six prefix-selected peers. Long histories contain the available 349--586 pre-origin hours. The exact Beijing peer-regression method has no recorded HDB evaluation; the Gaussian repair, fixed fusion and native controls permit a narrower component-transfer comparison.
+
+\paragraph{Evaluation metric.}
+Let $n_k=\sum_hV_{hk}$ and let $s_k$ be the original-observation prefix scale. We compute
+\begin{align}
+ \operatorname{MAE}(\widehat Y,Y)&=\frac1K\sum_k\frac1{n_k}
+   \sum_{h:V_{hk}=1}\frac{|\widehat Y_{hk}-Y_{hk}|}{s_k},\nonumber\\
+ \operatorname{MSE}(\widehat Y,Y)&=\frac1K\sum_k\frac1{n_k}
+   \sum_{h:V_{hk}=1}\frac{(\widehat Y_{hk}-Y_{hk})^2}{s_k^2}.
+ \label{eq:metrics}
+\end{align}
+Equation~\ref{eq:metrics} averages targets within a window, then windows within each site, and finally sites with equal weights. Missing future values are never completed to manufacture labels. MAE is primary, and both metrics are retained for every comparison. Relative change is $100(\mathrm{method}/\mathrm{reference}-1)$, so negative values denote lower error. We report paired site directions and leave-one-site-out ranges as descriptive sensitivity analyses, without treating them as confidence intervals or converting repeated development comparisons into significance claims.
+
+\subsection{Comparators and Fitting Budgets}
+
+The frozen backbone is the same 120M-parameter Chronos-2 checkpoint throughout~\citep{ansari2025chronos2}. Native controls retain missing values and use either 192 hours or the available long context. Separate controls retain only the target variables, providing an explicit input-scope comparison. VAR uses the same fitted statistical branch as the primary. Native-plus-VAR controls hold both the history and fusion weight fixed while omitting target repair.
+
+Repair controls include LOCF, linear interpolation, seasonal copying, multivariate KNN, SAITS, TimeMixer++ and MoTM. The neural imputers use two shared 17-variable Beijing fits, each trained on 512 masked prefix windows for 50 epochs, with batch size 16 and seed zero. MoTM retains its released weights and its fixed observed-context adaptation procedure. Short-history comparisons include each target-only repair and the mean/median of the seven repaired predictions plus native prediction. Additional all-variable repairs and statistical regression variants are retained in the supplement. A fixed Gaussian control estimates prefix means and regularized covariance and applies the conditional mean independently at each time. The same long-history and VAR-fusion factors are applied to Gaussian, KNN and ridge repairs.
+
+Two LoRA controls add 1,206,912 parameters to 97 Chronos-2 projections, with rank eight and scaling parameter sixteen. Natural-history and corruption-trained versions share initialization, source labels, update order and 1728 single-task updates, split equally between Beijing and HDB. They use standardized smooth L1 loss with parameter 0.01, AdamW learning rate $10^{-5}$, weight decay 0.01 and gradient-norm limit one. Evaluation uses the final update. These adapted controls have a different training budget from the statistical primary; their stronger results are still retained. Appendix~\ref{app:training} gives the source boundaries and additional implementation details.
+
+\subsection{Main Results on Natural Sensor Outages}
+
+Table~\ref{tab:main} compares fixed methods across all three Beijing panels. On natural outages, \method{} reaches MAE/MSE 0.388053/0.244688. Relative to the long native forecaster, the reductions are 19.96\% and 31.90\%. The matched native-plus-VAR comparison isolates the effect of adding target repair under the same long history and statistical forecast: MAE/MSE decrease from 0.412755/0.263833 by 5.98\%/7.26\%. Against short target-KNN repair with the same VAR fusion, reductions are 2.25\%/7.46\%.
+
+\begin{table}[t]
+\caption{Beijing results. Each row has one fixed definition across panels. Long histories contain 8192 hours; unqualified inputs include the available local and peer variables. ``Targets only'' changes the variables supplied to the forecaster. Values are standardized MAE/MSE; lower is better. Bold marks the best value in each displayed column.}
+\label{tab:main}
+\centering\footnotesize
+\setlength{\tabcolsep}{3.3pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+ & \multicolumn{2}{c}{Natural, $H=24$} & \multicolumn{2}{c}{Artificial, $H=24$} & \multicolumn{2}{c}{Original, $H=96$}\\
+Method & MAE & MSE & MAE & MSE & MAE & MSE\\
+\midrule
+\input{current_results/main_rows.tex}
+\end{tabular}
+\end{table}
+
+The nearest repair controls substantially narrow the interpretation. Gaussian repair with the same long history and VAR obtains 0.388168/0.245143, only 0.03\%/0.19\% above the primary. The primary wins both metrics at four of twelve stations against this Gaussian control, and its leave-one-station-out MAE direction can reverse. Long KNN repair with VAR obtains 0.388676/0.244071: its MAE is higher, but its MSE is lower. The data therefore support a useful class of simple repair-and-fusion procedures in this cohort, with no established substantial superiority of peer ridge over Gaussian repair.
+
+The improvement over native-plus-VAR is less sensitive to station composition. The primary improves MAE at nine stations and MSE at eight. After omitting each station in turn, its relative changes range from $-7.52\%$ to $-4.91\%$ for MAE and from $-9.69\%$ to $-5.40\%$ for MSE. Against short KNN-plus-VAR, the corresponding ranges are $[-3.96\%,-1.42\%]$ and $[-9.24\%,-6.17\%]$. These ranges describe the observed station population; its twelve stations remain one related source. Appendix~\ref{app:stations} reports the individual station results.
+
+\subsection{History, Repair and Fusion Effects}
+
+Figure~\ref{fig:components} crosses two history lengths, target repair and fixed VAR fusion on the same natural-outage windows. Extending native history from 192 to 8192 hours changes MAE/MSE from 0.530193/0.435904 to 0.484839/0.359322, a reduction of 8.55\%/17.57\%. Thus a short native input is an insufficient reference for a method that can read the longer history.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{current_results/history_repair_fusion.pdf}
+\caption{Component comparison on the 45 natural-outage Beijing windows. Each line retains its repair and fusion rule while changing only the history supplied to Chronos-2. The repair region and VAR filtering window remain 192 hours, and prefix-fitted parameters are unchanged. The plot reports observed station-macro errors; it does not show independent replicate uncertainty.}
+\label{fig:components}
+\end{figure}
+
+At the long history, peer repair alone obtains 0.394116/0.254031, while its fixed fusion obtains 0.388053/0.244688. The repair operation already accounts for much of the natural-outage improvement, and fusion adds a smaller increment. Gaussian repair alone also performs well at 0.391787/0.252425, reducing MAE/MSE by 19.19\%/29.75\% relative to the same long native input. These comparisons separate additional historical information, target repair and statistical forecast combination. They do not attribute all of the gain to a learned decision mechanism.
+
+Artificial outages and longer horizons produce different rankings. On artificial target outages, the primary reaches 0.631104/0.811784. Local ridge repair followed by long target-only forecasting is substantially better at 0.507640/0.542087. Relative to long native-plus-VAR, the primary has slightly lower MAE and higher MSE. At horizon 96, the primary obtains 0.809889/1.328908, while long target-only native forecasting obtains the lower MAE 0.789801 and its VAR fusion obtains the lower MSE 1.313030. The primary remains fixed in these comparisons; the stronger row in each panel is not substituted into its definition.
+
+\subsection{Transfer of Statistical Components to HDB}
+
+Table~\ref{tab:hdb} reports the three HDB panels without filling in an unavailable result for the peer-regression primary. Gaussian target repair and its fixed VAR fusion instantiate the available statistical components with the same fitting-only data boundary. On natural gaps, long native target-only forecasting obtains 1.178178/3.887765. Long Gaussian repair with peers obtains 1.434379/4.706353, and VAR fusion further raises MAE to 1.546516. Even the best-MAE evaluated long repair, target-only median repair at 1.263786/4.012167, remains 7.27\%/3.20\% above the native target-only control. Two additional query-mask controls retain the long native history while restricting unknown auxiliary-future attention keys along time or along both time and group dimensions. They consume no measured future inputs and are retained for their competitive results.
+
+\begin{table}[t]
+\caption{HDB component-transfer results. Long histories use all available pre-origin values up to the fixed context limit. The exact peer-regression primary is unmeasured on HDB; Gaussian rows are separately defined component variants. Bold marks the lowest displayed error.}
+\label{tab:hdb}
+\centering\footnotesize
+\setlength{\tabcolsep}{3.3pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+ & \multicolumn{2}{c}{Natural gaps} & \multicolumn{2}{c}{Artificial outage} & \multicolumn{2}{c}{Native grid}\\
+Method & MAE & MSE & MAE & MSE & MAE & MSE\\
+\midrule
+\input{current_results/hdb_rows.tex}
+\end{tabular}
+\end{table}
+
+On HDB artificial outages, corruption-trained LoRA gives 0.643229/1.120020, outperforming the 336-hour native control by 4.08\%/7.42\%. This adapted model does not exceed the strongest native control on natural gaps. On the native-grid panel, Gaussian repair without fusion is close to long native forecasting, while the VAR branch has considerably higher error. The outcome is consistent with the component-error requirement in Equation~\ref{eq:identity}; it does not identify a single cause of the cross-source difference. The HDB results constrain claims about transferring a Beijing repair-and-fusion design to other applications.
+
+\section{Discussion}
+\label{sec:discussion}
+
+The main empirical result is a reduction in forecasting error after naturally missing PM histories when related observations, target-only statistical repair and a long model context are combined. Equal fusion adds a smaller improvement, and a Gaussian replacement for peer ridge performs nearly identically. This places the result at the level of a concrete applied forecasting procedure. Ridge regression, Gaussian conditioning and forecast averaging are established components, and the present evidence does not isolate a new statistical principle from their combination.
+
+The application scope and primary method were chosen using repeatedly examined development data. Missing future labels restrict scoring to observed outcomes, and the event eligibility conditions exclude prolonged gaps with insufficient future support. Source, calendar period, label observability and missingness differ across the natural and artificial panels, preventing a causal attribution of their ranking differences to missingness alone. The exact primary has been evaluated on one source and one frozen backbone; the HDB component study is smaller and does not evaluate that exact procedure. Exclusion of all evaluation sources from foundation-model pretraining has not been established. Independent data with frozen eligibility and fitting rules are necessary to assess generalization of the selected procedure.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+\method{} combines prefix-fitted peer regression, protected long-history input and fixed statistical forecast fusion. On the studied Beijing natural-outage cohort, it reduces MAE/MSE by 5.98\%/7.26\% relative to native prediction with the same long history and VAR branch. Comparable Gaussian repair, stronger controls on artificial outages and longer horizons, and unfavorable HDB component transfer delimit the result. The resulting method is fully specified and executable; its predictive advantage is currently supported for the observed natural-outage sensor cohort.

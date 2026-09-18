@@ -1,0 +1,780 @@
+Peer Repair and Forecast Fusion
+
+
+
+
+P EER R EPAIR AND F ORECAST F USION
+FOR M ISSING S ENSOR H ISTORIES
+
+ Anonymous Authors
+
+
+
+                                            A BSTRACT
+
+         Forecasting after a sensor outage requires deciding how missing recent values
+         should interact with the longer observed history. We present a fixed procedure that
+         repairs recent target gaps using regressions fitted on observed local and related-
+         series prefixes, retains the available long context of a frozen Chronos-2 forecaster,
+         and equally combines its point prediction with a prefix-fitted vector autoregression.
+         The procedure preserves observed and auxiliary entries and requires one foundation-
+         model forecast per origin. On 45 natural-outage windows from 12 Beijing air-
+         quality stations, it attains standardized MAE/MSE of 0.388053/0.244688. Relative
+         to native prediction using the same long history and VAR fusion, the reductions are
+         5.98%/7.26%; relative to long native prediction alone, they are 19.96%/31.90%.
+         Gaussian repair with the same fusion performs nearly identically, while other
+         controls are stronger under artificial outages and at horizon 96. Available Gaussian
+         and fusion components also fail to improve natural-gap forecasting on an HDB
+         parking cohort. These developmental results identify an effective fixed procedure
+         for the studied natural sensor outages and delimit its current evidence across
+         missingness conditions and applications.
+
+
+1    I NTRODUCTION
+
+Air-quality monitoring networks must forecast pollutant concentrations when a target sensor stops
+reporting. Consider a station whose PM2.5 and PM10 measurements have been absent for the last
+day. Its earlier history, local meteorological measurements and contemporaneous readings from other
+stations may remain available. A pretrained forecaster can consume this incomplete history directly,
+while a repair procedure can infer the missing target values before prediction. The useful intervention
+is the one that improves the future forecast under the information available at the forecast origin.
+Existing methods provide several relevant capabilities. Neural imputers such as SAITS and
+TimeMixer++ learn temporal and multivariate representations, and MoTM transfers pretrained
+imputation representations (Du et al., 2023; Wang et al., 2025; Le Naour et al., 2025). Imputation
+quality and downstream prediction quality can differ (Le Morvan et al., 2021), and downstream
+evaluation is already included in time-series imputation benchmarks (Du et al., 2024). Chronos-2 can
+share information across related series and accept multivariate histories (Ansari et al., 2025). These
+capabilities leave a concrete deployment choice: how much of an incomplete history to repair, which
+observations to preserve, and how to use a statistical forecast alongside the frozen model.
+We study a fixed procedure for forecasting after target-sensor outages. Its input includes an observed
+historical prefix for fitting simple statistical models and a longer, possibly incomplete history ending
+at the forecast origin. The procedure repairs only recent missing target entries, retains the available
+long history, and combines the frozen forecaster’s point prediction with a statistical forecast. The
+target is downstream MAE, with MSE reported throughout. The forecasting backbone is unchanged,
+and current hidden measurements and future outcomes are excluded from the procedure.
+Two difficulties motivate this construction. First, unavailable target values must be inferred from a
+changing set of observed variables. Replacing all variables can also alter useful auxiliary evidence,
+while restricting the forecaster to a short repaired window discards older observations. Second, a
+plausible repaired trajectory can still induce an inaccurate forecast. A separate statistical prediction
+describes another use of the same pre-origin evidence, but combining predictions helps only under
+suitable component errors. Both effects require matched long-history and statistical-fusion controls.
+
+
+                                                   1
+Peer Repair and Forecast Fusion
+
+
+
+
+We define Peer Repair and Fusion, which uses prefix-fitted ridge regression on available local and peer
+observations, inserts the estimated target values into a protected long history, and equally combines
+the resulting Chronos-2 forecast with a prefix-fitted vector autoregression (VAR). In the motivating
+PM example, reporting peers estimate the unavailable recent PM values; older target measurements
+remain in the model context. The VAR branch filters the observed recent history and extrapolates
+its final state. Both branches end at the same forecast origin, and the fusion weight is fixed across
+evaluation cases.
+The paper makes three concrete contributions. Section 4 specifies an executable repair-and-fusion
+procedure with explicit fitting, observation-preservation and information boundaries. Section 4.4
+characterizes its preserved inputs and the standard squared-error condition governing fusion. Section 5
+evaluates one fixed method across natural outages, artificial target outages and a longer forecasting
+horizon, with additional component-transfer results on parking availability. On 45 natural-outage
+windows from 12 Beijing stations, the method obtains MAE/MSE of 0.388053/0.244688, improving
+on the matched long-native-plus-VAR control by 5.98%/7.26%. The other panels delimit this result:
+different fixed controls are stronger on artificial outages and at horizon 96. The procedure and
+application focus are selected from development evidence, whose interpretation is made explicit in
+the experimental design.
+
+2    R ELATED W ORK
+Imputation and downstream prediction. Le Morvan et al. (2021) analyze the relationship between
+imputation and prediction with missing covariates. SAITS uses self-attention for imputation (Du
+et al., 2023); TimeMixer++ provides representations for several time-series tasks, including im-
+putation (Wang et al., 2025); and MoTM uses continuous modeling for pretrained time-series
+imputation (Le Naour et al., 2025). TSI-Bench evaluates imputation methods under multiple missing-
+ness conditions and includes downstream tasks (Du et al., 2024). Our evaluation fixes the forecasting
+backbone and separately controls the repair region, the forecaster’s history and the auxiliary variables
+it receives.
+
+Missingness-aware and pretrained forecasting. Chronos-2 uses group attention to exchange
+information among related series, variables and covariates (Ansari et al., 2025). S4M incorporates
+missingness representations into a trained forecasting architecture (Peng et al., 2025). Our procedure
+uses an existing Chronos-2 checkpoint and fits only external statistical models. A low-rank adaptation
+control (Hu et al., 2021) tests whether updating a small set of additional parameters provides a
+stronger comparison. Related-series conditioning and adaptation are existing capabilities; neither is
+treated as an original primitive here.
+
+Statistical repair and forecast combination. Ridge regression stabilizes linear estimation with
+correlated predictors (Hoerl & Kennard, 1970). Linear forecast combination has a long history (Bates
+& Granger, 1969), and the squared-error decomposition for averaged predictions is established (Krogh
+& Vedelsby, 1994). We use these components to define a specific target-repair procedure for a
+frozen multivariate forecaster. The empirical question is whether this fixed combination adds value
+beyond the same long history, the same VAR branch, and strong alternative repairs. We retain those
+comparisons when their performance is similar to or better than the proposed procedure.
+
+3    P ROBLEM S ETTING
+Let t be the forecast origin, D the number of available local and peer variables, and T the set
+of K target variables. The history O<t contains observed values and missing entries, with mask
+Muj = 1 exactly when variable j was observed at time u < t. An earlier fitting prefix ends at
+t0 < t. For each variable, its observed-prefix mean µj and population standard deviation sj define
+zuj = (Ouj − µj )/sj . A scale at most 10−12 is replaced by one. Missing entries remain missing
+after this transformation.
+The frozen point-forecasting interface FH returns the 0.5-quantile prediction for the next H steps.
+The procedure may fit statistical parameters on the prefix and read observations before t. It cannot
+use current artificially hidden values, measured future peer values or the future targets Y ∈ RH×K .
+
+
+                                                   2
+Peer Repair and Forecast Fusion
+
+
+
+
+                                            Peer regression                         Filter ob-
+       Observed prefix
+                                            and VAR fitting                       served suffix
+          u < t0
+                                                                                 VAR forecast G
+                                                                                                           Fixed mean
+                                                                                                            1
+                                                                                                            2
+                                                                                                              P + 12 G
+                                                                                      Frozen
+        Local and peer                     Target-gap repair                        Chronos-2
+        history, u < t                      last 192 hours                        Protected input
+                                                                                 up to 8192 hours
+      Observed targets, older history and auxiliary entries retain their original values or missingness.
+
+
+Figure 1: Peer Repair and Fusion. Prefix observations fit the peer regressions and VAR. At prediction
+time, regressions fill only missing target cells in the most recent 192 hours. Earlier history and
+auxiliary entries retain their original values or missingness. The repaired long history supplies one
+frozen Chronos-2 forecast. A second branch filters the unrepaired recent observations with the
+VAR and forecasts its final state. The two point predictions receive fixed equal weights. All input
+observations precede the forecast origin.
+
+
+A future observation mask V is available only for scoring. This setting permits target-prefix statistical
+fitting and therefore does not describe a completely training-free forecasting pipeline.
+
+4     P EER R EPAIR AND F ORECAST F USION
+Figure 1 shows the procedure. We use a recent repair window of W = 192 hours and a forecaster
+context of Lt = min(8192, t) available hourly positions. Regression coefficients and VAR parameters
+are fitted on the same historical prefix. The recent observation mask determines which regression
+predictors are usable; it does not change the peer-selection rule or the fusion weight.
+
+4.1    P REFIX -F ITTED P EER R EGRESSION
+
+For each PM target, we select three other stations by absolute correlation with that target using jointly
+observed fitting-prefix values. The six selected PM channels augment the original eleven numerical
+variables. The peer identities are fixed before evaluation. For a missing target k at time u, let Suk
+contain the other variables actually observed at that time. Estimated entries are never fed back as
+observations to the regression.
+For each distinct pair (k, S), let Vk,S be prefix rows on which the target and all predictors in S are
+observed. At least 128 such rows are required. If support is insufficient, we remove the predictor
+with the smallest absolute prefix correlation with k until sufficient support is available. Correlation
+ties are resolved by the fixed variable order. With n = |Vk,S |, we fit
+                                     1 X
+           (b
+            αk,S , βbk,S ) = arg min                      T
+                                             (zuk − α − zu,S  β)2 + λ∥β∥22 ,      λ = 10−3 .         (1)
+                                 α,β n
+                                                   u∈Vk,S
+
+The intercept is unpenalized. Equation 1 has a regularized linear-system solution, cached for repeated
+                                                                    T b
+predictor subsets. A missing value is estimated as zbuk = α bk,S + zu,S βk,S . If no supported predictor
+remains, the fixed fallback uses supported linear interpolation, carry-forward values and, when no
+history anchor exists, the target’s prefix median. All fallback inputs precede t.
+
+4.2    P ROTECTED L ONG -H ISTORY C ONSTRUCTION
+
+Let Z long be the standardized history on [t − Lt , t). The current masked suffix replaces its last W
+positions before any repair, so extending the context cannot restore artificially hidden values. Define
+the target repair region Rt = {(u, k) : t − W ≤ u < t, k ∈ T , Muk = 0}. The forecaster receives
+                                           (
+                                             zbuj ,    (u, j) ∈ Rt ,
+                                    Zuj =
+                                    e           long                                                (2)
+                                             Zuj , otherwise.
+
+
+                                                                      3
+Peer Repair and Forecast Fusion
+
+
+
+
+Table 1: Prediction procedure. Statistical fitting uses only the historical prefix; steps 2–6 use only
+information available before the origin.
+           Input: prefix data, observed long history and mask, fixed peers, horizon H.
+      1    Fit prefix scales, supported peer-regression models and the stable VAR.
+      2    Extract the most recent W observations and construct the long input with its current mask.
+      3    Estimate each missing recent target from its observed predictors using Equation 1.
+      4    Insert these estimates only in Rt and query the frozen forecaster once.
+      5    Filter the original recent observations and recursively compute the VAR forecast.
+      6    Return the fixed mean in Equation 5, transformed to target units.
+
+
+Equation 2 leaves all older gaps and all auxiliary gaps in their native form. The eleven local variables
+are retained. An appended peer with no observation in the current 192-hour window is omitted
+consistently from the compared model inputs; this decision remains fixed when extending the history.
+The model’s grouped multivariate interface then produces P = FH (Z)       e for the target variables. Its
+original weights, internal normalization and attention computation remain unchanged.
+
+4.3       S TATISTICAL F ORECAST AND F IXED F USION
+
+The statistical branch uses the standardized D-variable system
+                                zu+1 = Azu + b + εu ,           εu ∼ N (0, Q).                          (3)
+We fit a first-order VAR on originally complete adjacent prefix rows, using centered ridge regression
+with penalty 10−3 . At least 128 complete transitions are required. The fitted transition matrix is
+multiplied by min(1, 0.99/ρ(A)), where ρ denotes spectral radius, and b is recomputed from the
+transition-pair means. If S is the residual covariance, Q = 0.95S + 0.05 diag(S) + 10−6 I. The
+initial mean and covariance are estimated from complete prefix rows, with the same covariance
+regularization.
+For each origin, this branch filters the unrepaired recent W observations. If m− , C − are the predicted
+state moments and Ou indexes the observed coordinates, its exact-observation update is
+                                         −       −
+                              mu = m− + C:,O u
+                                               (CO u ,Ou
+                                                         )−1 (zu,Ou − m−
+                                                                       Ou ),
+                                          −       −            −
+                              Cu = C − − C:,O u
+                                                (CO u ,Ou
+                                                          )−1 CO u ,:
+                                                                      .                                 (4)
+Empty observation sets leave the predicted moments unchanged. The observed coordinates are
+assigned their original values and zero conditional covariance. Between observations, Equa-
+tion 3 propagates the moments. Starting from the final filtered state mt−1 , deterministic recursion
+mt−1+h = Amt−2+h + b for h = 1, . . . , H gives target forecast Gh = (mt−1+h )T . This Gaussian
+system is a working statistical approximation, with no assumption that it represents the true sensor
+process.
+The returned forecast is
+                              Ybhk = µk + sk Zbhk ,     Zb = 12 P + 12 G.                          (5)
+Equation 5 uses the same weight for every station, target, horizon and missingness panel. There is no
+learned router, outcome-dependent threshold or per-panel choice of the repair algorithm. The VAR
+state in Equation 4 is inferred from observations rather than from the peer-regression repair, giving
+the two branches distinct statistical constructions under common pre-origin information.
+Table 1 summarizes fitting and prediction for one origin. In the PM outage example, the missing
+target coordinates are estimated from reporting local and peer sensors, while both forecast branches
+retain their specified pre-origin observations.
+
+4.4       P ROPERTIES AND C OMPUTATIONAL R EQUIREMENTS
+
+Preserved information. By construction, the repaired input agrees with the supplied input on
+every originally observed cell, every auxiliary cell and every position before t − W . This follows
+directly from the two cases in Equation 2. Extending the history before inserting the masked suffix
+also preserves artificial hiding. Prefix-fitted coefficients, current observed predictors and pre-origin
+
+
+                                                        4
+Peer Repair and Forecast Fusion
+
+
+
+
+fallback values determine every inserted value. Consequently, the procedure is measurable with
+respect to the declared pre-origin information. This property concerns input validity; it is not an
+accuracy guarantee.
+
+When fusion lowers squared error. For a fixed set of scored coordinates, write eP = P − Y z ,
+eG = G − Y z , and let ⟨·, ·⟩V denote the target-balanced average inner product on those coordinates.
+The established averaging identity gives
+                      ∥ 21 (eP + eG )∥2V = 12 ∥eP ∥2V + 12 ∥eG ∥2V − 14 ∥P − G∥2V .                  (6)
+Equation 6 also holds after expectations or the same station aggregation. Fusion improves on P
+precisely when ∥eG ∥2V + 2⟨eP , eG ⟩V < 3∥eP ∥2V . Large disagreement alone is insufficient if the
+statistical branch is inaccurate. This explains why the experimental comparison must retain G, P and
+their fixed mean separately. No analogous equality is assumed for MAE.
+
+Fitting and inference cost. With N prefix rows and J distinct target–predictor subsets, direct
+regression fitting costs at most O(J(N D2 + D3 )); cached coefficients are reused. Repair evaluation
+costs O(W KD), and dense filtering costs at most O(W D3 ) plus O(HD2 ) for extrapolation. The
+primary procedure requires one frozen-model forward evaluation on the long history, together with
+these statistical operations. Its neural parameters receive no training updates. Multi-candidate
+prediction pools and LoRA training have additional costs; shared experimental caches do not remove
+their fitting or inference requirements.
+
+5     E XPERIMENTAL E VALUATION
+We evaluate the fixed procedure in Equation 5 on three Beijing panels, and examine statistical-
+component transfer on three HDB panels. All reported errors use one consistent result snapshot and the
+original future observation masks. The method and its application focus were selected retrospectively
+using these development results. Consequently, the experiments characterize performance on the
+observed cohorts and do not constitute independent confirmation of the selected method. The same
+primary definition is retained across the three Beijing panels.
+
+5.1   DATA , I NFORMATION AND M ETRICS
+
+Beijing sensor forecasting. The Beijing Multi-Site Air Quality dataset contains hourly measure-
+ments from 12 stations between March 2013 and February 2017 (Chen, 2017). We predict PM2.5
+and PM10 from eleven numerical station variables and six prefix-selected peer PM channels. All
+statistical fitting uses the first 7012 hours of each augmented station series. Evaluation origins follow
+the 60% temporal boundary, with the current 192-hour context entirely after that boundary. The
+primary and matched long-history controls use 8192 pre-origin hours. Related measurements use the
+provider’s aligned hourly clock; their availability before the origin is assumed, without a separate
+publication-delay model.
+Natural-outage origins require both PM targets to have been continuously missing for at least six
+hours. Origins occur at outage ages 6 + 24k hours, with nonoverlapping 24-hour forecast intervals
+within a station. Each target must have at least twelve observed future values to be scored. The
+resulting panel contains 45 windows across 12 stations; 32 additional candidate origins lack sufficient
+observed future labels. This ascertainment can favor events that recover observations sooner. Artificial
+outages use four complete histories per station, selected at evenly spaced chronological positions,
+and hide only the last 24 hours of the two targets. The 138-window horizon-96 panel retains original
+target missingness and requires at least 48 observed future values per target. Table 2 summarizes
+these populations and the HDB component study.
+
+HDB component-transfer population. The second source is Singapore HDB carpark availabil-
+ity (Housing & Development Board, 2026). Hourly snapshots cover 1 June–26 July 2025, yielding
+1344 time positions and 2005 C-type carpark series. The first 336 hours supply fitting statistics
+and peer selection; the next 336 hours supply the development cohort. All eighteen prefix-eligible
+carparks with natural events in that development period are retained. The remaining two 336-hour
+intervals are unscored. Natural gaps, missing records, stale observations and collection failures are
+
+
+                                                   5
+Peer Repair and Forecast Fusion
+
+
+
+
+Table 2: Evaluation populations. Windows are prediction tasks, and sites within a source are
+correlated. All panels are developmental. The HDB study evaluates available statistical-component
+variants, with no recorded result for the exact peer-regression primary.
+                  Source      Panel                       Sites      Windows     Horizon (h)
+                  Beijing     Natural target outage         12             45            24
+                  Beijing     Artificial target outage      12             48            24
+                  Beijing     Original missing history      12            138            96
+                  HDB         Natural availability gap      18             19            24
+                  HDB         Artificial target outage      18             32            24
+                  HDB         Native hourly grid            18             32            24
+
+
+
+distinguished, with technical failures excluded from the natural-missingness interpretation. A target
+is accompanied by six prefix-selected peers. Long histories contain the available 349–586 pre-origin
+hours. The exact Beijing peer-regression method has no recorded HDB evaluation; the Gaussian
+repair, fixed fusion and native controls permit a narrower component-transfer comparison.
+                                      P
+Evaluation metric. Let nk =               h Vhk and let sk be the original-observation prefix scale.   We
+compute
+
+                                              1 X 1         X        |Ybhk − Yhk |
+                            MAE(Yb , Y ) =                                         ,
+                                              K  nk                        sk
+                                                  k       h:Vhk =1
+
+                                           1 X 1            X        (Ybhk − Yhk )2
+                            MSE(Yb , Y ) =                                          .                  (7)
+                                           K  nk                           s2k
+                                                  k       h:Vhk =1
+
+Equation 7 averages targets within a window, then windows within each site, and finally sites with
+equal weights. Missing future values are never completed to manufacture labels. MAE is primary, and
+both metrics are retained for every comparison. Relative change is 100(method/reference − 1), so
+negative values denote lower error. We report paired site directions and leave-one-site-out ranges as
+descriptive sensitivity analyses, without treating them as confidence intervals or converting repeated
+development comparisons into significance claims.
+
+5.2   C OMPARATORS AND F ITTING B UDGETS
+
+The frozen backbone is the same 120M-parameter Chronos-2 checkpoint throughout (Ansari et al.,
+2025). Native controls retain missing values and use either 192 hours or the available long context.
+Separate controls retain only the target variables, providing an explicit input-scope comparison. VAR
+uses the same fitted statistical branch as the primary. Native-plus-VAR controls hold both the history
+and fusion weight fixed while omitting target repair.
+Repair controls include LOCF, linear interpolation, seasonal copying, multivariate KNN, SAITS,
+TimeMixer++ and MoTM. The neural imputers use two shared 17-variable Beijing fits, each trained
+on 512 masked prefix windows for 50 epochs, with batch size 16 and seed zero. MoTM retains its
+released weights and its fixed observed-context adaptation procedure. Short-history comparisons
+include each target-only repair and the mean/median of the seven repaired predictions plus native
+prediction. Additional all-variable repairs and statistical regression variants are retained in the
+supplement. A fixed Gaussian control estimates prefix means and regularized covariance and applies
+the conditional mean independently at each time. The same long-history and VAR-fusion factors are
+applied to Gaussian, KNN and ridge repairs.
+Two LoRA controls add 1,206,912 parameters to 97 Chronos-2 projections, with rank eight and
+scaling parameter sixteen. Natural-history and corruption-trained versions share initialization, source
+labels, update order and 1728 single-task updates, split equally between Beijing and HDB. They use
+standardized smooth L1 loss with parameter 0.01, AdamW learning rate 10−5 , weight decay 0.01 and
+gradient-norm limit one. Evaluation uses the final update. These adapted controls have a different
+training budget from the statistical primary; their stronger results are still retained. Appendix A gives
+the source boundaries and additional implementation details.
+
+
+                                                      6
+Peer Repair and Forecast Fusion
+
+
+
+
+Table 3: Beijing results. Each row has one fixed definition across panels. Long histories contain 8192
+hours; unqualified inputs include the available local and peer variables. “Targets only” changes the
+variables supplied to the forecaster. Values are standardized MAE/MSE; lower is better. Bold marks
+the best value in each displayed column.
+                                           Natural, H = 24 Artificial, H = 24 Original, H = 96
+         Method                             MAE       MSE MAE            MSE MAE          MSE
+         Native, 192 h                     0.5302   0.4359   0.8300   1.2501   0.8633    1.6678
+         Native, long                      0.4848   0.3593   0.6665   0.8567   0.7965    1.4456
+         Native, long, targets only        0.5351   0.4406   0.6786   1.0608   0.7898    1.4165
+         VAR                               0.4336   0.3037   0.6628   0.8248   0.8740    1.3634
+         Native, long + VAR                0.4128   0.2638   0.6354   0.7795   0.8098    1.3269
+         Native, long, targets + VAR       0.4347   0.2914   0.6170   0.7453   0.8052    1.3130
+         Target KNN, 192 h + VAR           0.3970   0.2644   0.6648   0.9118   0.8342    1.4266
+         Gaussian repair, long             0.3918   0.2524   0.6289   0.8660   0.7966    1.4498
+         Gaussian repair, long + VAR       0.3882   0.2451   0.6310   0.8110   0.8100    1.3290
+         KNN repair, long + VAR            0.3887   0.2441   0.6353   0.8286   0.8097    1.3293
+         Local ridge, long, targets only   0.5156   0.4371   0.5076   0.5421   0.7963    1.4325
+         Corruption-trained LoRA, 192 h    0.5067   0.4199   0.8151   1.3787   0.8573    1.5938
+         Peer Repair and Fusion            0.3881   0.2447 0.6311     0.8118 0.8099      1.3289
+
+
+
+
+5.3   M AIN R ESULTS ON NATURAL S ENSOR O UTAGES
+
+Table 3 compares fixed methods across all three Beijing panels. On natural outages, Peer Repair
+and Fusion reaches MAE/MSE 0.388053/0.244688. Relative to the long native forecaster, the
+reductions are 19.96% and 31.90%. The matched native-plus-VAR comparison isolates the effect of
+adding target repair under the same long history and statistical forecast: MAE/MSE decrease from
+0.412755/0.263833 by 5.98%/7.26%. Against short target-KNN repair with the same VAR fusion,
+reductions are 2.25%/7.46%.
+The nearest repair controls substantially narrow the interpretation. Gaussian repair with the same long
+history and VAR obtains 0.388168/0.245143, only 0.03%/0.19% above the primary. The primary
+wins both metrics at five of twelve stations against this Gaussian control, and its leave-one-station-out
+MAE direction can reverse. Long KNN repair with VAR obtains 0.388676/0.244071: its MAE is
+higher, but its MSE is lower. The data therefore support a useful class of simple repair-and-fusion
+procedures in this cohort, with no established substantial superiority of peer ridge over Gaussian
+repair.
+The improvement over native-plus-VAR is less sensitive to station composition. The primary improves
+MAE at nine stations and MSE at eight. After omitting each station in turn, its relative changes range
+from −7.52% to −4.91% for MAE and from −9.69% to −5.40% for MSE. Against short KNN-
+plus-VAR, the corresponding ranges are [−3.96%, −1.42%] and [−9.24%, −6.17%]. These ranges
+describe the observed station population; its twelve stations remain one related source. Appendix B
+reports the individual station results.
+
+5.4   H ISTORY, R EPAIR AND F USION E FFECTS
+
+Figure 2 crosses two history lengths, target repair and fixed VAR fusion on the same natural-
+outage windows. Extending native history from 192 to 8192 hours changes MAE/MSE from
+0.530193/0.435904 to 0.484839/0.359322, a reduction of 8.55%/17.57%. Thus a short native input is
+an insufficient reference for a method that can read the longer history.
+At the long history, peer repair alone obtains 0.394116/0.254031, while its fixed fusion obtains
+0.388053/0.244688. The repair operation already accounts for much of the natural-outage im-
+provement, and fusion adds a smaller increment. Gaussian repair alone also performs well at
+0.391787/0.252425, reducing MAE/MSE by 19.19%/29.75% relative to the same long native input.
+These comparisons separate additional historical information, target repair and statistical forecast
+combination. They do not attribute all of the gain to a learned decision mechanism.
+
+
+                                                    7
+Peer Repair and Forecast Fusion
+
+
+
+
+                          (a) Absolute error                                                          (b) Squared error
+
+
+Standardized MAE
+
+
+
+
+                                                                            Standardized MSE
+                   0.50                                                                        0.40
+
+
+                                                                                               0.35
+                   0.45
+                                                                                               0.30
+
+                   0.40
+                                                                                               0.25
+
+                           192 h                           8192 h                                      192 h                            8192 h
+                                     Forecaster history                                                           Forecaster history
+
+                                       Native        Peer repair          Native + VAR                         Peer repair + VAR
+
+
+
+Figure 2: Component comparison on the 45 natural-outage Beijing windows. Each line retains its
+repair and fusion rule while changing only the history supplied to Chronos-2. The repair region and
+VAR filtering window remain 192 hours, and prefix-fitted parameters are unchanged. The plot reports
+observed station-macro errors; it does not show independent replicate uncertainty.
+
+
+Table 4: HDB component-transfer results. Long histories use all available pre-origin values up to the
+fixed context limit. The exact peer-regression primary is unmeasured on HDB; Gaussian rows are
+separately defined component variants. Bold marks the lowest displayed error.
+                                                                   Natural gaps Artificial outage                      Native grid
+                            Method                                 MAE MSE MAE              MSE                        MAE MSE
+                            Native, 192 h                      1.2617    4.1144                  0.6863     1.2566    0.4657   0.6436
+                            Native, long                       1.2006    3.9136                  0.6796     1.3017    0.4488   0.6405
+                            Native, long, target only          1.1782    3.8878                  0.6789     1.3722    0.4521   0.6482
+                            VAR                                1.7269    4.9909                  1.2949     3.1104    1.1826   2.7344
+                            Native, long + VAR                 1.4071    3.9467                  0.8507     1.3853    0.7319   1.0201
+                            Gaussian repair, long              1.4344    4.7064                  0.9145     2.1494    0.4483   0.6424
+                            Gaussian repair, long + VAR        1.5465    4.5873                  1.0598     2.3915    0.7324   1.0205
+                            Median repair, long, target only   1.2638    4.0122                  1.2083     2.3544    0.4528   0.6495
+                            Nine-candidate median, 192 h       1.2435    4.0190                  0.8211     1.6246    0.4727   0.6483
+                            Corruption-trained LoRA, 192 h     1.2330    3.9595                  0.6432     1.1200    0.4690   0.6497
+
+
+
+
+Artificial outages and longer horizons produce different rankings. On artificial target outages, the
+primary reaches 0.631104/0.811784. Local ridge repair followed by long target-only forecasting is
+substantially better at 0.507640/0.542087. Relative to long native-plus-VAR, the primary has slightly
+lower MAE and higher MSE. At horizon 96, the primary obtains 0.809889/1.328908, while long
+target-only native forecasting obtains the lower MAE 0.789801 and its VAR fusion obtains the lower
+MSE 1.313030. The primary remains fixed in these comparisons; the stronger row in each panel is
+not substituted into its definition.
+
+5.5                  T RANSFER OF S TATISTICAL C OMPONENTS TO HDB
+
+Table 4 reports the three HDB panels without filling in an unavailable result for the peer-regression
+primary. Gaussian target repair and its fixed VAR fusion instantiate the available statistical compo-
+nents with the same fitting-only data boundary. On natural gaps, long native target-only forecasting
+obtains 1.178178/3.887765. Long Gaussian repair with peers obtains 1.434379/4.706353, and VAR
+fusion further raises MAE to 1.546516. Even the best-MAE newly evaluated long repair, target-only
+median repair at 1.263786/4.012167, remains 7.27%/3.20% above the native target-only control.
+On HDB artificial outages, corruption-trained LoRA gives 0.643229/1.120020, outperforming the
+336-hour native control by 4.08%/7.42%. This adapted model does not exceed the strongest native
+control on natural gaps. On the native-grid panel, Gaussian repair without fusion is close to long
+native forecasting, while the VAR branch has considerably higher error. The outcome is consistent
+
+
+                                                                        8
+Peer Repair and Forecast Fusion
+
+
+
+
+with the component-error requirement in Equation 6; it does not identify a single cause of the cross-
+source difference. The HDB results constrain claims about transferring a Beijing repair-and-fusion
+design to other applications.
+
+
+6    D ISCUSSION
+
+The main empirical result is a reduction in forecasting error after naturally missing PM histories when
+related observations, target-only statistical repair and a long model context are combined. Equal
+fusion adds a smaller improvement, and a Gaussian replacement for peer ridge performs nearly
+identically. This places the result at the level of a concrete applied forecasting procedure. Ridge
+regression, Gaussian conditioning and forecast averaging are established components, and the present
+evidence does not isolate a new statistical principle from their combination.
+The application scope and primary method were chosen using repeatedly examined development
+data. Missing future labels restrict scoring to observed outcomes, and the event eligibility conditions
+exclude prolonged gaps with insufficient future support. Source, calendar period, label observability
+and missingness differ across the natural and artificial panels, preventing a causal attribution of their
+ranking differences to missingness alone. The exact primary has been evaluated on one source and
+one frozen backbone; the HDB component study is smaller and does not evaluate that exact procedure.
+Exclusion of all evaluation sources from foundation-model pretraining has not been established.
+Independent data with frozen eligibility and fitting rules are necessary to assess generalization of the
+selected procedure.
+
+
+7    C ONCLUSION
+
+Peer Repair and Fusion combines prefix-fitted peer regression, protected long-history input and fixed
+statistical forecast fusion. On the studied Beijing natural-outage cohort, it reduces MAE/MSE by
+5.98%/7.26% relative to native prediction with the same long history and VAR branch. Comparable
+Gaussian repair, stronger controls on artificial outages and longer horizons, and unfavorable HDB
+component transfer delimit the result. The resulting method is fully specified and executable; its
+predictive advantage is currently supported for the observed natural-outage sensor cohort.
+
+
+R EFERENCES
+Abdul Fatir Ansari, Oleksandr Shchur, Jaris Küken, Andreas Auer, Boran Han, Pedro Mercado,
+  Syama Sundar Rangapuram, Huibin Shen, Lorenzo Stella, Xiyuan Zhang, Mononito Goswami,
+  Shubham Kapoor, Danielle C. Maddix, Pablo Guerron, Tony Hu, Junming Yin, Nick Erick-
+  son, Prateek Mutalik Desai, Hao Wang, Huzefa Rangwala, George Karypis, Yuyang Wang, and
+  Michael Bohlke-Schneider. Chronos-2: From univariate to universal forecasting. arXiv preprint
+  arXiv:2510.15821, 2025. URL https://arxiv.org/abs/2510.15821.
+
+J. M. Bates and C. W. J. Granger. The combination of forecasts. Operational Research Quarterly, 20
+   (4):451–468, 1969. doi: 10.1057/jors.1969.103. URL https://www.tandfonline.com/
+   doi/abs/10.1057/jors.1969.103.
+
+Song Chen.   Beijing multi-site air quality. UCI Machine Learning Repository,
+  2017. URL https://archive.ics.uci.edu/dataset/501/beijing+multi+
+  site+air+quality+data.
+
+Wenjie Du, David Côté, and Yan Liu. SAITS: Self-attention-based imputation for time series.
+ Expert Systems with Applications, 219:119619, 2023. doi: 10.1016/j.eswa.2023.119619. URL
+ https://doi.org/10.1016/j.eswa.2023.119619.
+
+Wenjie Du, Jun Wang, Linglong Qian, Yiyuan Yang, Zina Ibrahim, Fanxing Liu, Zepu Wang,
+ Haoxin Liu, Zhiyuan Zhao, Yingjie Zhou, Wenjia Wang, Kaize Ding, Yuxuan Liang, B. Aditya
+ Prakash, and Qingsong Wen. TSI-Bench: Benchmarking time series imputation. arXiv preprint
+ arXiv:2406.12747, 2024. URL https://arxiv.org/abs/2406.12747.
+
+
+                                                   9
+Peer Repair and Forecast Fusion
+
+
+
+
+Arthur E. Hoerl and Robert W. Kennard. Ridge regression: Biased estimation for nonorthogonal prob-
+  lems. Technometrics, 12(1):55–67, 1970. doi: 10.1080/00401706.1970.10488634. URL https:
+  //www.tandfonline.com/doi/abs/10.1080/00401706.1970.10488634.
+Housing & Development Board. Carpark availability. data.gov.sg, 2026. URL https://data.
+  gov.sg/datasets/d_ca933a644e55d34fe21f28b8052fac63/view. Hourly his-
+  torical snapshots for June–July 2025.
+Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang,
+  and Weizhu Chen. LoRA: Low-rank adaptation of large language models. arXiv preprint
+  arXiv:2106.09685, 2021. URL https://arxiv.org/abs/2106.09685v2.
+Anders Krogh and Jesper Vedelsby. Neural network ensembles, cross validation, and ac-
+  tive learning. In Advances in Neural Information Processing Systems, volume 7, pp.
+  231–238, 1994. URL https://proceedings.neurips.cc/paper_files/paper/
+ 1994/file/b8c37e33defde51cf91e1e03e51657da-Paper.pdf.
+Marine Le Morvan, Julie Josse, Erwan Scornet, and Gael Varoquaux. What’s a good imputa-
+ tion to predict with missing values? In Advances in Neural Information Processing Systems,
+ volume 34, 2021. URL https://proceedings.neurips.cc/paper/2021/hash/
+ 5fe8fdc79ce292c39c5f209d734b7206-Abstract.html.
+Etienne Le Naour, Tahar Nabil, and Ghislain Agoua. MoTM: Towards a foundation model for time
+  series imputation based on continuous modeling. arXiv preprint arXiv:2507.13207, 2025. URL
+  https://arxiv.org/abs/2507.13207.
+Jing Peng, Meiqi Yang, Qiong Zhang, and Xiaoxiao Li. S4M: S4 for multivariate time series forecast-
+   ing with missing values. In The Thirteenth International Conference on Learning Representations,
+   2025. URL https://proceedings.iclr.cc/paper_files/paper/2025/hash/
+   7b2f0758334389b8ad0665a9bd165463-Abstract-Conference.html.
+Shiyu Wang, Jiawei Li, Xiaoming Shi, Zhou Ye, Baichuan Mo, Wenze Lin, Shengtong Ju, Zhixuan
+  Chu, and Ming Jin. TimeMixer++: A general time series pattern machine for universal predictive
+  analysis. In The Thirteenth International Conference on Learning Representations, 2025. URL
+  https://openreview.net/forum?id=1CLzLXSFNn.
+
+
+
+
+                                               10
+Peer Repair and Forecast Fusion
+
+
+
+
+A    F ITTING D ETAILS AND C OMPARISON D EFINITIONS
+Primary procedure. The eleven Beijing variables are PM2.5, PM10, SO2, NO2, CO, O3, tem-
+perature, pressure, dew point, rainfall and wind speed. Wind direction and calendar identifiers are
+excluded. Three other stations are selected for each PM target by absolute jointly observed prefix
+correlation. All current target estimates use observed predictors, with the 128-row support threshold
+and 10−3 ridge penalty in Equation 1. The forecaster reads prefix-standardized float32 inputs; output
+scoring retains the same prefix units. Original observations are copied directly into every model-input
+representation. No additional normalization, attention mask or learned embedding is introduced by
+the primary procedure.
+The VAR fits originally complete adjacent rows in the same first-7012-hour prefix. The twelve stations
+provide 4052–5990 complete transitions each. Spectral-radius stabilization, covariance regularization,
+exact-observation filtering and equal output fusion are fixed as described in Section 4. The forecaster
+reads the long history, whereas the regression repair and VAR state estimation use the recent 192-hour
+window. This asymmetric allocation is part of the method definition and is shared by the matched
+controls.
+
+Gaussian and local-regression controls. Let m and o index missing and observed coordinates at
+one time. The static Gaussian repair is µm + Σmo Σ−1 oo (xo − µo ), with prefix-fitted moments and the
+same covariance shrinkage as the statistical system. It conditions independently at each time, without
+VAR transitions. Local ridge restricts regression predictors to the original eleven variables. In the
+“targets only” forecasting control, the repair may still have used local or peer observations; only the
+variables supplied directly to the frozen forecaster change. Consequently, target-only forecasting is
+not a no-covariate-information experiment.
+
+Neural imputation. SAITS and TimeMixer++ use shared fits on 512 windows of length 192 drawn
+from the twelve augmented training prefixes, with stride 24. Training masks span random points,
+independent blocks, synchronous blocks, staggered correlated blocks, value-dependent missingness
+and mixed outages, with rates 0.1–0.5 and seeds 1101–1103. Each model trains for 50 epochs
+with batch size sixteen and initialization seed zero. SAITS uses two layers, model dimension 64,
+feed-forward dimension 128 and four heads. The implementations use their imputation objectives
+and are not jointly optimized through Chronos-2. MoTM retains its released neural parameters and
+the fixed context-adaptation settings, including ridge coefficient 0.5. All compared repairs preserve
+original observations and share the fixed finite-value fallback where needed.
+
+Low-rank adaptation. The two LoRA controls augment every self-attention query, key, value
+and output projection and the output-patch projection. The down-projection uses Kaiming-uniform
+initialization and the up-projection is zero, with seed 7402. Beijing supplies 864 source tasks from
+96 histories; their training futures end no later than hour 7012 and their preprocessing prefix ends
+at hour 3506. HDB uses only the first 336 hours and anchors 192, 216, 240, 264, 288 and 312.
+HDB preprocessing statistics and peers use that available 336-hour training set, rather than a strictly
+preceding subset for each source anchor. Both adaptations receive the same future labels. Corruption
+training adds fixed target-only, target-plus-peer and all-variable outages of ages 6, 24 and 54 hours
+while retaining native missingness. The source pool has 1836 tasks from 204 histories; a fixed source-
+balanced order selects 864 updates per source, with 1728 updates in total. No current evaluation
+future is used for fitting.
+Table 5 retains individual imputers and prediction-pool comparisons, with no substitution of a
+method chosen from each panel’s future outcomes. The complete supplementary CSV includes
+1275 panel–method rows: 266 fixed output definitions on each Beijing panel and 159 on each HDB
+panel. Many outputs vary history length, variable scope or a fixed combination and are not distinct
+learning algorithms. The accompanying site-level CSV permits reconstruction of each reported
+macro-average.
+
+B    S TATION -L EVEL NATURAL -O UTAGE R ESULTS
+Table 6 reports the primary method at each Beijing station and its paired relative change from the
+long-native-plus-VAR control. This control uses the same auxiliary information, long history, VAR
+
+
+                                                  11
+Peer Repair and Forecast Fusion
+
+
+
+
+Table 5: Additional Beijing comparisons. The seven imputation rows repair only the two target
+variables in the 192-hour input; auxiliary values and missingness remain unchanged. The eight-
+candidate mean and median include those seven forecasts and native prediction. Regression and
+LoRA controls use the input definitions described in the text. Lower standardized MAE/MSE is
+better; bold marks the best displayed value.
+                                          Natural, H = 24 Artificial, H = 24 Original, H = 96
+           Method                          MAE       MSE MAE            MSE MAE          MSE
+           LOCF                           0.6548   0.6763   1.0132   1.7746   0.8844   1.7592
+           Linear interpolation           0.6525   0.6677   1.0132   1.7746   0.8856   1.7636
+           Seasonal lag                   0.5515   0.5482   0.8531   1.4398   0.8838   1.7505
+           Multivariate KNN               0.4370   0.3171   0.7015   1.0882   0.8766   1.7355
+           SAITS                          0.4536   0.3248   0.6802   0.9918   0.8806   1.7555
+           TimeMixer++                    0.5272   0.4876   0.8922   1.4330   0.8890   1.7696
+           MoTM                           0.6391   0.6449   0.9486   1.6389   0.8872   1.7604
+           Eight-candidate mean           0.5156   0.3950   0.8052   1.1213   0.8786   1.7309
+           Eight-candidate median         0.4981   0.3751   0.7830   1.1428   0.8799   1.7457
+           Peer ridge                     0.4306   0.3126   0.6921   1.0691   0.8738   1.7218
+           Peer ridge + AR residual       0.4381   0.3178   0.6922   1.0676   0.8806   1.7509
+           Peer ridge + linear residual   0.4855   0.3728   0.7370   1.1795   0.8811   1.7511
+           Natural-history LoRA           0.5226   0.4537   0.8506   1.4419   0.8722   1.6702
+           Corruption-trained LoRA        0.5067   0.4199   0.8151   1.3787   0.8573   1.5938
+
+
+
+parameters and fusion coefficient; it omits peer-regression target repair. Site scores average the
+available windows within the site, followed by an equal-site macro-average. A site with more eligible
+windows therefore receives no additional weight in the reported overall result.
+
+
+Table 6: Natural-outage station results for Peer Repair and Fusion. Relative changes compare with
+long native prediction plus VAR. Negative changes denote lower error. The twelve stations are related
+observations from one source.
+                     Station               MAE      MSE      ∆MAE (%)     ∆MSE (%)
+                     Aotizhongxin         0.2974   0.0962        -19.34       -33.57
+                     Changping            0.4616   0.3500         -7.78       -15.28
+                     Dingling             0.3868   0.1930         -3.26       -15.54
+                     Dongsi               0.3756   0.2278         -8.89        -7.63
+                     Guanyuan             0.4351   0.2516        +12.08       +27.37
+                     Gucheng              0.5523   0.5210         -6.18        -4.55
+                     Huairou              0.3603   0.2024        -15.70       -17.49
+                     Nongzhanguan         0.2624   0.1322         -5.78        +2.46
+                     Shunyi               0.4823   0.4131         +2.93       +10.97
+                     Tiantan              0.3471   0.1761         +1.11        +2.98
+                     Wanliu               0.3298   0.1603         -8.06       -13.51
+                     Wanshouxigong        0.3660   0.2126        -12.54       -25.85
+
+
+
+
+C    HDB O BSERVATION S EMANTICS AND R ESERVED P ERIODS
+Hourly HDB values represent the latest eligible report of available C-type spaces. Each request
+uses the grid time minus one minute; snapshots and carpark updates must fall within the preceding
+hour. Raw values, capacities, update times and record ages are retained, with separate status for
+absent, stale, conflicting or malformed records and technical failures. An eligible report need not be a
+physical measurement made exactly on the hour.
+The 1344-hour collection contains 2,694,720 carpark–hour cells. Fitting uses [0, 336) and devel-
+opment uses [336, 672); [672, 1008) and [1008, 1344) remain unscored. Nineteen natural-gap tasks
+from the eighteen eligible carparks support the reported component-transfer comparison. Their small
+number and future-observation requirements constrain inference to this cohort.
+
+
+                                                     12
+

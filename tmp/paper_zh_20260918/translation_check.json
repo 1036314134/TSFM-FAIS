@@ -1,0 +1,23 @@
+{
+  "tables": [
+    {
+      "table": "main_rows.tex",
+      "matching_rows": 13
+    },
+    {
+      "table": "hdb_rows.tex",
+      "matching_rows": 13
+    },
+    {
+      "table": "baseline_rows.tex",
+      "matching_rows": 14
+    },
+    {
+      "table": "station_rows.tex",
+      "matching_rows": 12
+    }
+  ],
+  "matched_labels": 26,
+  "matched_references": 13,
+  "new_experiments": false
+}

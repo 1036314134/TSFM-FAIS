@@ -1,0 +1,20 @@
+# Word template contract
+
+Reference: E:/ZMY/Github/TSFM-FAIS/docs/3-B-FAIS-面向时间序列基础模型的预测感知块级填补算法选择-0828.docx
+SHA-256: 6731cee5a0b433513f176613634f1198dc4504c41bd95023aade3e85649274b7.
+Native Word reference render: reference.pdf, 25 pages; all page patterns inspected.
+The packaged renderer was attempted and reported missing soffice.exe. Use the installed Microsoft Word automation instance, read-only, for faithful PDF export, followed by Poppler PNG rendering. Do not save the retained reference or modify Word defaults.
+
+Page system: retain the exact one-section sectPr. A4 11906 by 16838 twips; top/bottom 1440, left/right 1800; header 851, footer 992; gutter 0; one column; line grid pitch 312. Header/footer parts are empty and remain byte-identical. No new page numbering or header rules.
+
+Typography: retain styles.xml and docDefaults exactly. Normal style a uses Times New Roman for Latin and 宋体 for Chinese, 24 half-points (12 pt), justified, first-line 420 twips (21 pt). Ordinary paragraphs additionally use the actual reference body paragraph properties: widowControl=true, line=300 auto (1.25), overriding Normal's line=360. Title uses body child 0: centered, 16 pt, line=300, firstLine=0. Heading 1 uses style 1, 16 pt bold, left, 6 pt before, line=300, keepNext/keepLines, firstLine=0. Heading 2 uses style 2, 15 pt bold, 3 pt before, otherwise analogous. Inline paragraph leads retain bold in body paragraphs. Source heading-3 style is retained but need not be invoked for inline leads.
+
+Stable source locators in word/document.xml body: 0 title; 1 abstract heading; 2 abstract/body; 3 keywords; 4 main heading; 11 subsection; 19 display equation; 37 inline figure; 38 figure caption; 51 table caption; 52 seven-column results table; 119 two-column settings table; 153 five-column table; 81 reference heading; 82 bibliography paragraph. Bibliography actually uses Normal, firstLine=0 and English language, not unused custom style 12. Display equations are native OMML, centered, firstLine=0, keepLines. Figure captions are centered 10.5 pt, line=300, no indent; table captions add keepNext.
+
+Tables: retain the source table-level XML pattern. Width 8306 twips, centered, fixed layout, black single 0.5 pt outside and inside borders; table cell margins top/bottom45,left/right65; cell override top/bottom55,left/right70; vertical centered; no fill; repeat bold header; rows cannot split. Seven-column data uses 9 pt, five-column 9.5 pt and two-column 10.5 pt, as in corresponding source components. Adapt column widths to the new semantic fields while retaining total width. First label column left aligned, numbers centered, header centered; retain original bold best-result cells. Never shrink body fonts to match a page count.
+
+Content: replace the old manuscript body with the latest complete Chinese manuscript, including its current abstract, seven main sections, two figures, six tables, native editable equations, thirteen references and three appendices. Add a keyword paragraph using the source component. The author placeholder is omitted because the retained title block has no author slot. Historical research narrative, old diagrams and old references are not reused as content.
+
+Preserve-only package parts: styles, theme, numbering, settings, fonts, empty header/footer, footnote/endnote separators and existing media. Reuse a copy of the reference package and change only document.xml, document relationships and core/app metadata as necessary; add the current figure media. Existing unused package parts remain intact. Verify all preserve-only parts byte-for-byte and confirm reference SHA unchanged.
+
+Fidelity gates: native Word export, all final pages visually checked; paragraph-role pPr matches source exactly; same section geometry and styles; no unknown style references, clipped text, orphan captions, broken equations, stale reference text or blank trailing pages; current table values must match the Chinese source data cells exactly. Final delivery is the DOCX only, under docs.

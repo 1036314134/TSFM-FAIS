@@ -1,5 +1,7 @@
 # TSFM-FAIS：面向冻结时序预测器的填补算法选择
 
+2026-09-18 论文更新：[当前论文 PDF](docs/iclr2027/tsfm_fais_iclr2027.pdf)与[LaTeX 主文件](docs/iclr2027/tsfm_fais_iclr2027.tex)已统一为 **Peer Repair and Forecast Fusion for Missing Sensor Histories**。主方法固定采用同伴序列 ridge 目标修复、长历史 Chronos-2 预测和 VAR 等权融合；北京自然缺失面板相对同长历史原生预测与相同 VAR 融合的 MAE/MSE 降低 5.98%/7.26%。文稿包含三个北京面板、HDB 组件迁移对照和完整适用范围；[统一结果](docs/iclr2027/current_results/all_panel_results.csv)保留全部 1,275 个面板—方法记录。以下内容为早期研究与工程说明。
+
 2026-09-13 更新：主指标为训练前缀标准化后的下游预测 MAE/MSE，填补误差仅作辅助。完整源历史预测教师监督的三候选方法已完成冻结确认：9 个新家族、18 条序列、373 个窗口，其中 164 个窗口保留原生历史缺失。该方法在 Chronos-2 和 TimesFM 2.5 上均未复现开发阶段相对七候选预测中位数的优势；原始确认结果及范围见 [研究判断](docs/iclr2027/R5_RESEARCH_DECISION_20260913.md)。当前没有已验证的普遍方法优势或投稿就绪结论。
 
 当前方法以 21 个历史/填补特征和 12 个当前预测响应特征进行成本敏感配对排序，两个预测器均组合排名前三的预测；决策前需要七个候选预测。源教师使用人工遮盖之前的完整历史，部署时不读取当前未来或隐藏历史。预算研究已扩展到三个预测器、三个数据集各四个历史，共 12 个历史和 72 个掩码任务，详见[跨历史预算检查](docs/iclr2027/R5_BUDGET_ORIGIN_EXTENSION.md)；目标/其他变量交叉替换仍限定于最初三个历史。[组合目标诊断](docs/iclr2027/R5_TRIPLE_OBJECTIVE_DIAGNOSTIC.md)进一步区分个体排序、组合误差及使用额外信息的理想参照。方法和已完成证据见[新版英文工作稿](docs/iclr2027/tsfm_fais_r5_draft.tex)，编译及版面核查状态见[运行记录](docs/iclr2027/R4_AUTONOMOUS_CONTINUATION.md)。前期组合器及历史反馈保存在[早期 R5 工作记录](docs/iclr2027/R5_BLOCK_COMPOSER_PROGRESS.md)。

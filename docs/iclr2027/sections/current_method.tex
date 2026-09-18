@@ -1,0 +1,108 @@
+\section{Problem Setting}
+\label{sec:setting}
+
+Let $t$ be the forecast origin, $D$ the number of available local and peer variables, and $\mathcal T$ the set of $K$ target variables. The history $O_{<t}$ contains observed values and missing entries, with mask $M_{uj}=1$ exactly when variable $j$ was observed at time $u<t$. An earlier fitting prefix ends at $t_0<t$. For each variable, its observed-prefix mean $\mu_j$ and population standard deviation $s_j$ define $z_{uj}=(O_{uj}-\mu_j)/s_j$. A scale at most $10^{-12}$ is replaced by one. Missing entries remain missing after this transformation.
+
+The frozen point-forecasting interface $F_H$ returns the 0.5-quantile prediction for the next $H$ steps. The procedure may fit statistical parameters on the prefix and read observations before $t$. It cannot use current artificially hidden values, measured future peer values or the future targets $Y\in\mathbb R^{H\times K}$. A future observation mask $V$ is available only for scoring. This setting permits target-prefix statistical fitting and therefore does not describe a completely training-free forecasting pipeline.
+
+\section{Peer Repair and Forecast Fusion}
+\label{sec:method}
+
+Figure~\ref{fig:method} shows the procedure. We use a recent repair window of $W=192$ hours and a forecaster context of $L_t=\min(8192,t)$ available hourly positions. Regression coefficients and VAR parameters are fitted on the same historical prefix. The recent observation mask determines which regression predictors are usable; it does not change the peer-selection rule or the fusion weight.
+
+\begin{figure}[t]
+\centering
+\input{figures/current_method.tex}
+\caption{\method{}. Prefix observations fit the peer regressions and VAR. At prediction time, regressions fill only missing target cells in the most recent 192 hours. Earlier history and auxiliary entries retain their original values or missingness. The repaired long history supplies one frozen Chronos-2 forecast. A second branch filters the unrepaired recent observations with the VAR and forecasts its final state. The two point predictions receive fixed equal weights. All input observations precede the forecast origin.}
+\label{fig:method}
+\end{figure}
+
+\subsection{Prefix-Fitted Peer Regression}
+
+For each PM target, we select three other stations by absolute correlation with that target using jointly observed fitting-prefix values. The six selected PM channels augment the original eleven numerical variables. The peer identities are fixed before evaluation. For a missing target $k$ at time $u$, let $\mathcal S_{uk}$ contain the other variables actually observed at that time. Estimated entries are never fed back as observations to the regression.
+
+For each distinct pair $(k,\mathcal S)$, let $\mathcal V_{k,\mathcal S}$ be prefix rows on which the target and all predictors in $\mathcal S$ are observed. At least 128 such rows are required. If support is insufficient, we remove the predictor with the smallest absolute prefix correlation with $k$ until sufficient support is available. Correlation ties are resolved by the fixed variable order. With $n=|\mathcal V_{k,\mathcal S}|$, we fit
+\begin{equation}
+ (\widehat\alpha_{k,\mathcal S},\widehat\beta_{k,\mathcal S})
+ =\arg\min_{\alpha,\beta}\frac1n\sum_{u\in\mathcal V_{k,\mathcal S}}
+ (z_{uk}-\alpha-z_{u,\mathcal S}^{\mathsf T}\beta)^2
+ +\lambda\|\beta\|_2^2,\qquad \lambda=10^{-3}.
+ \label{eq:ridge}
+\end{equation}
+The intercept is unpenalized. Equation~\ref{eq:ridge} has a regularized linear-system solution, cached for repeated predictor subsets. A missing value is estimated as $\widehat z_{uk}=\widehat\alpha_{k,\mathcal S}+z_{u,\mathcal S}^{\mathsf T}\widehat\beta_{k,\mathcal S}$. If no supported predictor remains, the fixed fallback uses supported linear interpolation, carry-forward values and, when no history anchor exists, the target's prefix median. All fallback inputs precede $t$.
+
+\subsection{Protected Long-History Construction}
+
+Let $Z^{\mathrm{long}}$ be the standardized history on $[t-L_t,t)$. The current masked suffix replaces its last $W$ positions before any repair, so extending the context cannot restore artificially hidden values. Define the target repair region $\mathcal R_t=\{(u,k):t-W\leq u<t,\ k\in\mathcal T,\ M_{uk}=0\}$. The forecaster receives
+\begin{equation}
+ \widetilde Z_{uj}=\begin{cases}
+ \widehat z_{uj}, & (u,j)\in\mathcal R_t,\\
+ Z^{\mathrm{long}}_{uj}, & \text{otherwise}.
+ \end{cases}
+ \label{eq:protected}
+\end{equation}
+Equation~\ref{eq:protected} leaves all older gaps and all auxiliary gaps in their native form. The eleven local variables are retained. An appended peer with no observation in the current 192-hour window is omitted consistently from the compared model inputs; this decision remains fixed when extending the history. The model's grouped multivariate interface then produces $P=F_H(\widetilde Z)$ for the target variables. Its original weights, internal normalization and attention computation remain unchanged.
+
+\subsection{Statistical Forecast and Fixed Fusion}
+
+The statistical branch uses the standardized $D$-variable system
+\begin{equation}
+ z_{u+1}=Az_u+b+\varepsilon_u,\qquad \varepsilon_u\sim\mathcal N(0,Q).
+ \label{eq:var}
+\end{equation}
+We fit a first-order VAR on originally complete adjacent prefix rows, using centered ridge regression with penalty $10^{-3}$. At least 128 complete transitions are required. The fitted transition matrix is multiplied by $\min(1,0.99/\rho(A))$, where $\rho$ denotes spectral radius, and $b$ is recomputed from the transition-pair means. If $S$ is the residual covariance, $Q=0.95S+0.05\operatorname{diag}(S)+10^{-6}I$. The initial mean and covariance are estimated from complete prefix rows, with the same covariance regularization.
+
+For each origin, this branch filters the \emph{unrepaired} recent $W$ observations. If $m^-,C^-$ are the predicted state moments and $\mathcal O_u$ indexes the observed coordinates, its exact-observation update is
+\begin{align}
+ m_u&=m^-+C^-_{:,\mathcal O_u}(C^-_{\mathcal O_u,\mathcal O_u})^{-1}
+          (z_{u,\mathcal O_u}-m^-_{\mathcal O_u}),\nonumber\\
+ C_u&=C^- - C^-_{:,\mathcal O_u}(C^-_{\mathcal O_u,\mathcal O_u})^{-1}C^-_{\mathcal O_u,:}.
+ \label{eq:filter}
+\end{align}
+Empty observation sets leave the predicted moments unchanged. The observed coordinates are assigned their original values and zero conditional covariance. Between observations, Equation~\ref{eq:var} propagates the moments. Starting from the final filtered state $m_{t-1}$, deterministic recursion $m_{t-1+h}=Am_{t-2+h}+b$ for $h=1,\ldots,H$ gives target forecast $G_h=(m_{t-1+h})_{\mathcal T}$. This Gaussian system is a working statistical approximation, with no assumption that it represents the true sensor process.
+
+The returned forecast is
+\begin{equation}
+ \widehat Y_{hk}=\mu_k+s_k\widehat Z_{hk},\qquad
+ \widehat Z=\tfrac12P+\tfrac12G.
+ \label{eq:fusion}
+\end{equation}
+Equation~\ref{eq:fusion} uses the same weight for every station, target, horizon and missingness panel. There is no learned router, outcome-dependent threshold or per-panel choice of the repair algorithm. The VAR state in Equation~\ref{eq:filter} is inferred from observations rather than from the peer-regression repair, giving the two branches distinct statistical constructions under common pre-origin information.
+
+Table~\ref{alg:procedure} summarizes fitting and prediction for one origin. In the PM outage example, the missing target coordinates are estimated from reporting local and peer sensors, while both forecast branches retain their specified pre-origin observations.
+
+\begin{table}[t]
+\caption{Prediction procedure. Statistical fitting uses only the historical prefix; steps 2--6 use only information available before the origin.}
+\label{alg:procedure}
+\centering\small
+\begin{tabular}{r p{0.88\linewidth}}
+\toprule
+ & \textbf{Input:} prefix data, observed long history and mask, fixed peers, horizon $H$.\\
+1 & Fit prefix scales, supported peer-regression models and the stable VAR.\\
+2 & Extract the most recent $W$ observations and construct the long input with its current mask.\\
+3 & Estimate each missing recent target from its observed predictors using Equation~\ref{eq:ridge}.\\
+4 & Insert these estimates only in $\mathcal R_t$ and query the frozen forecaster once.\\
+5 & Filter the original recent observations and recursively compute the VAR forecast.\\
+6 & Return the fixed mean in Equation~\ref{eq:fusion}, transformed to target units.\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Properties and Computational Requirements}
+\label{sec:properties}
+
+\paragraph{Preserved information.}
+By construction, the repaired input agrees with the supplied input on every originally observed cell, every auxiliary cell and every position before $t-W$. This follows directly from the two cases in Equation~\ref{eq:protected}. Extending the history before inserting the masked suffix also preserves artificial hiding. Prefix-fitted coefficients, current observed predictors and pre-origin fallback values determine every inserted value. Consequently, the procedure is measurable with respect to the declared pre-origin information. This property concerns input validity; it is not an accuracy guarantee.
+
+\paragraph{When fusion lowers squared error.}
+For a fixed set of scored coordinates, write $e_P=P-Y^z$, $e_G=G-Y^z$, and let $\langle\cdot,\cdot\rangle_V$ denote the target-balanced average inner product on those coordinates. The established averaging identity gives
+\begin{equation}
+ \|\tfrac12(e_P+e_G)\|_V^2
+ =\tfrac12\|e_P\|_V^2+\tfrac12\|e_G\|_V^2
+ -\tfrac14\|P-G\|_V^2.
+ \label{eq:identity}
+\end{equation}
+Equation~\ref{eq:identity} also holds after expectations or the same station aggregation. Fusion improves on $P$ precisely when $\|e_G\|_V^2+2\langle e_P,e_G\rangle_V<3\|e_P\|_V^2$. Large disagreement alone is insufficient if the statistical branch is inaccurate. This explains why the experimental comparison must retain $G$, $P$ and their fixed mean separately. No analogous equality is assumed for MAE.
+
+\paragraph{Fitting and inference cost.}
+With $N$ prefix rows and $J$ distinct target--predictor subsets, direct regression fitting costs at most $O(J(ND^2+D^3))$; cached coefficients are reused. Repair evaluation costs $O(WKD)$, and dense filtering costs at most $O(WD^3)$ plus $O(HD^2)$ for extrapolation. The primary procedure requires one frozen-model forward evaluation on the long history, together with these statistical operations. Its neural parameters receive no training updates. Multi-candidate prediction pools and LoRA training have additional costs; shared experimental caches do not remove their fitting or inference requirements.

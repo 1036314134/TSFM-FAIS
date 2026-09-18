@@ -1,0 +1,21 @@
+\begin{tikzpicture}[x=1cm,y=1cm,>=Latex,font=\small,
+ box/.style={draw=blue!55!black,rounded corners=2pt,align=center,fill=blue!4,inner sep=5pt},
+ stat/.style={box,draw=green!40!black,fill=green!5},
+ flow/.style={->,thick,draw=blue!60!black}]
+\node[box,text width=2.05cm] (prefix) at (1.1,2.65) {Observed prefix\\$u<t_0$};
+\node[stat,text width=2.5cm] (fit) at (4.55,2.65) {Peer regression\\and VAR fitting};
+\draw[flow] (prefix) -- (fit);
+\node[box,text width=2.05cm] (history) at (1.1,0.55) {Local and peer\\history, $u<t$};
+\node[box,text width=2.5cm] (repair) at (4.55,0.55) {Target-gap repair\\last 192 hours};
+\draw[flow] (history) -- (repair);
+\draw[flow,dashed] (fit) -- (repair);
+\node[box,text width=2.3cm] (model) at (8.15,0.55) {Frozen Chronos-2\\Protected input\\up to 8192 hours};
+\draw[flow] (repair) -- (model);
+\node[stat,text width=2.3cm] (var) at (8.15,2.65) {Observed suffix\\VAR filtering\\Forecast $G$};
+\draw[flow,dashed] (fit) -- (var);
+\draw[flow] (history.north) -- ++(0,0.6) -| (var.west);
+\node[box,text width=1.55cm,fill=orange!8,draw=orange!65!black] (out) at (11.45,1.55) {Fixed mean\\$\frac12P+\frac12G$};
+\draw[flow] (var.east) -- ++(0.35,0) |- (out.north);
+\draw[flow] (model.east) -- ++(0.35,0) |- (out.south);
+\node[align=center,font=\scriptsize,text=black!70] at (4.55,-0.45) {Observed targets, older history and auxiliary entries retain their original values or missingness.};
+\end{tikzpicture}

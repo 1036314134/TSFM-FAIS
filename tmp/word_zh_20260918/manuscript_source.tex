@@ -1,0 +1,12 @@
+\begin{document}
+\maketitle
+\begin{abstract}
+传感器停止上报后，预测过程需要协调近期缺失值的处理与较长历史观测的利用。本文给出一种固定的预测方法：利用历史前缀中已观测的本地变量与关联序列拟合回归模型，修复近期目标缺口；保留冻结 Chronos-2 预测器可读取的长历史；将其点预测与前缀拟合的向量自回归预测等权融合。该方法保留原观测及辅助变量，每个预测起点仅需调用一次时序基础模型。在北京空气质量数据的 12 个站点、45 个自然缺测窗口上，标准化 MAE/MSE 为 0.388053/0.244688。相对使用相同长历史及相同 VAR 融合的原生预测对照，两项误差降低 5.98\%/7.26\%；相对仅使用长历史的原生预测，降低 19.96\%/31.90\%。采用相同融合方式的高斯修复表现接近，而人工缺测及 96 步预测条件下存在更强的其他对照。已有高斯修复与融合组件在 HDB 停车场自然缺测数据上也未改善预测。这些开发性结果支持该固定方法在已观察自然传感器缺测场景中的有效性，同时限定了其在不同缺失条件与应用中的证据范围。
+\end{abstract}
+\input{paper_zh/introduction.tex}
+\input{paper_zh/method.tex}
+\input{paper_zh/experiments.tex}
+\bibliography{iclr2027/current_references}
+\appendix
+\input{paper_zh/appendix.tex}
+\end{document}

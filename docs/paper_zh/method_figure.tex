@@ -1,0 +1,21 @@
+\begin{tikzpicture}[x=1cm,y=1cm,>=Latex,font=\small,
+ box/.style={draw=blue!55!black,rounded corners=2pt,align=center,fill=blue!4,inner sep=5pt},
+ stat/.style={box,draw=green!40!black,fill=green!5},
+ flow/.style={->,thick,draw=blue!60!black}]
+\node[box,text width=2.05cm] (prefix) at (1.1,2.65) {观测前缀\\$u<t_0$};
+\node[stat,text width=2.5cm] (fit) at (4.55,2.65) {同伴回归\\与 VAR 拟合};
+\draw[flow] (prefix) -- (fit);
+\node[box,text width=2.05cm] (history) at (1.1,0.55) {本地与同伴历史\\$u<t$};
+\node[box,text width=2.5cm] (repair) at (4.55,0.55) {目标缺口修复\\最近 192 小时};
+\draw[flow] (history) -- (repair);
+\draw[flow,dashed] (fit) -- (repair);
+\node[box,text width=2.3cm] (model) at (8.15,0.55) {冻结 Chronos-2\\受保护的输入\\最长 8192 小时};
+\draw[flow] (repair) -- (model);
+\node[stat,text width=2.3cm] (var) at (8.15,2.65) {近期原观测\\VAR 滤波\\预测 $G$};
+\draw[flow,dashed] (fit) -- (var);
+\draw[flow] (history.north) -- ++(0,0.6) -| (var.west);
+\node[box,text width=1.55cm,fill=orange!8,draw=orange!65!black] (out) at (11.45,1.55) {固定均值\\$\frac12P+\frac12G$};
+\draw[flow] (var.east) -- ++(0.35,0) |- (out.north);
+\draw[flow] (model.east) -- ++(0.35,0) |- (out.south);
+\node[align=center,font=\scriptsize,text=black!70] at (6.1,-0.5) {目标原观测、更早历史及辅助变量保留原值或缺失状态。};
+\end{tikzpicture}

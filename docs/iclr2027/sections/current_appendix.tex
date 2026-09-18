@@ -1,0 +1,56 @@
+\section{Fitting Details and Comparison Definitions}
+\label{app:training}
+
+\paragraph{Primary procedure.}
+The eleven Beijing variables are PM2.5, PM10, SO2, NO2, CO, O3, temperature, pressure, dew point, rainfall and wind speed. Wind direction and calendar identifiers are excluded. Three other stations are selected for each PM target by absolute jointly observed prefix correlation. All current target estimates use observed predictors, with the 128-row support threshold and $10^{-3}$ ridge penalty in Equation~\ref{eq:ridge}. The forecaster reads prefix-standardized float32 inputs; output scoring retains the same prefix units. Original observations are copied directly into every model-input representation. No additional normalization, attention mask or learned embedding is introduced by the primary procedure.
+
+The VAR fits originally complete adjacent rows in the same first-7012-hour prefix. The twelve stations provide 4052--5990 complete transitions each. Spectral-radius stabilization, covariance regularization, exact-observation filtering and equal output fusion are fixed as described in Section~\ref{sec:method}. The forecaster reads the long history, whereas the regression repair and VAR state estimation use the recent 192-hour window. This asymmetric allocation is part of the method definition and is shared by the matched controls.
+
+\paragraph{Gaussian and local-regression controls.}
+Let $m$ and $o$ index missing and observed coordinates at one time. The static Gaussian repair is $\mu_m+\Sigma_{mo}\Sigma_{oo}^{-1}(x_o-\mu_o)$, with prefix-fitted moments and the same covariance shrinkage as the statistical system. It conditions independently at each time, without VAR transitions. Local ridge restricts regression predictors to the original eleven variables. In the ``targets only'' forecasting control, the repair may still have used local or peer observations; only the variables supplied directly to the frozen forecaster change. Consequently, target-only forecasting is not a no-covariate-information experiment.
+
+\paragraph{Neural imputation.}
+SAITS and TimeMixer++ use shared fits on 512 windows of length 192 drawn from the twelve augmented training prefixes, with stride 24. Training masks span random points, independent blocks, synchronous blocks, staggered correlated blocks, value-dependent missingness and mixed outages, with rates 0.1--0.5 and seeds 1101--1103. Each model trains for 50 epochs with batch size sixteen and initialization seed zero. SAITS uses two layers, model dimension 64, feed-forward dimension 128 and four heads. The implementations use their imputation objectives and are not jointly optimized through Chronos-2. MoTM retains its released neural parameters and the fixed context-adaptation settings, including ridge coefficient 0.5. All compared repairs preserve original observations and share the fixed finite-value fallback where needed.
+
+\paragraph{Low-rank adaptation.}
+The two LoRA controls augment every self-attention query, key, value and output projection and the output-patch projection. The down-projection uses Kaiming-uniform initialization and the up-projection is zero, with seed 7402. Beijing supplies 864 source tasks from 96 histories; their training futures end no later than hour 7012 and their preprocessing prefix ends at hour 3506. HDB uses only the first 336 hours and anchors 192, 216, 240, 264, 288 and 312. HDB preprocessing statistics and peers use that available 336-hour training set, rather than a strictly preceding subset for each source anchor. Both adaptations receive the same future labels. Corruption training adds fixed target-only, target-plus-peer and all-variable outages of ages 6, 24 and 54 hours while retaining native missingness. The source pool has 1836 tasks from 204 histories; a fixed source-balanced order selects 864 updates per source, with 1728 updates in total. No current evaluation future is used for fitting.
+
+\begin{table}[t]
+\caption{Additional Beijing comparisons. The seven imputation rows repair only the two target variables in the 192-hour input; auxiliary values and missingness remain unchanged. The eight-candidate mean and median include those seven forecasts and native prediction. Regression and LoRA controls use the input definitions described in the text. Lower standardized MAE/MSE is better; bold marks the best displayed value.}
+\label{tab:additional}
+\centering\footnotesize
+\setlength{\tabcolsep}{3.6pt}
+\begin{tabular}{lrrrrrr}
+\toprule
+ & \multicolumn{2}{c}{Natural, $H=24$} & \multicolumn{2}{c}{Artificial, $H=24$} & \multicolumn{2}{c}{Original, $H=96$}\\
+Method & MAE & MSE & MAE & MSE & MAE & MSE\\
+\midrule
+\input{current_results/baseline_rows.tex}
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:additional} retains individual imputers and prediction-pool comparisons, with no substitution of a method chosen from each panel's future outcomes. The complete supplementary CSV includes 1275 panel--method rows: 266 fixed output definitions on each Beijing panel and 159 on each HDB panel. Many outputs vary history length, variable scope or a fixed combination and are not distinct learning algorithms. The accompanying site-level CSV permits reconstruction of each reported macro-average.
+
+\section{Station-Level Natural-Outage Results}
+\label{app:stations}
+
+Table~\ref{tab:stations} reports the primary method at each Beijing station and its paired relative change from the long-native-plus-VAR control. This control uses the same auxiliary information, long history, VAR parameters and fusion coefficient; it omits peer-regression target repair. Site scores average the available windows within the site, followed by an equal-site macro-average. A site with more eligible windows therefore receives no additional weight in the reported overall result.
+
+\begin{table}[h]
+\caption{Natural-outage station results for \method{}. Relative changes compare with long native prediction plus VAR. Negative changes denote lower error. The twelve stations are related observations from one source.}
+\label{tab:stations}
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+Station & MAE & MSE & $\Delta$MAE (\%) & $\Delta$MSE (\%)\\
+\midrule
+\input{current_results/station_rows.tex}
+\end{tabular}
+\end{table}
+
+\section{HDB Observation Semantics and Reserved Periods}
+\label{app:hdb}
+
+Hourly HDB values represent the latest eligible report of available C-type spaces. Each request uses the grid time minus one minute; snapshots and carpark updates must fall within the preceding hour. Raw values, capacities, update times and record ages are retained, with separate status for absent, stale, conflicting or malformed records and technical failures. An eligible report need not be a physical measurement made exactly on the hour.
+
+The 1344-hour collection contains 2,694,720 carpark--hour cells. Fitting uses $[0,336)$ and development uses $[336,672)$; $[672,1008)$ and $[1008,1344)$ remain unscored. Nineteen natural-gap tasks from the eighteen eligible carparks support the reported component-transfer comparison. Their small number and future-observation requirements constrain inference to this cohort.

@@ -1,0 +1,267 @@
+\documentclass{article}
+\usepackage{iclr2027_conference,times}
+\input{math_commands.tex}
+
+\usepackage{amssymb}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{longtable}
+\usepackage{microtype}
+\usepackage{multirow}
+\usepackage{xcolor}
+\usepackage{xspace}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc}
+\usepackage{hyperref}
+\usepackage{url}
+
+\title{Stress-Testing B-FAIS: Forecast-Aware Block-Wise Imputer Selection for Time-Series Foundation Models}
+
+\author{Anonymous Authors}
+
+\newcommand{\bfais}{\textsc{B-FAIS}\xspace}
+\newcommand{\mase}{\operatorname{MASE}}
+\newcommand{\native}{\textsc{native-valid}\xspace}
+\newcommand{\segrecon}{\textsc{Seq-Recon}\xspace}
+\newcommand{\segforecast}{\textsc{Seq-Forecast}\xspace}
+\newcommand{\indblock}{\textsc{Ind-Block-Forecast}\xspace}
+\newcommand{\strblock}{\textsc{Struct-Block-Forecast}\xspace}
+\definecolor{bfblue}{HTML}{2B6C9E}
+\definecolor{bfbluefill}{HTML}{EDF4F8}
+\definecolor{bforange}{HTML}{C47700}
+\definecolor{bforangefill}{HTML}{FFF4DC}
+\definecolor{bfteal}{HTML}{187C68}
+\definecolor{bftealfill}{HTML}{E9F6F2}
+\definecolor{bfpurple}{HTML}{7656A3}
+\definecolor{bfpurplefill}{HTML}{F3EFFA}
+\definecolor{bfink}{HTML}{172B3A}
+\definecolor{bfgray}{HTML}{56636E}
+\definecolor{bfmuted}{HTML}{9AA4AC}
+\definecolor{bfgrid}{HTML}{D8DEE3}
+\definecolor{bfgrayfill}{HTML}{F7F8F9}
+\hypersetup{hidelinks}
+
+% Keep this commented for anonymous review.
+% \iclrfinalcopy
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Pretrained time-series forecasters require finite numerical contexts, which makes imputation part of the forecasting pipeline. Block-wise Forecast-Aware Imputer Selection (\bfais) assigns an imputer to each contiguous missing run using downstream forecast loss, pseudo-missing evidence, a sparse block graph, and validity-gated search. This paper tests whether the added mechanisms provide measurable value. We pre-register six comparisons and evaluate disjoint training and confirmation masks over 26 dataset versions from 16 non-ETT families, with 2,340 paired episodes per forecaster. Five router seeds, 5,000-replicate hierarchical intervals, and Holm correction are retained. Forecast supervision versus reconstruction supervision gives family-macro MASE differences of $-0.087$ $[-0.284,0.053]$ for Chronos-2 and $+0.052$ $[-0.078,0.229]$ for TimesFM~2.5. Independent block routing versus sequence routing gives $-0.029$ $[-0.116,0.040]$ and $-0.038$ $[-0.120,0.015]$; adding graph-based coordination changes MASE by only $-0.001$ and $-0.003$, with both intervals crossing zero. Leave-one-family-out and held-out-Sundial comparisons also fail the registered superiority rule. Two fixed tests are unavailable because pre-specified completeness conditions fail. On 72 naturally incomplete Beijing air-quality episodes, \bfais is worse than the best complete fixed candidate by 0.012--0.049 MASE across the three forecasters. The study does not validate forecast supervision, block granularity, structured coordination, or transfer as general contributions. It identifies a simpler sequence-level selector as the appropriate reference point for further work.
+\end{abstract}
+
+\section{Introduction}
+\label{sec:introduction}
+
+Time-series foundation models (TSFMs) make zero-shot forecasting practical across datasets and sampling frequencies. TimesFM uses decoder-only patch prediction \citep{das2024timesfm}, Chronos maps scaled observations to tokens for probabilistic forecasting \citep{ansari2024chronos}, and Chronos-2 extends pretrained forecasting to grouped multivariate inputs \citep{ansari2025chronos2}. Their parameters can remain frozen at deployment, yet the numerical context still determines the forecast. Missing intervals alter local continuity, seasonal evidence, cross-variable relations, and the range of values received by the forecaster.
+
+No single imputation rule is uniformly suited to these conditions. Interpolation assumes local smoothness, seasonal copying assumes repetition, multivariate completion assumes shared structure, and specialized neural imputers learn different temporal priors \citep{vanbuuren2011mice,stekhoven2012missforest,mazumder2010softimpute,cao2018brits,tashiro2021csdi,du2023saits,nie2024imputeformer}. Reconstruction accuracy can also disagree with downstream forecast accuracy \citep{wang2024taskoriented}. These observations motivate algorithm selection conditioned on the corrupted context and the frozen forecaster \citep{rice1976algorithm,misir2017alors,zhao2021automatic,hazimeh2021dselect,zhou2020neuralucb}.
+
+\bfais was designed for this setting. It represents each maximal contiguous missing run as a block, predicts candidate risks from block and episode features, measures candidates on pseudo-hidden observed values, and solves a validity-constrained assignment. A sparse graph and pairwise risk model permit different imputers to coordinate across nearby or correlated blocks. The design is plausible, though each added mechanism creates a separate empirical claim. Forecast labels must improve on reconstruction labels. Block decisions must improve on one sequence decision. Graph-based coordination must improve on independent block choices. Training labels must also transfer across data families and, for a model-agnostic claim, across forecasters.
+
+The earlier evaluation of the complete system combined these mechanisms and compared it with sequence selectors in a rolling-origin setting \citep{tashman2000outofsample}. That design established system-level behavior within observed datasets, while causal attribution among the mechanisms remained unresolved. We therefore conduct an R2 evaluation that fixes the questions, splits, seeds, statistics, and interpretation rules before inspecting confirmation results. The comparison ladder changes one factor at a time: \segrecon, \segforecast, \indblock, and \strblock. ETT is restricted to development. Confirmation uses disjoint masks on 16 non-ETT families, and leave-one-family-out (LOFO) training evaluates unseen-family behavior. Sundial \citep{liu2025sundial} is held out from teacher-label generation and hyperparameter selection.
+
+The evidence is consistently cautious. None of the six registered tests satisfies the joint superiority rule after Holm correction. Four tests are complete and yield intervals that cross zero; two are incomplete because pre-specified availability rules prevent the intended comparison. A naturally incomplete air-quality dataset provides an additional negative check. These outcomes change the paper's contribution. The main contribution is a controlled empirical account of which parts of forecast-aware block routing remain unsupported under a stronger protocol, together with machine-readable evidence for unavailable tests and tail failures. The resulting recommendation is to treat sequence-level selection as the primary reference and to require new evidence before restoring stronger mechanism or transfer claims.
+
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Pretrained forecasting.}
+TimesFM predicts output patches from input patches and supports inference without target-dataset fitting \citep{das2024timesfm}. Chronos tokenizes scaled values and samples future paths from a pretrained model \citep{ansari2024chronos}. Chronos-2 uses grouped attention for multivariate and covariate-informed inputs \citep{ansari2025chronos2}. Sundial learns a continuous generative forecaster using a flow-matching objective \citep{liu2025sundial}. Our evaluation keeps these checkpoints frozen. TimesFM~2.5 and Sundial are invoked independently per target; Chronos-2 receives a joint multivariate context. These interface differences make forecaster-specific imputation behavior plausible and motivate separate reporting.
+
+\paragraph{Time-series imputation.}
+Classical candidates include chained equations, random-forest completion, low-rank completion, and temporally regularized factorization \citep{vanbuuren2011mice,stekhoven2012missforest,mazumder2010softimpute,yu2016trmf}. Neural candidates include bidirectional recurrence in BRITS \citep{cao2018brits}, latent Gaussian-process structure in GP-VAE \citep{fortuin2020gpvae}, conditional diffusion in CSDI \citep{tashiro2021csdi}, self-attention in SAITS \citep{du2023saits}, and spatiotemporal attention in ImputeFormer \citep{nie2024imputeformer}. General time-series models such as TimeMixer++ and TOTEM have also been evaluated for imputation \citep{wang2025timemixerpp,talukder2024totem}. HELIX explicitly models variable identity and cross-dimensional information \citep{zhang2026helix}. \bfais leaves each candidate objective unchanged and evaluates its completed context through a frozen forecaster.
+
+\paragraph{Algorithm selection and downstream utility.}
+Algorithm selection maps instance descriptors to a candidate under a task-specific performance measure \citep{rice1976algorithm}. ALORS learns task--algorithm factors \citep{misir2017alors}; MetaOD predicts a latent task representation \citep{zhao2021automatic}; DSelect-$k$ constructs a sparse differentiable gate \citep{hazimeh2021dselect}; and NeuralUCB combines predicted reward with uncertainty \citep{zhou2020neuralucb}. HybridLSTM recommends imputers for fixed univariate windows \citep{almeida2025hybridlstm}. Task-oriented imputation directly evaluates downstream forecasting consequences \citep{wang2024taskoriented}. Our controlled ladder connects these lines by separating the training target from the decision granularity and the assignment structure.
+
+\section{Problem Setup}
+\label{sec:problem}
+
+Let $X\in\mathbb{R}^{T\times D}$ be a complete trajectory and $M\in\{0,1\}^{T\times D}$ an observation mask. At forecast origin $t$, a corrupted context and clean future are
+\begin{equation}
+ C_t=(M\odot X)[t-L:t], \qquad
+ Y_t=X[t:t+H,\mathcal K],
+\end{equation}
+where missing entries of $C_t$ are represented as NaN and $\mathcal K$ is the target set. Candidate $a\in\mathcal A$ maps $C_t$ to a completion $I_a(C_t)$. A separate \native mask records cells produced by the candidate before numerical repair. The frozen forecaster $f$ maps a finite completion to $\widehat Y$.
+
+For target $k$, the MASE scale $s_k$ is computed from the historical fit prefix with its registered seasonal lag $q_k$, or lag one when seasonal history is insufficient \citep{hyndman2006another}. The episode loss is
+\begin{equation}
+ \mathcal L_f(Z,Y)=\frac{1}{|\mathcal K|}\sum_{k\in\mathcal K}
+ \frac{H^{-1}\sum_{h=1}^{H}|Y_{h,k}-f(Z)_{h,k}|}{s_k}.
+ \label{eq:mase}
+\end{equation}
+Every maximal contiguous missing run in one variable is a block $b=(d,s_b,e_b)$. A block assignment $\mathbf a=(a_b)_{b\in\mathcal B}$ assembles $Z(\mathbf a)$ by copying candidate $a_b$ on block $b$ and restoring observed cells. Deployment chooses $\mathbf a$ without access to $Y_t$.
+
+\section{B-FAIS and the Controlled Variants}
+\label{sec:method}
+
+Figure~\ref{fig:overview} separates the historical supervision path from deployment and aligns the deployed components with the registered controls. At historical origins, the teacher evaluates complete-candidate forecasts against observed futures and derives second-order pair effects. At deployment, the router extracts maximal missing blocks, produces a safety-augmented shortlist, refines candidate risks using the actual context and pseudo-missing runs, and then applies a sparse relation graph, a native-validity gate, and deterministic beam search. The selected block outputs are assembled into the finite context passed to the frozen forecaster.
+
+\begin{figure}[t]
+\centering
+\input{figures/fig1_overview.tex}
+\caption{\bfais converts a corrupted multivariate context into a validity-gated block-wise completion before frozen-TSFM forecasting. At historical origins (top), complete-candidate forecast losses and second-order counterfactual effects train the unary rankers and pair model; at deployment (middle), six numbered steps extract blocks, shortlist candidates, collect pseudo-missing evidence, refine unary risks, coordinate the assignment, and assemble the completed context. The bottom ladder identifies the three one-factor changes used by the registered mechanism tests.}
+\label{fig:overview}
+\end{figure}
+
+\subsection{Forecast-aware labels and block scores}
+
+At historical training origins, the teacher evaluates the complete context generated by candidate $a$:
+\begin{equation}
+ \ell^{\mathrm{full}}_{e,a}=\mathcal L_f(I_a(C_e),Y_e).
+ \label{eq:full-label}
+\end{equation}
+The R2 target audit selected this complete-candidate forecast loss on the ETT development family over a single-block counterfactual loss and a coordination-adjusted target. For each sampled labelled block, $\ell^{\mathrm{full}}_{e,a}$ is attached to the candidate row. Block geometry, missingness, candidate descriptors, and available context features allow a LambdaMART ranker \citep{burges2010lambdamart}, implemented with LightGBM \citep{ke2017lightgbm}, to learn a block-conditioned score, although the supervised target remains a complete-context outcome. Dataset identity, family identity, missingness-generator identity, and the generator's target rate are removed from the deployment feature set.
+
+The prior scorer creates a shortlist of at most six candidates, with LOCF and linear interpolation retained as safety candidates. Shortlisted candidates are run on the actual context and on eight pseudo-missing blocks sampled from observed history. The refined LambdaMART scorer receives native coverage, reconstruction error, bias, output summaries, block descriptors, and forecaster descriptors. The final R2 core uses this learned refined score directly. Development-only mixtures with a global candidate prior and a raw pseudo-error proxy were worse on ETT and are excluded from confirmation. Candidate runtime affects shortlist construction; the assignment objective has zero runtime weight.
+
+\subsection{Independent and structured block assignment}
+
+For structured routing, a sparse graph connects same-variable neighbors, temporally overlapping blocks, and nearby blocks on correlated variables. A Huber regressor estimates pair interactions from sampled second-order counterfactuals. The structured energy is
+\begin{equation}
+ E(\mathbf a)=\sum_{b\in\mathcal B}R(b,a_b)
+ +\beta\sum_{(b,c)\in\mathcal E}w_{bc}\widehat\Phi_{bc}(a_b,a_c),
+ \label{eq:energy}
+\end{equation}
+with $\beta=1$. Deterministic beam search uses width 32. Independent block routing minimizes each unary score separately. Sequence routing selects one candidate using its mean score over the episode's blocks. Candidate $a$ can fill block $b$ only when every cell in $b$ is \native. If no shortlisted candidate is valid, a separate repair state applies linear interpolation, LOCF, or the training median. Repair does not change candidate coverage.
+
+\subsection{One-factor comparison ladder}
+
+The lower band of Figure~\ref{fig:overview} isolates the three registered mechanism changes. \segrecon trains a sequence selector with masked-context reconstruction error; \segforecast changes only the target to Equation~\ref{eq:full-label}; \indblock changes only the decision granularity; and \strblock adds the relation graph, pair regressor, and coordinated search. The final \bfais core corresponds to \strblock with the ETT-selected complete-candidate target and learned-only refined evidence.
+
+\section{Experimental Protocol}
+\label{sec:experiments}
+
+\paragraph{Development and confirmation.}
+The four ETT versions are restricted to target and evidence development. Rolling confirmation contains 26 dataset versions from 16 non-ETT families. Each dataset contributes 90 episodes per forecaster, giving 2,340 paired episodes for each adjacent comparison. Context length, horizon, and forecast stride are 96. Six missingness generators are crossed with rates $\{0.1,0.2,0.3,0.4,0.5\}$ and confirmation mask seeds $\{3101,3102,3103\}$. Training uses seeds $\{1101,1102,1103\}$ and ETT development uses $\{2101,2102,2103\}$. A full-sequence mask is created before rolling windows are sliced. Of the 2,340 confirmation episodes, 2,200 contain missing context cells; zero-block windows remain in the fixed all-window population. Earlier origins provide router labels and later origins provide evaluation. Details and the dataset inventory appear in Appendix~\ref{app:protocol}.
+
+\paragraph{Forecasters, candidates, and external selectors.}
+Chronos-2 and TimesFM~2.5 supply training labels and are evaluated separately. Each forecast uses 20 samples where the model interface is stochastic. A third checkpoint, \path{thuml/sundial-base-128m}, is held out from label generation and development. Its identity-free router removes the forecaster indicator. The registry contains 20 imputer entries, of which 19 execute under the rolling interface; TRMF is disabled because the installed wrapper is transductive. MetaOD, DSelect-1, NeuralUCB, ALORS, HybridLSTM, and random-valid selection retain their reconstruction-based training objective. They do not receive downstream forecast labels.
+
+\paragraph{Transfer and natural missingness.}
+LOFO retrains the router while withholding every labelled example, prior, and calibration value from the evaluated family. Its 17-family population adds the only eligible Job Claims origin and contains 2,430 episodes per forecaster. The held-out-Sundial test uses the common 16-family population. A separate test uses the UCI Beijing Multi-Site Air Quality dataset \citep{chen2017beijing}: 12 stations, 11 numerical variables, native missing entries, PM2.5 and PM10 targets, and 72 valid rolling episodes. No synthetic mask is added in this test.
+
+\paragraph{Statistics and decision rule.}
+The primary statistic is the equal-weight mean of family-level MASE. Effects are paired differences, with negative values favoring the method named first. Intervals use 5,000 hierarchical resamples over family, dataset, item, origin, and mask. Each component also receives a paired family-level Wilcoxon test. The six fixed tests are H1 forecast versus reconstruction, H2 block versus sequence, H3 structured versus independent, H4 core versus a development-selected external selector, H5 LOFO core versus LOFO sequence, and H6 Sundial core versus both an availability-qualified fixed imputer and identity-free sequence selection. A joint test uses the maximum required component $p$-value and is set to one when a required component is unavailable. Holm correction \citep{holm1979simple} covers all six joint tests. Superiority requires every required interval upper bound below zero and adjusted $p<0.05$. Five router seeds, 4101--4105, are retained; seed 4101 is the registered primary analysis.
+
+\section{Results}
+\label{sec:results}
+
+\subsection{The three proposed mechanisms do not pass confirmation}
+
+Table~\ref{tab:adjacent} contains the six complete components for H1--H3. Forecast supervision has opposite aggregate signs: it reduces Chronos-2 MASE by 0.087 and increases TimesFM~2.5 MASE by 0.052. Both intervals include zero. Independent block routing has negative point estimates against sequence routing for both forecasters, with upper confidence limits of 0.040 and 0.015. Structured coordination changes family-macro MASE by less than 0.004. The component intervals cross zero, and every joint Holm value is one.
+
+\begin{table}[t]
+\caption{Adjacent mechanism tests on common-16 confirmation. $\Delta$ is first method minus reference MASE. $p_w$ is the component Wilcoxon value. The joint value is the maximum component value for each test.}
+\label{tab:adjacent}
+\centering
+\scriptsize
+\setlength{\tabcolsep}{2.7pt}
+\begin{tabular}{lllrrrr}
+\toprule
+Test & Contrast & Forecaster & $\Delta$ & 95\% CI & $p_w$ & $p_{\rm joint}/p_{\rm Holm}$ \\
+\midrule
+\multirow{2}{*}{H1} & \multirow{2}{*}{Forecast $-$ Recon} & Chronos-2 & $-.087$ & $[-.284,.053]$ & .083 & \multirow{2}{*}{.744 / 1.000} \\
+ & & TimesFM 2.5 & $+.052$ & $[-.078,.229]$ & .744 & \\
+\midrule
+\multirow{2}{*}{H2} & \multirow{2}{*}{Block $-$ Sequence} & Chronos-2 & $-.029$ & $[-.116,.040]$ & .464 & \multirow{2}{*}{.464 / 1.000} \\
+ & & TimesFM 2.5 & $-.038$ & $[-.120,.015]$ & .051 & \\
+\midrule
+\multirow{2}{*}{H3} & \multirow{2}{*}{Structured $-$ Independent} & Chronos-2 & $-.001$ & $[-.015,.009]$ & .464 & \multirow{2}{*}{.464 / 1.000} \\
+ & & TimesFM 2.5 & $-.003$ & $[-.012,.003]$ & .348 & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The absolute family-macro MASE of the structured core is 7.516 for Chronos-2 and 2.335 for TimesFM~2.5. The corresponding sequence-forecast values are 7.547 and 2.375. All five router seeds produce the same core family-macro values and the same saved assignments at the reported precision. This seed invariance removes one source of uncertainty in the fitted router, while the episode and family variation represented by the intervals remains.
+
+\subsection{Unseen-family and unseen-forecaster results remain uncertain}
+
+LOFO point estimates favor the core, yet the intervals in Table~\ref{tab:transfer} cross zero. TimesFM~2.5 comes closest, with an upper limit of $+0.0012$ and a component $p$-value of 0.080. The joint LOFO test is 0.378 before correction and one after correction. On held-out Sundial, identity-free structured routing differs from identity-free sequence routing by $-0.016$ with a wide interval and $p=0.940$. These tests do not support unseen-family or cross-forecaster superiority.
+
+\begin{table}[t]
+\caption{Transfer comparisons. The LOFO population contains 17 families; Sundial uses common-16. Negative values favor the structured core.}
+\label{tab:transfer}
+\centering
+\small
+\setlength{\tabcolsep}{4.2pt}
+\begin{tabular}{llrrrr}
+\toprule
+Test & Forecaster & Pairs & $\Delta$ & 95\% CI & $p_w$ \\
+\midrule
+\multirow{2}{*}{H5: LOFO core $-$ sequence} & Chronos-2 & 2,430 & $-.018$ & $[-.107,.082]$ & .378 \\
+ & TimesFM 2.5 & 2,430 & $-.077$ & $[-.192,.001]$ & .080 \\
+H6: held-out core $-$ sequence & Sundial & 2,340 & $-.016$ & $[-.094,.059]$ & .940 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+H4 is unavailable. The pre-registered ETT selection rule required complete primary rows for every candidate external selector. HybridLSTM lacked 100 of 360 ETT episodes for each trained forecaster, so the guard stopped selection and no strongest external method was named. H6 is also incomplete because no fixed imputer met its pre-registered availability floor. Under the fixed rule, both tests receive joint and adjusted values of one. Descriptively, the core has lower common-16 family-macro MASE than each of the five pairable external selectors for both trained forecasters, with deltas ranging from $-4.410$ to $-0.376$ for Chronos-2 and from $-3.615$ to $-0.464$ for TimesFM~2.5. These descriptive results cannot replace the unavailable H4 test.
+
+\subsection{Natural missingness does not recover the claimed advantage}
+
+Table~\ref{tab:native} reports the UCI Beijing evaluation. \bfais covers all 72 episodes. Its mean MASE exceeds the best candidate that is complete on the same 72 episodes for every forecaster. The gaps are 0.012 for Chronos-2, 0.049 for TimesFM~2.5, and 0.029 for Sundial. The per-episode oracle remains lower, indicating unused selection headroom. This single-family analysis is descriptive and supplies no superiority test.
+
+\begin{table}[t]
+\caption{Natural-missing evaluation on 72 Beijing air-quality episodes. The best fixed column is restricted to candidates valid on all 72 episodes. $\Delta$ is \bfais minus that candidate.}
+\label{tab:native}
+\centering
+\small
+\setlength{\tabcolsep}{3.8pt}
+\begin{tabular}{lrlrrr}
+\toprule
+Forecaster & \bfais & Best complete candidate & Best & $\Delta$ & Oracle \\
+\midrule
+Chronos-2 & 1.012 & TimeMixer++ & 1.000 & $+.012$ & .943 \\
+TimesFM 2.5 & 1.127 & KNN multivariate & 1.078 & $+.049$ & 1.018 \\
+Sundial & .909 & TimeMixer++ & .880 & $+.029$ & .786 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Discussion}
+\label{sec:discussion}
+
+The controlled ladder changes the interpretation of \bfais. H1 does not establish forecast loss as a better training signal than reconstruction loss. The model-specific signs also warn against pooling TSFMs into one claim. H2 does not establish block granularity over one sequence decision. H3 provides the narrowest intervals and a near-zero effect, so the relation graph, pair regressor, and beam coordination lack evidence as performance contributions in this protocol. The pre-registered interpretation rules therefore remove these mechanisms from the central contribution claim.
+
+The intervals do not establish equivalence. H1 and H2 still permit effects that may matter for some families, especially for TimesFM block routing. A suitable next experiment would target the families and missing geometries that drive this heterogeneity, then evaluate a fixed conditional rule on new families. The current evidence supports no such rule. The simpler sequence selector is consequently the defensible operational reference, with independent block routing retained only as an experimental alternative.
+
+The unavailable tests reveal a separate design lesson. A strict guard prevents favorable method selection after observing confirmation results, which preserves the registered decision. The same guard can make a multi-method comparison uninformative when one method has incomplete coverage. Future protocols should define a complete-case primary selector set and a separate coverage analysis before development evaluation. The fixed-imputer floor needs the same treatment.
+
+The natural-missing test and prefix sensitivity further constrain deployment. When the historical fit prefix is forced to contain missing values, family-macro changes remain uncertain, while the worst episode degradation reaches 220.8 MASE for Chronos-2, 44.9 for TimesFM~2.5, and 39.9 for Sundial. Mean performance can therefore hide severe local failures. Candidate validity, tail metrics, and explicit fallback evaluation should remain first-class outputs even if a future selector improves the mean.
+
+\section{Limitations}
+\label{sec:limitations}
+
+The confirmation collection uses controlled synthetic masks. It spans six generators and five rates, yet those generators cannot represent every sensor, logging, or operational failure process. The natural-missing study contains one air-quality family and 72 episodes. Broader naturally incomplete data are needed before drawing deployment conclusions.
+
+The primary mechanism tests use one registered router seed, although five fitted seeds yield identical core family-macro values. Candidate neural models use the repository's common ten-epoch budget, and different budgets could alter the candidate ranking. TimesFM~2.5 and Sundial are run independently per target, whereas Chronos-2 receives multivariate context; this difference is part of the evaluated systems. The result does not isolate architecture from adapter behavior.
+
+H4 and one required H6 component are unavailable. The negative joint decision follows the registered rule, while the missing comparisons reduce what the experiment can conclude about external selectors and fixed imputers. External-selector deltas lack confirmatory intervals because the development selection step stopped. LOFO evaluates unseen labelled families but still fits candidate imputers on the first 20\% of each held-out series. This is unseen-family router transfer rather than strict zero-shot candidate transfer.
+
+Finally, the study evaluates a frozen candidate registry, context and horizon of 96, a shortlist of six, and 20 forecast samples. It supplies empirical boundary evidence rather than a general impossibility result. Equivalence and the registered 1\% non-inferiority margin were not tested as primary hypotheses.
+
+\section{Conclusion}
+\label{sec:conclusion}
+
+We evaluated forecast supervision, block granularity, structured coordination, unseen-family transfer, and held-out-forecaster transfer as separate claims for \bfais. None of the six registered tests meets the superiority rule; four complete tests have intervals crossing zero, and two tests are incomplete under pre-specified availability conditions. Natural missingness also favors a complete fixed candidate over the current router for all three forecasters. The evidence narrows \bfais from a claimed structured selection advance to a tested system whose proposed mechanisms remain unvalidated. Further work should begin from the sequence-level control, predefine coverage-qualified comparator sets, and treat tail failures as primary outcomes.
+
+\subsection*{AI use statement}
+In preparing this revision, the authors used OpenAI Codex to inspect existing source code and machine-readable result artifacts; draft and edit LaTeX prose and tables; check citation keys, numerical consistency, and document formatting; and assist with interpretation of already generated experimental results. The tool did not generate datasets or the reported experimental measurements. All AI-assisted text and checks were reviewed against source code and saved artifacts by the authors. We take responsibility for the final content of this work, including text, claims, and artifacts produced with the aid of generative AI.
+
+\subsection*{Ethics statement}
+The study uses publicly distributed numerical time-series datasets and adds synthetic masks to controlled confirmation data. It involves no intervention or human-subject recruitment. The Beijing data are distributed under CC BY 4.0; other dataset ownership and redistribution terms remain with their providers. Forecast errors can affect energy, labor, logistics, air-quality, and infrastructure decisions. The evaluated research system should not be used for autonomous operational decisions without domain-specific validation, monitoring, and fallback procedures.
+
+\subsection*{Reproducibility statement}
+Appendix~\ref{app:protocol} records data partitions, masks, seeds, candidates, and checkpoints. Appendix~\ref{app:full-results} gives component and sensitivity results, and Appendix~\ref{app:integrity} maps the reported claims to versioned artifacts and hash manifests. The supplementary source tree contains the frozen YAML configurations, evaluation code, tests, and machine-readable result summaries used for this paper.
+
+\bibliographystyle{iclr2027_conference}
+\bibliography{tsfm_fais_iclr2027}
+
+\appendix
+\input{tsfm_fais_appendix.tex}
+
+\end{document}

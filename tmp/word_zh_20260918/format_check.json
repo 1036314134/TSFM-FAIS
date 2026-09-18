@@ -1,0 +1,39 @@
+{
+  "output": "E:\\ZMY\\Github\\TSFM-FAIS\\docs\\TSFM-FAIS-同伴序列修复与预测融合-中文版-0918.docx",
+  "reference_sha256": "6731cee5a0b433513f176613634f1198dc4504c41bd95023aade3e85649274b7",
+  "preserved_parts": [
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "word/footnotes.xml",
+    "word/endnotes.xml",
+    "word/header1.xml",
+    "word/footer1.xml",
+    "word/media/image1.png",
+    "word/media/image2.svg",
+    "word/theme/theme1.xml",
+    "word/settings.xml",
+    "word/numbering.xml",
+    "word/styles.xml",
+    "word/webSettings.xml",
+    "word/fontTable.xml",
+    "docProps/app.xml",
+    "docProps/custom.xml"
+  ],
+  "roles": {
+    "title": 1,
+    "heading": 21,
+    "body": 59,
+    "figure": 2,
+    "figure_caption": 2,
+    "display_equation": 7,
+    "table_caption": 6,
+    "reference": 13
+  },
+  "tables": 6,
+  "native_equations": 95,
+  "added_media": [
+    "word/media/current_figure_1.png",
+    "word/media/current_figure_2.png"
+  ],
+  "styles_sha256": "6aa192417a5b29057eda9156b2765afaad1cf157ebccb16fca2e28c1a06c1676"
+}

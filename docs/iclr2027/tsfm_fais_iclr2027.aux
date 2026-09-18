@@ -13,167 +13,103 @@
 \gdef\HyperFirstAtBeginDocument#1{#1}
 \providecommand\HyField@AuxAddToFields[1]{}
 \providecommand\HyField@AuxAddToCoFields[2]{}
-\citation{das2024timesfm}
-\citation{ansari2024chronos}
+\citation{du2023saits,wang2025timemixerpp,motmsoftware}
+\citation{lemorvan2021good}
+\citation{du2024tsibench}
 \citation{ansari2025chronos2}
-\citation{vanbuuren2011mice,stekhoven2012missforest,mazumder2010softimpute,cao2018brits,tashiro2021csdi,du2023saits,nie2024imputeformer}
-\citation{wang2024taskoriented}
-\citation{rice1976algorithm,misir2017alors,zhao2021automatic,hazimeh2021dselect,zhou2020neuralucb}
 \@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
 \newlabel{sec:introduction}{{1}{1}{Introduction}{section.1}{}}
-\citation{tashman2000outofsample}
-\citation{liu2025sundial}
-\citation{das2024timesfm}
-\citation{ansari2024chronos}
-\citation{ansari2025chronos2}
-\citation{liu2025sundial}
-\citation{vanbuuren2011mice,stekhoven2012missforest,mazumder2010softimpute,yu2016trmf}
-\citation{cao2018brits}
-\citation{fortuin2020gpvae}
-\citation{tashiro2021csdi}
+\citation{lemorvan2021good}
 \citation{du2023saits}
-\citation{nie2024imputeformer}
-\citation{wang2025timemixerpp,talukder2024totem}
-\citation{zhang2026helix}
-\citation{rice1976algorithm}
-\citation{misir2017alors}
-\citation{zhao2021automatic}
-\citation{hazimeh2021dselect}
-\citation{zhou2020neuralucb}
-\citation{almeida2025hybridlstm}
-\citation{wang2024taskoriented}
+\citation{wang2025timemixerpp}
+\citation{motmsoftware}
+\citation{du2024tsibench}
+\citation{ansari2025chronos2}
+\citation{peng2025s4m}
+\citation{hu2021lora}
+\citation{hoerl1970ridge}
+\citation{bates1969combination}
+\citation{krogh1994ensembles}
 \@writefile{toc}{\contentsline {section}{\numberline {2}Related Work}{2}{section.2}\protected@file@percent }
 \newlabel{sec:related}{{2}{2}{Related Work}{section.2}{}}
-\@writefile{toc}{\contentsline {paragraph}{Pretrained forecasting.}{2}{section*.1}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Time-series imputation.}{2}{section*.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Algorithm selection and downstream utility.}{2}{section*.3}\protected@file@percent }
-\citation{hyndman2006another}
-\citation{burges2010lambdamart}
-\citation{ke2017lightgbm}
-\@writefile{toc}{\contentsline {section}{\numberline {3}Problem Setup}{3}{section.3}\protected@file@percent }
-\newlabel{sec:problem}{{3}{3}{Problem Setup}{section.3}{}}
-\newlabel{eq:mase}{{2}{3}{Problem Setup}{equation.3.2}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {4}B-FAIS and the Controlled Variants}{3}{section.4}\protected@file@percent }
-\newlabel{sec:method}{{4}{3}{B-FAIS and the Controlled Variants}{section.4}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Forecast-aware labels and block scores}{3}{subsection.4.1}\protected@file@percent }
-\newlabel{eq:full-label}{{3}{3}{Forecast-aware labels and block scores}{equation.4.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Independent and structured block assignment}{3}{subsection.4.2}\protected@file@percent }
-\newlabel{eq:energy}{{4}{3}{Independent and structured block assignment}{equation.4.4}{}}
-\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces \textsc  {B-FAIS}\xspace  converts a corrupted multivariate context into a validity-gated block-wise completion before frozen-TSFM forecasting. At historical origins (top), complete-candidate forecast losses and second-order counterfactual effects train the unary rankers and pair model; at deployment (middle), six numbered steps extract blocks, shortlist candidates, collect pseudo-missing evidence, refine unary risks, coordinate the assignment, and assemble the completed context. The bottom ladder identifies the three one-factor changes used by the registered mechanism tests.}}{4}{figure.1}\protected@file@percent }
-\newlabel{fig:overview}{{1}{4}{\bfais converts a corrupted multivariate context into a validity-gated block-wise completion before frozen-TSFM forecasting. At historical origins (top), complete-candidate forecast losses and second-order counterfactual effects train the unary rankers and pair model; at deployment (middle), six numbered steps extract blocks, shortlist candidates, collect pseudo-missing evidence, refine unary risks, coordinate the assignment, and assemble the completed context. The bottom ladder identifies the three one-factor changes used by the registered mechanism tests}{figure.1}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}One-factor comparison ladder}{4}{subsection.4.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {5}Experimental Protocol}{4}{section.5}\protected@file@percent }
-\newlabel{sec:experiments}{{5}{4}{Experimental Protocol}{section.5}{}}
-\@writefile{toc}{\contentsline {paragraph}{Development and confirmation.}{4}{section*.4}\protected@file@percent }
-\citation{chen2017beijing}
-\citation{holm1979simple}
-\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Adjacent mechanism tests on common-16 confirmation. $\Delta $ is first method minus reference MASE. $p_w$ is the component Wilcoxon value. The joint value is the maximum component value for each test.}}{5}{table.1}\protected@file@percent }
-\newlabel{tab:adjacent}{{1}{5}{Adjacent mechanism tests on common-16 confirmation. $\Delta $ is first method minus reference MASE. $p_w$ is the component Wilcoxon value. The joint value is the maximum component value for each test}{table.1}{}}
-\@writefile{toc}{\contentsline {paragraph}{Forecasters, candidates, and external selectors.}{5}{section*.5}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Transfer and natural missingness.}{5}{section*.6}\protected@file@percent }
-\@writefile{toc}{\contentsline {paragraph}{Statistics and decision rule.}{5}{section*.7}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {6}Results}{5}{section.6}\protected@file@percent }
-\newlabel{sec:results}{{6}{5}{Results}{section.6}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.1}The three proposed mechanisms do not pass confirmation}{5}{subsection.6.1}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Transfer comparisons. The LOFO population contains 17 families; Sundial uses common-16. Negative values favor the structured core.}}{6}{table.2}\protected@file@percent }
-\newlabel{tab:transfer}{{2}{6}{Transfer comparisons. The LOFO population contains 17 families; Sundial uses common-16. Negative values favor the structured core}{table.2}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Natural-missing evaluation on 72 Beijing air-quality episodes. The best fixed column is restricted to candidates valid on all 72 episodes. $\Delta $ is \textsc  {B-FAIS}\xspace  minus that candidate.}}{6}{table.3}\protected@file@percent }
-\newlabel{tab:native}{{3}{6}{Natural-missing evaluation on 72 Beijing air-quality episodes. The best fixed column is restricted to candidates valid on all 72 episodes. $\Delta $ is \bfais minus that candidate}{table.3}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.2}Unseen-family and unseen-forecaster results remain uncertain}{6}{subsection.6.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {6.3}Natural missingness does not recover the claimed advantage}{6}{subsection.6.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {7}Discussion}{6}{section.7}\protected@file@percent }
-\newlabel{sec:discussion}{{7}{6}{Discussion}{section.7}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {8}Limitations}{7}{section.8}\protected@file@percent }
-\newlabel{sec:limitations}{{8}{7}{Limitations}{section.8}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {9}Conclusion}{7}{section.9}\protected@file@percent }
-\newlabel{sec:conclusion}{{9}{7}{Conclusion}{section.9}{}}
-\bibstyle{iclr2027_conference}
-\bibdata{tsfm_fais_iclr2027}
-\bibcite{almeida2025hybridlstm}{{1}{2025}{{Almeida et~al.}}{{Almeida, Almeida, Quintanilha, Braz~J{\'u}nior, and Silva}}}
-\bibcite{ansari2024chronos}{{2}{2024}{{Ansari et~al.}}{{Ansari, Stella, Turkmen, Zhang, Mercado, Shen, Shchur, Rangapuram, Pineda~Arango, Kapoor, Zschiegner, Maddix, Wang, Mahoney, Torkkola, Wilson, Bohlke-Schneider, and Wang}}}
-\bibcite{ansari2025chronos2}{{3}{2025}{{Ansari et~al.}}{{Ansari, Shchur, K{\"u}ken, Auer, Han, Mercado, Rangapuram, Shen, Stella, Zhang, Goswami, Kapoor, Maddix, Guerron, Hu, Yin, Erickson, Desai, Wang, Rangwala, Karypis, Wang, and Bohlke-Schneider}}}
-\bibcite{burges2010lambdamart}{{4}{2010}{{Burges}}{{}}}
-\bibcite{cao2018brits}{{5}{2018}{{Cao et~al.}}{{Cao, Wang, Li, Zhou, Li, and Li}}}
-\bibcite{chen2017beijing}{{6}{2017}{{Chen}}{{}}}
-\bibcite{das2024timesfm}{{7}{2024}{{Das et~al.}}{{Das, Kong, Sen, and Zhou}}}
-\bibcite{du2023saits}{{8}{2023}{{Du et~al.}}{{Du, C{\^o}t{\'e}, and Liu}}}
-\bibcite{fortuin2020gpvae}{{9}{2020}{{Fortuin et~al.}}{{Fortuin, Baranchuk, R{\"a}tsch, and Mandt}}}
-\bibcite{godahewa2021monash}{{10}{2021}{{Godahewa et~al.}}{{Godahewa, Bergmeir, Webb, Hyndman, and Montero-Manso}}}
-\bibcite{google2025timesfm25}{{11}{2025}{{Google Research}}{{}}}
-\bibcite{hazimeh2021dselect}{{12}{2021}{{Hazimeh et~al.}}{{Hazimeh, Zhao, Chowdhery, Sathiamoorthy, Chen, Mazumder, Hong, and Chi}}}
-\bibcite{holm1979simple}{{13}{1979}{{Holm}}{{}}}
-\bibcite{hyndman2006another}{{14}{2006}{{Hyndman \& Koehler}}{{Hyndman and Koehler}}}
-\bibcite{ke2017lightgbm}{{15}{2017}{{Ke et~al.}}{{Ke, Meng, Finley, Wang, Chen, Ma, Ye, and Liu}}}
-\bibcite{liu2025sundial}{{16}{2025}{{Liu et~al.}}{{Liu, Qin, Shi, Chen, Yang, Huang, Wang, and Long}}}
-\bibcite{mazumder2010softimpute}{{17}{2010}{{Mazumder et~al.}}{{Mazumder, Hastie, and Tibshirani}}}
-\bibcite{misir2017alors}{{18}{2017}{{M{\i }s{\i }r \& Sebag}}{{M{\i }s{\i }r and Sebag}}}
-\bibcite{nie2024imputeformer}{{19}{2024}{{Nie et~al.}}{{Nie, Qin, Ma, Mei, and Sun}}}
-\bibcite{rice1976algorithm}{{20}{1976}{{Rice}}{{}}}
-\bibcite{rubin1976inference}{{21}{1976}{{Rubin}}{{}}}
-\bibcite{stekhoven2012missforest}{{22}{2012}{{Stekhoven \& B{\"u}hlmann}}{{Stekhoven and B{\"u}hlmann}}}
-\bibcite{talukder2024totem}{{23}{2024}{{Talukder et~al.}}{{Talukder, Yue, and Gkioxari}}}
-\bibcite{tashiro2021csdi}{{24}{2021}{{Tashiro et~al.}}{{Tashiro, Song, Song, and Ermon}}}
-\bibcite{tashman2000outofsample}{{25}{2000}{{Tashman}}{{}}}
-\bibcite{vanbuuren2011mice}{{26}{2011}{{van Buuren \& Groothuis-Oudshoorn}}{{van Buuren and Groothuis-Oudshoorn}}}
-\bibcite{wang2025timemixerpp}{{27}{2025}{{Wang et~al.}}{{Wang, Li, Shi, Ye, Mo, Lin, Ju, Chu, and Jin}}}
-\bibcite{wang2024taskoriented}{{28}{2024}{{Wang et~al.}}{{Wang, Yang, Sun, Wen, and Wang}}}
-\bibcite{yu2016trmf}{{29}{2016}{{Yu et~al.}}{{Yu, Rao, and Dhillon}}}
-\bibcite{zhang2026helix}{{30}{2026}{{Zhang et~al.}}{{Zhang, Du, Zhang, Yu, and Qu}}}
-\bibcite{zhao2021automatic}{{31}{2021}{{Zhao et~al.}}{{Zhao, Rossi, and Akoglu}}}
-\bibcite{zhou2020neuralucb}{{32}{2020}{{Zhou et~al.}}{{Zhou, Li, and Gu}}}
-\bibcite{zhou2021informer}{{33}{2021}{{Zhou et~al.}}{{Zhou, Zhang, Peng, Zhang, Li, Xiong, and Zhang}}}
-\citation{rubin1976inference}
-\citation{zhou2021informer}
-\citation{godahewa2021monash}
-\@writefile{toc}{\contentsline {section}{\numberline {A}Detailed Experimental Protocol}{11}{appendix.A}\protected@file@percent }
-\newlabel{app:protocol}{{A}{11}{Detailed Experimental Protocol}{appendix.A}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {A.1}Episode construction and partitions}{11}{subsection.A.1}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces R2 episode construction. Dataset caps are reached in the common-16 and LOFO analyses.}}{11}{table.4}\protected@file@percent }
-\newlabel{tab:protocol-details}{{4}{11}{R2 episode construction. Dataset caps are reached in the common-16 and LOFO analyses}{table.4}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {A.2}Dataset inventory}{11}{subsection.A.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {A.3}Candidate registry and native validity}{11}{subsection.A.3}\protected@file@percent }
-\citation{google2025timesfm25}
+\@writefile{toc}{\contentsline {paragraph}{Imputation and downstream prediction.}{2}{section*.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Missingness-aware and pretrained forecasting.}{2}{section*.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Statistical repair and forecast combination.}{2}{section*.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}Problem Setting}{2}{section.3}\protected@file@percent }
+\newlabel{sec:setting}{{3}{2}{Problem Setting}{section.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Peer Repair and Fusion{}. Prefix observations fit the peer regressions and VAR. At prediction time, regressions fill only missing target cells in the most recent 192 hours. Earlier history and auxiliary entries retain their original values or missingness. The repaired long history supplies one frozen Chronos-2 forecast. A second branch filters the unrepaired recent observations with the VAR and forecasts its final state. The two point predictions receive fixed equal weights. All input observations precede the forecast origin.}}{3}{figure.1}\protected@file@percent }
+\newlabel{fig:method}{{1}{3}{\method {}. Prefix observations fit the peer regressions and VAR. At prediction time, regressions fill only missing target cells in the most recent 192 hours. Earlier history and auxiliary entries retain their original values or missingness. The repaired long history supplies one frozen Chronos-2 forecast. A second branch filters the unrepaired recent observations with the VAR and forecasts its final state. The two point predictions receive fixed equal weights. All input observations precede the forecast origin}{figure.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Peer Repair and Forecast Fusion}{3}{section.4}\protected@file@percent }
+\newlabel{sec:method}{{4}{3}{Peer Repair and Forecast Fusion}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Prefix-Fitted Peer Regression}{3}{subsection.4.1}\protected@file@percent }
+\newlabel{eq:ridge}{{1}{3}{Prefix-Fitted Peer Regression}{equation.4.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Protected Long-History Construction}{3}{subsection.4.2}\protected@file@percent }
+\newlabel{eq:protected}{{2}{3}{Protected Long-History Construction}{equation.4.2}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Prediction procedure. Statistical fitting uses only the historical prefix; steps 2--6 use only information available before the origin.}}{4}{table.1}\protected@file@percent }
+\newlabel{alg:procedure}{{1}{4}{Prediction procedure. Statistical fitting uses only the historical prefix; steps 2--6 use only information available before the origin}{table.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Statistical Forecast and Fixed Fusion}{4}{subsection.4.3}\protected@file@percent }
+\newlabel{eq:var}{{3}{4}{Statistical Forecast and Fixed Fusion}{equation.4.3}{}}
+\newlabel{eq:filter}{{4}{4}{Statistical Forecast and Fixed Fusion}{equation.4.4}{}}
+\newlabel{eq:fusion}{{5}{4}{Statistical Forecast and Fixed Fusion}{equation.4.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Properties and Computational Requirements}{4}{subsection.4.4}\protected@file@percent }
+\newlabel{sec:properties}{{4.4}{4}{Properties and Computational Requirements}{subsection.4.4}{}}
+\@writefile{toc}{\contentsline {paragraph}{Preserved information.}{4}{section*.4}\protected@file@percent }
+\citation{uci2017beijing}
+\citation{hdbavailability}
+\@writefile{toc}{\contentsline {paragraph}{When fusion lowers squared error.}{5}{section*.5}\protected@file@percent }
+\newlabel{eq:identity}{{6}{5}{When fusion lowers squared error}{equation.4.6}{}}
+\@writefile{toc}{\contentsline {paragraph}{Fitting and inference cost.}{5}{section*.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {5}Experimental Evaluation}{5}{section.5}\protected@file@percent }
+\newlabel{sec:experiments}{{5}{5}{Experimental Evaluation}{section.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Data, Information and Metrics}{5}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Beijing sensor forecasting.}{5}{section*.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{HDB component-transfer population.}{5}{section*.8}\protected@file@percent }
 \citation{ansari2025chronos2}
-\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Common-16 confirmation families and dataset versions. Job Claims is added only to LOFO-17.}}{12}{table.5}\protected@file@percent }
-\newlabel{tab:data-inventory-r2}{{5}{12}{Common-16 confirmation families and dataset versions. Job Claims is added only to LOFO-17}{table.5}{}}
-\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Executed imputation candidates.}}{12}{table.6}\protected@file@percent }
-\newlabel{tab:candidate-pool-r2}{{6}{12}{Executed imputation candidates}{table.6}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {A.4}Forecaster interfaces}{12}{subsection.A.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {B}Method and Control Details}{12}{appendix.B}\protected@file@percent }
-\newlabel{app:method-details}{{B}{12}{Method and Control Details}{appendix.B}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {B.1}Training targets}{12}{subsection.B.1}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces ETT development decisions. Lower MASE or negative learned-minus-blend difference is preferred. No confirmatory inference is attached to this table.}}{13}{table.7}\protected@file@percent }
-\newlabel{tab:target-development}{{7}{13}{ETT development decisions. Lower MASE or negative learned-minus-blend difference is preferred. No confirmatory inference is attached to this table}{table.7}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {B.2}Feature policies}{13}{subsection.B.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces Router feature groups. All quantities are available from training history, the corrupted context, candidate metadata, or candidate outputs.}}{13}{table.8}\protected@file@percent }
-\newlabel{tab:feature-groups-r2}{{8}{13}{Router feature groups. All quantities are available from training history, the corrupted context, candidate metadata, or candidate outputs}{table.8}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {B.3}Graph, pair labels, and solvers}{13}{subsection.B.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {B.4}External selector adaptations}{13}{subsection.B.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {section}{\numberline {C}Full Confirmatory and Sensitivity Results}{14}{appendix.C}\protected@file@percent }
-\newlabel{app:full-results}{{C}{14}{Full Confirmatory and Sensitivity Results}{appendix.C}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {C.1}Six fixed tests}{14}{subsection.C.1}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces Global six-test decision table. An unavailable required component forces the joint raw value to one.}}{14}{table.9}\protected@file@percent }
-\newlabel{tab:six-fixed}{{9}{14}{Global six-test decision table. An unavailable required component forces the joint raw value to one}{table.9}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {C.2}Tail behavior of complete components}{14}{subsection.C.2}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces Tail statistics for tested-minus-reference MASE. Worse rate is the fraction with positive paired difference.}}{14}{table.10}\protected@file@percent }
-\newlabel{tab:component-tail}{{10}{14}{Tail statistics for tested-minus-reference MASE. Worse rate is the fraction with positive paired difference}{table.10}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {C.3}Descriptive external-selector comparisons}{14}{subsection.C.3}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces Descriptive family-macro differences against external sequence selectors. Negative values favor the \textsc  {B-FAIS}\xspace  core. C, T, and S denote Chronos-2, TimesFM\nobreakspace  {}2.5, and Sundial.}}{15}{table.11}\protected@file@percent }
-\newlabel{tab:external-descriptive}{{11}{15}{Descriptive family-macro differences against external sequence selectors. Negative values favor the \bfais core. C, T, and S denote Chronos-2, TimesFM~2.5, and Sundial}{table.11}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {C.4}Router-seed verification}{15}{subsection.C.4}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {C.5}Incomplete-prefix sensitivity}{15}{subsection.C.5}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {12}{\ignorespaces No-complete-prefix minus standard-prefix sensitivity on 2,340 pairs and 16 families.}}{15}{table.12}\protected@file@percent }
-\newlabel{tab:prefix-sensitivity}{{12}{15}{No-complete-prefix minus standard-prefix sensitivity on 2,340 pairs and 16 families}{table.12}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {C.6}Natural-missing details}{15}{subsection.C.6}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {13}{\ignorespaces Distribution of \textsc  {B-FAIS}\xspace  MASE on the 72 natural-missing episodes.}}{15}{table.13}\protected@file@percent }
-\newlabel{tab:native-tail}{{13}{15}{Distribution of \bfais MASE on the 72 natural-missing episodes}{table.13}{}}
-\@writefile{toc}{\contentsline {section}{\numberline {D}Artifact Integrity and Reproducibility}{15}{appendix.D}\protected@file@percent }
-\newlabel{app:integrity}{{D}{15}{Artifact Integrity and Reproducibility}{appendix.D}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {D.1}Artifact map}{15}{subsection.D.1}\protected@file@percent }
-\citation{chen2017beijing}
-\@writefile{lot}{\contentsline {table}{\numberline {14}{\ignorespaces Primary machine-readable evidence files.}}{16}{table.14}\protected@file@percent }
-\newlabel{tab:artifact-map}{{14}{16}{Primary machine-readable evidence files}{table.14}{}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {D.2}Resource accounting}{16}{subsection.D.2}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {D.3}Legacy separation and software checks}{16}{subsection.D.3}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {D.4}Replication scope}{16}{subsection.D.4}\protected@file@percent }
-\gdef \@abspage@last{16}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Evaluation populations. Windows are prediction tasks, and sites within a source are correlated. All panels are developmental. The HDB study evaluates available statistical-component variants, with no recorded result for the exact peer-regression primary.}}{6}{table.2}\protected@file@percent }
+\newlabel{tab:data}{{2}{6}{Evaluation populations. Windows are prediction tasks, and sites within a source are correlated. All panels are developmental. The HDB study evaluates available statistical-component variants, with no recorded result for the exact peer-regression primary}{table.2}{}}
+\@writefile{toc}{\contentsline {paragraph}{Evaluation metric.}{6}{section*.9}\protected@file@percent }
+\newlabel{eq:metrics}{{7}{6}{Evaluation metric}{equation.5.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Comparators and Fitting Budgets}{6}{subsection.5.2}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Beijing results. Each row has one fixed definition across panels. Long histories contain 8192 hours; unqualified inputs include the available local and peer variables. ``Targets only'' changes the variables supplied to the forecaster. Values are standardized MAE/MSE; lower is better. Bold marks the best value in each displayed column.}}{7}{table.3}\protected@file@percent }
+\newlabel{tab:main}{{3}{7}{Beijing results. Each row has one fixed definition across panels. Long histories contain 8192 hours; unqualified inputs include the available local and peer variables. ``Targets only'' changes the variables supplied to the forecaster. Values are standardized MAE/MSE; lower is better. Bold marks the best value in each displayed column}{table.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}Main Results on Natural Sensor Outages}{7}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.4}History, Repair and Fusion Effects}{7}{subsection.5.4}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces Component comparison on the 45 natural-outage Beijing windows. Each line retains its repair and fusion rule while changing only the history supplied to Chronos-2. The repair region and VAR filtering window remain 192 hours, and prefix-fitted parameters are unchanged. The plot reports observed station-macro errors; it does not show independent replicate uncertainty.}}{8}{figure.2}\protected@file@percent }
+\newlabel{fig:components}{{2}{8}{Component comparison on the 45 natural-outage Beijing windows. Each line retains its repair and fusion rule while changing only the history supplied to Chronos-2. The repair region and VAR filtering window remain 192 hours, and prefix-fitted parameters are unchanged. The plot reports observed station-macro errors; it does not show independent replicate uncertainty}{figure.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.5}Transfer of Statistical Components to HDB}{8}{subsection.5.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Discussion}{8}{section.6}\protected@file@percent }
+\newlabel{sec:discussion}{{6}{8}{Discussion}{section.6}{}}
+\bibdata{current_references}
+\bibcite{ansari2025chronos2}{{1}{2025}{{Ansari et~al.}}{{Ansari, Shchur, K{\"u}ken, Auer, Han, Mercado, Rangapuram, Shen, Stella, Zhang, Goswami, Kapoor, Maddix, Guerron, Hu, Yin, Erickson, Desai, Wang, Rangwala, Karypis, Wang, and Bohlke-Schneider}}}
+\bibcite{bates1969combination}{{2}{1969}{{Bates \& Granger}}{{Bates and Granger}}}
+\bibcite{uci2017beijing}{{3}{2017}{{Chen}}{{}}}
+\bibcite{du2023saits}{{4}{2023}{{Du et~al.}}{{Du, C{\^o}t{\'e}, and Liu}}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces HDB component-transfer results. Long histories use all available pre-origin values up to the fixed context limit. The exact peer-regression primary is unmeasured on HDB; Gaussian rows are separately defined component variants. Bold marks the lowest displayed error.}}{9}{table.4}\protected@file@percent }
+\newlabel{tab:hdb}{{4}{9}{HDB component-transfer results. Long histories use all available pre-origin values up to the fixed context limit. The exact peer-regression primary is unmeasured on HDB; Gaussian rows are separately defined component variants. Bold marks the lowest displayed error}{table.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {7}Conclusion}{9}{section.7}\protected@file@percent }
+\newlabel{sec:conclusion}{{7}{9}{Conclusion}{section.7}{}}
+\bibcite{du2024tsibench}{{5}{2024}{{Du et~al.}}{{Du, Wang, Qian, Yang, Ibrahim, Liu, Wang, Liu, Zhao, Zhou, Wang, Ding, Liang, Prakash, and Wen}}}
+\bibcite{hoerl1970ridge}{{6}{1970}{{Hoerl \& Kennard}}{{Hoerl and Kennard}}}
+\bibcite{hdbavailability}{{7}{2026}{{Housing \& Development Board}}{{}}}
+\bibcite{hu2021lora}{{8}{2021}{{Hu et~al.}}{{Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang, and Chen}}}
+\bibcite{krogh1994ensembles}{{9}{1994}{{Krogh \& Vedelsby}}{{Krogh and Vedelsby}}}
+\bibcite{lemorvan2021good}{{10}{2021}{{Le~Morvan et~al.}}{{Le~Morvan, Josse, Scornet, and Varoquaux}}}
+\bibcite{motmsoftware}{{11}{2025}{{Le~Naour et~al.}}{{Le~Naour, Nabil, and Agoua}}}
+\bibcite{peng2025s4m}{{12}{2025}{{Peng et~al.}}{{Peng, Yang, Zhang, and Li}}}
+\bibcite{wang2025timemixerpp}{{13}{2025}{{Wang et~al.}}{{Wang, Li, Shi, Ye, Mo, Lin, Ju, Chu, and Jin}}}
+\bibstyle{iclr2027_conference}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Fitting Details and Comparison Definitions}{11}{appendix.A}\protected@file@percent }
+\newlabel{app:training}{{A}{11}{Fitting Details and Comparison Definitions}{appendix.A}{}}
+\@writefile{toc}{\contentsline {paragraph}{Primary procedure.}{11}{section*.11}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Gaussian and local-regression controls.}{11}{section*.12}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Neural imputation.}{11}{section*.13}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Low-rank adaptation.}{11}{section*.14}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {B}Station-Level Natural-Outage Results}{11}{appendix.B}\protected@file@percent }
+\newlabel{app:stations}{{B}{11}{Station-Level Natural-Outage Results}{appendix.B}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Additional Beijing comparisons. The seven imputation rows repair only the two target variables in the 192-hour input; auxiliary values and missingness remain unchanged. The eight-candidate mean and median include those seven forecasts and native prediction. Regression and LoRA controls use the input definitions described in the text. Lower standardized MAE/MSE is better; bold marks the best displayed value.}}{12}{table.5}\protected@file@percent }
+\newlabel{tab:additional}{{5}{12}{Additional Beijing comparisons. The seven imputation rows repair only the two target variables in the 192-hour input; auxiliary values and missingness remain unchanged. The eight-candidate mean and median include those seven forecasts and native prediction. Regression and LoRA controls use the input definitions described in the text. Lower standardized MAE/MSE is better; bold marks the best displayed value}{table.5}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces Natural-outage station results for Peer Repair and Fusion{}. Relative changes compare with long native prediction plus VAR. Negative changes denote lower error. The twelve stations are related observations from one source.}}{12}{table.6}\protected@file@percent }
+\newlabel{tab:stations}{{6}{12}{Natural-outage station results for \method {}. Relative changes compare with long native prediction plus VAR. Negative changes denote lower error. The twelve stations are related observations from one source}{table.6}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {C}HDB Observation Semantics and Reserved Periods}{12}{appendix.C}\protected@file@percent }
+\newlabel{app:hdb}{{C}{12}{HDB Observation Semantics and Reserved Periods}{appendix.C}{}}
+\gdef \@abspage@last{12}

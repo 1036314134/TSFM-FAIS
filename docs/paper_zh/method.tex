@@ -1,0 +1,108 @@
+\section{问题定义}
+\label{sec:setting}
+
+设 $t$ 为预测起点，$D$ 为可用本地变量与同伴变量的总数，$\mathcal T$ 为包含 $K$ 个目标变量的集合。历史 $O_{<t}$ 包含观测值和缺失项；当变量 $j$ 在时刻 $u<t$ 有观测时，掩码 $M_{uj}=1$。较早的拟合前缀结束于 $t_0<t$。对每个变量，利用前缀原观测均值 $\mu_j$ 和总体标准差 $s_j$ 定义 $z_{uj}=(O_{uj}-\mu_j)/s_j$。不超过 $10^{-12}$ 的标准差置为 1，缺失位置在变换后仍保持缺失。
+
+冻结点预测接口 $F_H$ 返回未来 $H$ 步的 0.5 分位预测。方法允许在前缀上拟合统计参数，并读取 $t$ 之前的观测；当前人工隐藏值、同伴序列的未来实际测量和未来目标 $Y\in\mathbb R^{H\times K}$ 均不可用于计算。未来观测掩码 $V$ 仅用于评分。该设置允许目标数据前缀上的统计拟合，因此不将整个流程描述为完全免训练预测。
+
+\section{同伴序列修复与预测融合}
+\label{sec:method}
+
+图~\ref{fig:method}~给出方法流程。近期修复窗口为 $W=192$ 小时，预测器上下文包含 $L_t=\min(8192,t)$ 个可用小时位置。回归系数与 VAR 参数使用同一历史前缀拟合。近期观测掩码确定哪些回归预测变量可用，同伴选择规则与融合权重均保持不变。
+
+\begin{figure}[t]
+\centering
+\input{paper_zh/method_figure.tex}
+\caption{\method{}。前缀观测用于拟合同伴回归和 VAR。预测时，回归仅修复最近 192 小时中的目标缺失单元；更早历史及辅助变量保留原值或缺失状态。修复后的长历史产生一次冻结 Chronos-2 预测，另一分支利用 VAR 对未修复的近期观测进行滤波并外推最终状态。两个点预测采用固定等权融合，全部输入观测均早于预测起点。}
+\label{fig:method}
+\end{figure}
+
+\subsection{基于前缀拟合的同伴回归}
+
+对每个 PM 目标，利用拟合前缀中共同可观测的位置，按照与该目标的绝对相关性选取三个其他站点。选出的六条 PM 通道追加到原有十一个数值变量中，同伴身份在评价前固定。对于时刻 $u$ 的缺失目标 $k$，令 $\mathcal S_{uk}$ 为该时刻实际有观测的其他变量集合。估计值不作为原观测重新输入回归。
+
+对每个不同的目标与预测变量集合 $(k,\mathcal S)$，令 $\mathcal V_{k,\mathcal S}$ 表示目标及 $\mathcal S$ 中全部变量均可观测的前缀行，要求至少存在 128 行。若支持不足，则依次移除与目标 $k$ 的前缀绝对相关性最小的变量，直至支持充足；相关性相同时按固定变量顺序处理。记 $n=|\mathcal V_{k,\mathcal S}|$，拟合目标为
+\begin{equation}
+ (\widehat\alpha_{k,\mathcal S},\widehat\beta_{k,\mathcal S})
+ =\arg\min_{\alpha,\beta}\frac1n\sum_{u\in\mathcal V_{k,\mathcal S}}
+ (z_{uk}-\alpha-z_{u,\mathcal S}^{\mathsf T}\beta)^2
+ +\lambda\|\beta\|_2^2,\qquad \lambda=10^{-3}.
+ \label{eq:ridge}
+\end{equation}
+截距不受惩罚。式~\eqref{eq:ridge}~通过正则化线性方程组求解，并缓存重复预测变量子集的系数。缺失值估计为 $\widehat z_{uk}=\widehat\alpha_{k,\mathcal S}+z_{u,\mathcal S}^{\mathsf T}\widehat\beta_{k,\mathcal S}$。若不存在受支持的预测变量，则使用固定回退：在可支持的位置采用线性插值，其余位置使用前向延续值；历史完全没有锚点时采用目标前缀中位数。全部回退信息均来自 $t$ 之前。
+
+\subsection{受保护的长历史构造}
+
+设 $Z^{\mathrm{long}}$ 为区间 $[t-L_t,t)$ 上的标准化历史。执行修复前，先用当前带掩码的后缀替换其最后 $W$ 个位置，确保扩展上下文时不会恢复人工隐藏值。定义目标修复区域 $\mathcal R_t=\{(u,k):t-W\leq u<t,\ k\in\mathcal T,\ M_{uk}=0\}$。预测器接收
+\begin{equation}
+ \widetilde Z_{uj}=\begin{cases}
+ \widehat z_{uj}, & (u,j)\in\mathcal R_t,\\
+ Z^{\mathrm{long}}_{uj}, & \text{其他位置}.
+ \end{cases}
+ \label{eq:protected}
+\end{equation}
+式~\eqref{eq:protected}~保留所有更早缺口和辅助变量缺口的原生状态。十一个本地变量全部保留；若某个追加同伴在当前 192 小时内完全没有观测，则从各比较方法的模型输入中一致移除，扩展历史时仍使用这一固定选择。随后通过分组多变量接口产生目标预测 $P=F_H(\widetilde Z)$。预测器原始权重、内部归一化与注意力计算均保持不变。
+
+\subsection{统计预测与固定融合}
+
+统计分支采用标准化的 $D$ 变量系统
+\begin{equation}
+ z_{u+1}=Az_u+b+\varepsilon_u,\qquad \varepsilon_u\sim\mathcal N(0,Q).
+ \label{eq:var}
+\end{equation}
+一阶 VAR 在前缀中原本完整的相邻行上拟合，采用中心化岭回归，惩罚系数为 $10^{-3}$，要求至少存在 128 个完整转移对。拟合后的转移矩阵乘以 $\min(1,0.99/\rho(A))$，其中 $\rho$ 为谱半径；随后利用转移对均值重新计算 $b$。若 $S$ 为残差协方差，则设置 $Q=0.95S+0.05\operatorname{diag}(S)+10^{-6}I$。初始均值与协方差来自完整前缀行，协方差使用相同的正则化方式。
+
+对于每个预测起点，该分支对\emph{未修复}的近期 $W$ 个观测位置进行滤波。设 $m^-,C^-$ 为预测状态的均值与协方差，$\mathcal O_u$ 为已观测坐标集合，则精确观测更新为
+\begin{align}
+ m_u&=m^-+C^-_{:,\mathcal O_u}(C^-_{\mathcal O_u,\mathcal O_u})^{-1}
+          (z_{u,\mathcal O_u}-m^-_{\mathcal O_u}),\nonumber\\
+ C_u&=C^- - C^-_{:,\mathcal O_u}(C^-_{\mathcal O_u,\mathcal O_u})^{-1}C^-_{\mathcal O_u,:}.
+ \label{eq:filter}
+\end{align}
+观测集合为空时，预测状态矩保持不变。已观测坐标直接赋予原值，相应条件协方差置为零。相邻观测之间通过式~\eqref{eq:var}~传播状态矩。从最终滤波状态 $m_{t-1}$ 出发，按 $m_{t-1+h}=Am_{t-2+h}+b$ 确定性递推，其中 $h=1,\ldots,H$，得到目标预测 $G_h=(m_{t-1+h})_{\mathcal T}$。该高斯系统是工作统计近似，不假定其等同于真实传感器过程。
+
+最终返回预测
+\begin{equation}
+ \widehat Y_{hk}=\mu_k+s_k\widehat Z_{hk},\qquad
+ \widehat Z=\tfrac12P+\tfrac12G.
+ \label{eq:fusion}
+\end{equation}
+式~\eqref{eq:fusion}~对所有站点、目标、预测跨度和缺失面板使用相同权重，不引入学习式路由、依赖结果的阈值或按评价面板选择修复算法。式~\eqref{eq:filter}~中的 VAR 状态直接由观测推断，不依赖同伴回归修复值。因此，两个分支在共同的预测前信息下采用不同的统计构造。
+
+表~\ref{alg:procedure}~汇总单个预测起点的拟合与预测步骤。在 PM 缺测实例中，仍在上报的本地变量与同伴传感器用于估计目标缺失值，两个预测分支均保留各自规定的预测前观测。
+
+\begin{table}[t]
+\caption{预测过程。统计拟合仅使用历史前缀，步骤 2--6 仅使用预测起点之前可获得的信息。}
+\label{alg:procedure}
+\centering\small
+\begin{tabular}{r p{0.88\linewidth}}
+\toprule
+ & \textbf{输入：}前缀数据、已观测长历史及掩码、固定同伴集合、预测跨度 $H$。\\
+1 & 拟合前缀尺度、具有观测支持的同伴回归模型及稳定 VAR。\\
+2 & 提取最近 $W$ 个观测位置，保留当前掩码并构造长历史输入。\\
+3 & 利用实际有观测的预测变量，按式~\eqref{eq:ridge}~估计近期目标缺失值。\\
+4 & 仅在 $\mathcal R_t$ 中写入估计值，调用冻结预测器一次。\\
+5 & 对近期原观测进行滤波，递推得到 VAR 预测。\\
+6 & 返回式~\eqref{eq:fusion}~中的固定均值，并还原到目标变量量纲。\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{方法性质与计算需求}
+\label{sec:properties}
+
+\paragraph{信息保持性质。}
+修复后的输入在全部原观测单元、辅助变量单元以及 $t-W$ 之前的位置上，与给定输入保持一致。这一结论直接来自式~\eqref{eq:protected}~的两个分支。先扩展历史、再写入带掩码后缀，也可保持人工隐藏状态。前缀拟合系数、当前已观测预测变量和预测前回退值共同确定每个修复值，因此方法仅依赖声明的预测前信息。该性质保证输入使用符合定义，不提供预测准确度保证。
+
+\paragraph{融合降低平方误差的条件。}
+对于固定的评分坐标，记 $e_P=P-Y^z$、$e_G=G-Y^z$，$\langle\cdot,\cdot\rangle_V$ 为这些坐标上按目标平衡的平均内积。已有平均预测恒等式给出
+\begin{equation}
+ \|\tfrac12(e_P+e_G)\|_V^2
+ =\tfrac12\|e_P\|_V^2+\tfrac12\|e_G\|_V^2
+ -\tfrac14\|P-G\|_V^2.
+ \label{eq:identity}
+\end{equation}
+对期望或相同站点聚合后，式~\eqref{eq:identity}~仍成立。融合相对 $P$ 降低平方误差的充要条件为 $\|e_G\|_V^2+2\langle e_P,e_G\rangle_V<3\|e_P\|_V^2$。统计分支不准确时，较大的预测分歧不足以保证融合收益。因此，实验必须分别保留 $G$、$P$ 及其固定均值；本文不对 MAE 假定类似的恒等关系。
+
+\paragraph{拟合与推理开销。}
+设前缀包含 $N$ 行，共有 $J$ 个不同的目标与预测变量子集，直接回归拟合的开销至多为 $O(J(ND^2+D^3))$，重复子集复用缓存系数。修复计算为 $O(WKD)$，稠密滤波至多为 $O(WD^3)$，未来外推为 $O(HD^2)$。除上述统计操作外，主方法只需对长历史执行一次冻结模型前向预测，神经参数不进行训练更新。多候选预测池和 LoRA 分别产生额外的推理与训练成本，实验缓存不改变这些需求。
