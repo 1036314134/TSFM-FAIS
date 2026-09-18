@@ -120,6 +120,45 @@ def test_new_priority_process_only_stops_this_worker_tree(worker, tmp_path):
     assert state["child_pid"] is None and state["yield_count"] == 1
 
 
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_child_exit_during_descendant_enumeration_preserves_real_exit_status(
+    worker, tmp_path, exit_code
+):
+    polls = iter([None, exit_code])
+    child = SimpleNamespace(pid=111, returncode=None)
+
+    def poll():
+        child.returncode = next(polls)
+        return child.returncode
+
+    def children(recursive):
+        assert recursive
+        raise worker.psutil.NoSuchProcess(111)
+
+    child.poll = poll
+    tracked = SimpleNamespace(pid=111, is_running=lambda: True, children=children)
+
+    def inspect(owned):
+        assert owned == {os.getpid()}
+        return sample()
+
+    state = {"stage": "finished_child", "yield_count": 0, "child_pid": 111}
+    kwargs = dict(
+        inspect=inspect,
+        sleeper=lambda _: None,
+        stop=lambda *args, **kw: pytest.fail("an exited child must not be terminated"),
+    )
+    if exit_code:
+        with pytest.raises(RuntimeError, match="exited with code 7"):
+            worker.watch_child(child, tracked, state, tmp_path / "state.json", **kwargs)
+    else:
+        assert (
+            worker.watch_child(child, tracked, state, tmp_path / "state.json", **kwargs)
+            == "completed"
+        )
+        assert state["child_pid"] is None
+
+
 def test_completed_stage_is_skipped_but_partial_marker_is_not(worker, tmp_path):
     path = tmp_path / "analysis-forecaster-transfer-v001"
     path.mkdir()

@@ -1,0 +1,88 @@
+{
+  "jobs": [
+    {
+      "name": "r40_prepare_attention",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "prepare",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r40\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\reliability_attention_experiment.py",
+        "--",
+        "--phase",
+        "prepare",
+        "--run-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r40"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r40\\attention-inputs-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r40_forecast_attention",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "forecast",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r40\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\reliability_attention_experiment.py",
+        "--",
+        "--phase",
+        "forecast",
+        "--run-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r40"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r40\\attention-forecasts-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r40_evaluate_attention",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "evaluate",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r40\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\reliability_attention_experiment.py",
+        "--",
+        "--phase",
+        "evaluate",
+        "--run-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r40"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r40\\attention-results-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r40_audit_attention",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "audit",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r40\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\reliability_attention_experiment.py",
+        "--",
+        "--phase",
+        "audit",
+        "--run-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r40"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r40\\attention-audit-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    }
+  ]
+}

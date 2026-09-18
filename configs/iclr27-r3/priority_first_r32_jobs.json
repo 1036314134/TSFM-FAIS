@@ -1,0 +1,128 @@
+{
+  "jobs": [
+    {
+      "name": "r32_prepare_calibration",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "prepare",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\prepare_cooutage_calibration.py",
+        "--",
+        "--output-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibration-inputs-v001"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibration-inputs-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r32_forecast_calibration",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "forecast",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\forecast_peer_outage.py",
+        "--",
+        "--output-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibration-forecasts-v001",
+        "--input-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibration-inputs-v001"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibration-forecasts-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r32_train_calibration",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "train",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\train_cooutage_calibration.py",
+        "--",
+        "--output-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibration-training-v001",
+        "--input-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibration-inputs-v001",
+        "--forecast-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibration-forecasts-v001"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibration-training-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r32_forecast_calibrated",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "forecast",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\forecast_cooutage_calibration.py",
+        "--",
+        "--output-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibrated-forecasts-v001",
+        "--training-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibration-training-v001"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibrated-forecasts-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r32_evaluate_calibrated",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "evaluate",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\readout_cooutage_calibration.py",
+        "--",
+        "--output-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibrated-results-v001"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibrated-results-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r32_audit_calibrated",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "audit",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\audit_cooutage_calibration.py",
+        "--",
+        "--output-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibrated-audit-v001",
+        "--forecast-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibrated-forecasts-v001"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r32\\calibrated-audit-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    }
+  ]
+}

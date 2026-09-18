@@ -115,9 +115,15 @@ def foreign_python_pids(owned: set[int], processes=None) -> list[int]:
 
 def owned_pids(child=None) -> set[int]:
     owned = {os.getpid()}
-    if child is not None and child.is_running():
-        owned.add(child.pid)
-        owned.update(process.pid for process in child.children(recursive=True))
+    if child is not None:
+        try:
+            if child.is_running():
+                descendants = child.children(recursive=True)
+                owned.add(child.pid)
+                owned.update(process.pid for process in descendants)
+        except psutil.NoSuchProcess:
+            # Exit may race with enumeration; the Popen handle still supplies its exit code.
+            pass
     return owned
 
 

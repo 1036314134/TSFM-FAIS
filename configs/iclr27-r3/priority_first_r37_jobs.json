@@ -1,0 +1,88 @@
+{
+  "jobs": [
+    {
+      "name": "r37_prepare_moment",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "prepare",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r37\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\posterior_token_experiment.py",
+        "--",
+        "--phase",
+        "prepare",
+        "--run-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r37"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r37\\moment-inputs-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r37_forecast_moment",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "forecast",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r37\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\posterior_token_experiment.py",
+        "--",
+        "--phase",
+        "forecast",
+        "--run-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r37"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r37\\moment-forecasts-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r37_evaluate_moment",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "evaluate",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r37\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\posterior_token_experiment.py",
+        "--",
+        "--phase",
+        "evaluate",
+        "--run-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r37"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r37\\moment-results-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r37_audit_moment",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "audit",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r37\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\posterior_token_experiment.py",
+        "--",
+        "--phase",
+        "audit",
+        "--run-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r37"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r37\\moment-audit-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    }
+  ]
+}

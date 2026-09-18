@@ -1,0 +1,69 @@
+{
+  "jobs": [
+    {
+      "name": "r29_predict_query_roles",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "forecast",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r29\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\query_role_experiment.py",
+        "--",
+        "--phase",
+        "predict",
+        "--output-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r29\\role-forecasts-v001"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r29\\role-forecasts-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r29_readout_query_roles",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "evaluate",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r29\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\query_role_experiment.py",
+        "--",
+        "--phase",
+        "readout",
+        "--output-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r29\\role-results-v001"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r29\\role-results-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r29_audit_query_roles",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "audit",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r29\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\query_role_experiment.py",
+        "--",
+        "--phase",
+        "audit",
+        "--output-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r29\\role-audit-v001",
+        "--forecast-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r29\\role-forecasts-v001"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r29\\role-audit-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    }
+  ]
+}

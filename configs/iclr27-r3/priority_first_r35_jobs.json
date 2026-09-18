@@ -1,0 +1,88 @@
+{
+  "jobs": [
+    {
+      "name": "r35_prepare_dynamic",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "prepare",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r35\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\dynamic_posterior_experiment.py",
+        "--",
+        "--phase",
+        "prepare",
+        "--run-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r35"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r35\\dynamic-inputs-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r35_forecast_dynamic",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "forecast",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r35\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\dynamic_posterior_experiment.py",
+        "--",
+        "--phase",
+        "forecast",
+        "--run-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r35"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r35\\dynamic-forecasts-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r35_evaluate_dynamic",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "evaluate",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r35\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\dynamic_posterior_experiment.py",
+        "--",
+        "--phase",
+        "evaluate",
+        "--run-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r35"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r35\\dynamic-results-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    },
+    {
+      "name": "r35_audit_dynamic",
+      "argv": [
+        "D:/Programme/Anaconda/envs/TSFM/python.exe",
+        "-u",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\run_replay_stage.py",
+        "--stage",
+        "audit",
+        "--record-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r35\\execution",
+        "--script",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\scripts\\dynamic_posterior_experiment.py",
+        "--",
+        "--phase",
+        "audit",
+        "--run-root",
+        "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r35"
+      ],
+      "completion_marker": "E:\\ZMY\\Github\\TSFM-FAIS\\artifacts\\iclr27-r35\\dynamic-audit-v001\\manifest.json",
+      "hard_timeout_seconds": 7200
+    }
+  ]
+}

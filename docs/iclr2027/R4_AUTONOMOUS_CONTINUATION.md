@@ -691,3 +691,315 @@ R26于01:35:54完成全部四阶段。新mae_repair自然L192 MAE/MSE=.591388/.8
 已向用户询问新的应用假设：推理时是否允许读取同一系统其他序列截至当前时刻的历史，所有对照共享同样信息。该问题改变允许的信息范围，等待回答；当前没有新预测实验。R27只读预检查：北京12站、PM2.5/PM10、以共同前缀至少128观测的绝对相关性取3候选；138个旧历史中1580个去重缺失位置有1162(73.54%)至少一站可观测，1041有三站可观测。不是预测效果，未读当前未来或用新储备试错。记录peer-information-preflight-v001和R27_PEER_INFORMATION_PREFLIGHT.md。用户的方法论文目标未达成。
 
 自动化fais已设为PAUSED，避免无实验时反复检查；等待用户明确相关序列历史是否属于允许的推理信息。30分钟规则保留供后续恢复。
+
+
+## 2026-09-16 R28 registered and launched
+
+User explicitly authorized continuing the revised Pro route. R28 fixes Chronos L192/H96/B96, all 301 old development histories, and 41 methods. Nine input-only smoke cases and 128 unique raw-query replays passed exactly; native one/nine-path controls agree. A CPU/GPU cumulative-weight arithmetic issue in the first independent smoke audit was corrected without changing tolerances or any future accuracy readout. The successful smoke source snapshot is preserved; subsequent readout-only additions export the prespecified internal-gap and auxiliary-availability descriptions. No training, external station data, or unused confirmation data are introduced. The queue is artifacts/iclr27-r28/gpu-queue-v001/state.json, with forecast, readout and audit jobs in configs/iclr27-r3/priority_first_r28_jobs.json. Primary and all stop rules are in docs/iclr2027/R28_CONDITIONING_PROTOCOL.md. While running, only check every 30 minutes and finish quietly; do not analyze partial scores. Analyze only after all stages complete. The R27 information question is not required for this original-information R28 route.
+
+
+## 2026-09-16 R28 complete; R29 query-role diagnostic
+
+R28 completed at 17:30:22 CST. All 4201 unique queries and all method calculations replayed exactly; 12341 window/24682 target scores passed with max difference 1.78e-14. Primary conditioned_repair=.585718562/.836456253, mean8=.583009665/.826801825, recent_mean8=.579760591/.818929727. Primary fails registered strong controls and stops. The recent_mean8 control improves mean8 by .5573% MAE/.9521% MSE, with 77.03% of net MAE gain from Beijing; without Beijing only .1577% MAE improvement and .4201% MSE deterioration. Preserve the control identity and do not tune B. Report docs/iclr2027/R28_CONDITIONING_RESULTS.md.
+
+A bounded original-information R29 diagnostic is independently registered in R29_QUERY_ROLE_PROTOCOL.md. It tests unknown-query rows versus rows providing known recent observations, motivated by native public target rows being padded unknown and by R28 conditional/unconditional and direct-query differences. The per-cell model loss also permits unknown entries, so R28 is not declared invalid or proven out of training distribution. A query/helper pair shares the same earlier history; only existing variables are copied, no other station or future data. Query-role repair, helper-role matched control, duplicate-unconditioned control and direct query control add four outputs to the entire R28 set, 45 methods. D doubles up to80 in first-stage calls; compute is disclosed. Same301 histories, one prespecified fallback, frozen weights, no training/new confirmation. Nine smoke histories passed public SDK comparison and48 independent raw-query replays exactly, no new accuracy scores read. After launch use artifacts/iclr27-r29/gpu-queue-v001/state.json, priority_first_r29_jobs.json and30-minute checks only while running.
+
+
+## 2026-09-16 R29 completed; information scope pending
+
+R29 finished at18:15:36 CST. All1800 queries and45 methods independently replayed exactly;13545 window/27090 target scores and hierarchical/leave-one-source aggregation passed, max metric difference1.42e-14. Primary query_role_repair=.587497574/.831645189 is worse than mean8=.583009665/.826801825, recent_mean8=.579760591/.818929727, and same-call helper_role_repair=.586799611/.824437239. Main and helper are worse in MAE than mean8 in all eight leave-one-source summaries. Stop this fixed role variant; no copy-count/B/seed/threshold/network expansion. The official-query interpretation did not resolve the downstream accuracy problem. R28/R29 and all earlier negative outcomes remain development evidence; no publication-ready method is established.
+
+Asked the user again whether the deployment can read same-system related-series histories through the current time; this changes the application information, and no answer has been received. Do not infer permission from silence. No predictive experiment is running; pause the heartbeat to avoid idle checks until the scope answer or a new user direction. Original-information experiments do not require the R27 peer assumption, but no further fixed-conditioning tuning is registered.
+
+Independent read-only work completed: reserve-lineage-v001 checks representative CSV grids and values against local Arrow entries. CPHL_30T CSV matches NRSDAR only, CPHL_15T matches NRSROT only, Water_Quality_Darwin CSV matches item_6/DOX2 only, SG_Carpark CSV matches RHM only. These single-column exports do not certify all Arrow series. dataset_info upstream descriptions/homepages/checksums are empty; raw upstream provenance, other series grids and pretraining overlap remain uncertified. No new forecast errors or training were used. Details in RESERVE_DATA_LINEAGE_20260916.md.
+
+
+## 2026-09-16 related histories authorized; R30 registered
+
+User explicitly allows same-system related histories through the forecast time and delegates routine scientific-scope decisions without repeated confirmation. This persists across turns; do not ask the same peer-availability permission again. Actual future inputs remain excluded and all strong controls share the same information. R30 uses the existing R27 prefix-selected three peers per each PM target,17 augmented variables, and fixed Chronos weights. Primary shifts to45 natural ongoing two-target missing windows with6+24k hours of observed missing age and H24; all12 stations appear.32 input-only candidates failed future original-observation support.48 complete-history anchors receive fixed24-hour local PM-channel outages;138 old H96 histories remain reference. All231 tasks remain development in one known source.
+
+Primary peer_ar_bridge uses prefix ridge and fitted AR1 residual bridging; no novelty claim is made for these classical components. Controls include plain/local ridge, linear residual bridging, reconciliation of native peer forecasts, native with/without peers, full17-column and target-only8-candidate pools, means/medians and12 transferred source-fixed outputs. Final37 methods per control addendum,8547 window/17094 target scores. Stronger17-D neural baselines have a fixed50-epoch/512-window prefix budget; source selection and regression use original20% prefixes only. All new F inputs share prefix z-units, and empty added-peer columns are dropped equally.
+
+Seven math/input tests passed. Seven no-outcome smoke cases covered6/24/54-hour outages and H24/H96. Both neural smoke fits succeeded;136 distinct model queries replayed exactly;37-method reconstruction difference0, independent regression/bridge input max scaled difference3.88e-16. No R30 forecast errors read. Protocol R30_PEER_OUTAGE_PROTOCOL.md plus R30_CONTROL_ADDENDUM.md, method_manifest.json and runtime snapshot frozen. Formal four-stage queue will use artifacts/iclr27-r30/gpu-queue-v001/state.json and priority_first_r30_jobs.json. While any formal stage runs, only check every30 minutes and finish quietly. Analyze after all four stages succeed.
+
+
+## 2026-09-16 R30 complete; R31 forecast-objective calibration preparing
+
+R30 completed21:58:41 CST.4515 unique queries and37 methods replayed exactly;8547/17094 scores passed with max difference5.33e-15. Natural H24 plain peer ridge=.430634479/.312649578 versus same-information native=.530193022/.435904182, a meaningful18.78%/28.28% improvement across11/12 stations. Yet primary AR bridge=.438062624/.317835739 loses to ridge and KNN, so that fixed variant stops. Synthetic reconstruction improves for AR/peer, while local ridge has worse imputation but better forecast; no reconstruction-based success claim. Full report R30_PEER_OUTAGE_RESULTS.md.
+
+R31 is now registered, not yet running. It tests forecast-loss-trained input mixing of cheap local/peer regressions against same-capacity imputation supervision and strong fixed input/output combinations. All supervision remains inside original20% prefix: bases/peer selection fit first10%, calibration tasks in second10%, deployment bases refit/reused at20%. No new evaluation outcome used for training. Native differentiated/public inference for a .5 mix agreed exactly, gradients finite, original weights frozen. Need implement and validate full calibration before formal launch. User permission for peers and routine scope choices persists; do not ask it again.
+
+
+## R31 registered and launched, 2026-09-16T23:49:26.486813+08:00
+
+R30 completed with all predictions and metrics verified. The fixed AR bridge is stopped; plain peer ridge is a strong natural H24 control, and reconstruction quality does not track downstream forecast quality on the synthetic panel. R31 tests source-trained forecast-loss input calibration between local and peer regression, with a same-capacity imputation-loss gate, global input weights, half input/output combinations, and global/station MAE-optimal fixed forecast portfolios. All learning stays in the original prefix: 3506-hour base fits, calibration ending by hour 7012, and R30 full-prefix deployment experts. The registered population is 288 source calibration tasks and 93 H24 evaluation tasks, 44 outputs. All remains development on one source.
+
+Thirteen focused tests passed. Six-source/four-evaluation smoke execution replays 117 source queries, 16 new evaluation queries and the last optimizer state/parameter update for all three models exactly, without reading smoke evaluation errors. Source and protocol snapshots, environment versions, model/method definitions and the six-stage queue are saved under artifacts/iclr27-r31. Formal worker 49140 is alive; startup stage r31_prepare_calibration. Existing fais heartbeat updated to this round at 30-minute cadence. During active formal execution, no analysis, new coding or repeated waits; inspect and end quietly. Retain event-based Windows completion notification. Research information scope is already authorized and will not be asked again.
+
+
+## R31 completed after numerical audit repair; R32 preparation
+
+R31 forecast_gate natural H24 MAE/MSE is 0.464297361/0.345330051, worse than peer ridge by 7.82%/10.45% and weaker than same-capacity imputation supervision. The source-target gate design is stopped. The first audit failed only because packed versus strided float64 fixed-output reductions rounded differently; original forecasts and all tolerances remain unchanged. Audit v002 replays 5529 source queries, 372 new evaluation queries and all three last optimizer updates exactly, and verifies all 4092 window/8184 target scores and station aggregations. The failed log and original script snapshot remain. See R31_FORECAST_CALIBRATION_RESULTS.md.
+
+Availability diagnostics expose a specific support gap: 81/90 natural target rows have auxiliary observation fractions below the source range; replacing this feature alone with its source mean changes frozen gate mean peer weight from 0.1614 to 0.5255, without computing new forecasts or accuracy. R32 registers three paired sensor-group interventions on the same 96 histories and labels, 864 tasks with one pass and unchanged total 864 updates, same capacity and loss controls, same frozen base imputers, and recalibrated fixed portfolios. It is a development mechanism test, not an established novel method or independent confirmation.
+
+
+## R32 formal launch, 2026-09-17T00:45:07.441206+08:00
+
+The registered six-stage R32 queue is running with worker 48444. Startup verified worker and child, first stage r32_prepare_calibration. Sixteen focused tests pass. Repaired smoke input reuse preserves all unchanged target-only arrays exactly; original R31 neural artifacts and training batches remain unchanged. The complete second smoke audit replays 116 source queries, 16 evaluation queries and all three last optimizer steps with zero differences, without new evaluation scoring. First-smoke numerical differences, original script snapshots and derivation records are retained. Runtime source, protocol, environment and evaluation population are frozen in artifacts/iclr27-r32/method_manifest.json and runtime-snapshot-v001.
+
+Existing fais heartbeat now targets R32 at 30-minute intervals. No analysis or additional implementation while any formal stage runs. Completion/failure Windows notification is active. R31 and all prior negative results remain; restoring a weak variant to baseline performance will not establish a method contribution.
+
+
+## R32 completed; R33 decomposition diagnostic registered
+
+R32 six stages completed at 2026-09-17 01:12 CST. The primary natural MAE/MSE is 0.433675577/0.321424287, improving R31 but still 0.71%/2.81% worse than peer ridge and weaker than same-capacity imputation supervision. Stop this fixed group-outage gate design. Full source and evaluation replay, all three final optimizer updates, all scores and aggregation passed; 16132 source queries and 372 new evaluation queries replay exactly. Evidence and full comparisons are in R32_COOUTAGE_CALIBRATION_RESULTS.md.
+
+R33 changes the prediction path instead of expanding gate parameters or mask combinations: fit prefix relationships excluding both PM targets, forecast their shared covariate component using cached native predictions, and separately forecast only originally observable residual histories. Main residual_tsfm must beat zero-residual, last-residual, AR residual, peer ridge and strong imputation controls. No true future covariates are used. Regression-plus-residual forecasting is established machinery, including official TimesFM XReg support; this is a bounded mechanism probe, not a novelty claim. R5 already had negative Gaussian integration results and R19 already tested matched historical replay. Prior negatives remain.
+
+
+## R33 formal launch, 2026-09-17T01:40:49.656688+08:00
+
+R33 worker 17912 and its startup child were verified alive. Four registered stages use the original 231 R30 cases, retain all 37 controls and add four decomposition outputs. Source and protocol identities, environment and populations are frozen. Five focused tests passed; eight smoke cases across H24/H96 and all panels (minimum actual residual support 37) passed exact model/output replay without new accuracy scoring. Main residual_tsfm uses only originally observed residual labels and predicted future covariates, with zero/last/AR residual controls. Two deployment model calls are counted. Existing fais heartbeat now points to R33, remains every 30 minutes and quiet during active formal computation, with the Windows completion notifier active. No novelty, independent-confirmation or submission-readiness claim is made.
+
+
+## R33 completed; R34 normalization interface registered
+
+R33 completed at 2026-09-17 01:41 CST. Natural primary residual_tsfm MAE/MSE is 0.482681275/0.376282506, worse than peer ridge by 12.09%/20.35%. Residual TSFM adds little over zero/AR residuals on natural H24 and is worse on synthetic H24 and legacy H96. Stop this fixed decomposition. All 231 new queries replay exactly and all 9471 window/18942 target scores pass independent checks. See R33_RESIDUAL_FORECAST_RESULTS.md.
+
+R34 tests an interface change not covered by R21: only statistical normalization uses original observations, while imputed values, token-validity bits and attention retain the ordinary completed-input path. Published local Chronos source confirms normalization precedes encoding. Input-only moment diagnostics quantify observable changes in center and scale but do not establish accuracy. Registered conditions are observed statistics on 18 raw imputation/repair queries, corresponding two eight-candidate pools, and location-only/scale-only/shifted-mask controls for peer ridge. All 37 old controls remain, giving 62 outputs. No new learning, hidden truth or actual future covariates are used. Eight focused interface tests passed; full smoke replay pending. Ordinary/fallback statistics remain exactly tied to the installed module; nondegenerate new observed statistics have a preregistered float64 reference check.
+
+
+## R34 formal launch, 2026-09-17T02:18:14.471329+08:00
+
+R34 worker 31252 and startup child verified alive, current stage r34_forecast_normalization. Three registered stages retain all 231 R30 histories and 37 old outputs, with 25 added normalization outputs for 62 total methods. Eight focused tests passed. Full smoke audit of eight cases replays 168 interventions and eight restored ordinary calls exactly, with encoding and attention checks passing; maximum nondegenerate float64 statistic reference difference is 1.94e-7 within the preregistered bound. No smoke evaluation errors were read. Script/protocol/environment and installed Chronos implementation snapshots are saved.
+
+Existing fais heartbeat now targets R34, every 30 minutes and quiet during active computation. No further analysis or implementation until all formal stages finish; Windows completion notification is active. Original filling values, token availability and prefix-standardized downstream scoring remain unchanged. The fixed statistical intervention is a mechanism test and no method novelty or submission readiness is claimed.
+
+
+## R34 queue recovery, 2026-09-17T02:54:54.037483+08:00
+
+Prediction and scoring completed successfully, but the worker failed after a scoring-process exit raced with psutil descendant enumeration. The original queue/log/snapshots are preserved. owned_pids now handles only NoSuchProcess during enumeration and still leaves real success/failure to the Popen exit code; 38 focused scheduler/resource tests passed using a new workspace temporary directory after the system temp directory was inaccessible. No system permissions or global environment were changed.
+
+Recovery worker 20204 is running only r34_audit_normalization in gpu-queue-v002; completed forecast and score markers were skipped. Existing heartbeat points to the recovery queue. No new accuracy results have been read or interpreted; resume analysis only after successful audit. See R34_QUEUE_RECOVERY_NOTE.md and queue-recovery-v001/manifest.json.
+
+
+## R34 completed; R35 dynamic posterior preparation
+
+R34 audit completed at 2026-09-17 02:58 CST, replaying 4851 intervention queries and 231 restored ordinary queries exactly. The primary natural MAE/MSE is 0.429725481/0.312453155, only 0.21%/0.06% better than ordinary peer ridge and worse than the shifted statistical-mask control; synthetic H24 and legacy H96 show no stable gains. Stop the fixed normalization intervention. Full report: R34_OBSERVED_NORMALIZATION_RESULTS.md. The queue race repair and old failed state remain documented.
+
+R35 registers a source-fitted 17-variable VAR(1) Gaussian system, exact-observation filtering/smoothing and eight antithetic pairs of joint histories, with conditional forecast quantiles mixed using fixed integer-mass quadrature. It differs from the failed R5 independent fixed-AR prior but uses established statistical tools; no novelty or calibrated-posterior claim is made. Full and target-only scopes, static/filter/smoother single forecasts, point and distribution mixtures, direct VAR, all 62 R34 controls and the two half-mixture controls are included. Prefix complete transition support ranges from 4052 to 5990. Seven mathematical tests pass against independent dense Gaussian conditioning. The implementation and no-score smoke forecasts are prepared; independent audit remains to be completed before formal launch.
+
+
+## R35 formal launch, 2026-09-17T04:05:41.265546+08:00
+
+R35 worker 42504 and startup child verified alive. Four registered stages cover the original 231 histories and 81 outputs, retaining 62 R34 controls and the two half-mixture controls. The source-fitted 17-dimensional Gaussian state model has fixed VAR/ridge/stability/covariance rules; both full and target-only scopes use 16 antithetic histories. Main full_dynamic_mixture_median16 must be assessed against all strong and same-model controls. No new model weights or true future inputs are used.
+
+Seven tests pass. Eight-case smoke replays 307 predictions and all mixtures exactly; independent dense tail posterior difference is at most 7.99e-15. A transient-versus-contiguous backward-gain layout discrepancy in the verifier was fixed without changing predictions or tolerances, with the original verifier snapshot retained. Source/protocol/runtime snapshots and full registration are saved under artifacts/iclr27-r35. Existing fais heartbeat now targets this round every 30 minutes and stays quiet while any formal stage runs. Windows completion notification is active. No analysis or new implementation during formal execution.
+
+
+## R35 completed; R36 conditional covariance adaptation preparation
+
+R35 main natural MAE/MSE is 0.469104788/0.345060384, worse than peer ridge by 8.93%/10.37%; stop the fixed dynamic Gaussian/sampling model. All 8916 queries and 18711 window/37422 target scores passed independent audit, dense posterior reference difference at most 2.46e-14. The static full control is 0.423435552/0.307113546 on natural H24, a 1.67%/1.77% improvement over peer ridge, with weaker results on artificial H24; this remains a control signal and does not replace the failed primary. Direct VAR is a strong forecast control, especially in artificial H24 and MSE. See R35_DYNAMIC_POSTERIOR_RESULTS.md.
+
+R36 registers a bounded rank-two congruence correction of the static covariance, 34 learned parameters, identical 864-step source budget and source histories, forecast loss versus two reconstruction objectives. All original observations and the frozen backbone are preserved. Extra controls include half static/VAR and global/station source-MAE-optimal portfolios of 28 base forecasts. Five focused tests pass and six source-only gradient probes have exact zero-adapter input/prediction identity and finite gradients without modifying model numerics. The full smoke workflow and independent verifier are being completed before formal launch.
+
+
+## R36 formal launch, 2026-09-17T05:30:00.657342+08:00
+
+R36 worker 13780 and startup child verified alive. Six registered stages use the same 864 source tasks and 231 evaluation histories, preserve all 81 R35 outputs and add three covariance adapters, half static/VAR and two matched source forecast portfolios. Each adapter has 34 bounded parameters with identical initialization/order/864-step budget. Forecast supervision is the registered primary; two reconstruction objectives receive their disclosed historical label sets. No backbone numerical changes were needed.
+
+Five focused tests and six real source-only gradient probes passed. Complete smoke covers 36 source tasks and eight evaluation histories: 72 source predictions, 24 learned evaluation predictions, eight zero-adapter baselines and three last optimizer updates replay exactly; independent conditioning input difference is zero. No smoke evaluation accuracy was read. Source/protocol/runtime snapshots, environment and population are frozen in artifacts/iclr27-r36. Existing fais heartbeat now targets R36 every 30 minutes, remains quiet during formal computation, and the Windows completion notifier is active. No further analysis or implementation until completion.
+
+
+## R36 completed; R37 posterior-moment encoding preparation
+
+R36 completed and all source/evaluation/optimizer checks passed. Main natural forecast_covariance MAE/MSE is 0.427119049/0.302606604, weaker than the registered half_static_var control at 0.400215451/0.270601345. Stop this fixed low-rank learning form. The half control improves over peer ridge by 7.06%/13.45% on natural H24 and has strong cross-panel MAE; it is a classical control and does not replace the failed primary. See R36_COVARIANCE_ADAPTER_RESULTS.md.
+
+R37 registers static conditional uncertainty propagation into the frozen ReLU input block, with posterior second-moment normalization, fixed nine-node arcsinh quadrature and Gaussian ReLU moments, a full normalization/mean/activation-variance decomposition, an unconditional-variance control, and 16-sample encoder/output references. All components are also compared under the same VAR hybrid; 29 additional cached half-VAR controls and static quantile rules prevent an unmatched hybrid comparison. No neural fitting or evaluation labels are used. Seven numerical/interface tests pass; completed-input predictions and independent audit are being prepared. A negative-tail CDF cancellation in an early scalar implementation was corrected before evaluation and the earlier code/smoke preserved.
+
+Reserve provenance: three earliest SG prefix snapshots were fetched from the official HDB endpoint. Each has 353/354 exact C-type matches; SB36 instead matches motorcycle M availability, and the last snapshot has repeated SB36 records split by type. This improves prefix traceability but does not certify the full conversion, type identity over time, native missingness mechanism or pretraining independence. No reserve forecasts or accuracy were read and no other-project files were modified.
+
+
+## R37 formal launch, 2026-09-17T07:24:09.720717+08:00
+
+R37 worker 18400 and startup child verified alive. Four registered stages retain the 231 histories and expand matched controls to 140 outputs. The registered primary hybrid_posterior_moment combines a single frozen-backbone moment-encoded forecast with the same VAR component used by all relevant controls. It requires the internal ReLU/arcsinh input-block interface and does not train neural weights. Source/protocol/environment snapshots and the full population are frozen under artifacts/iclr27-r37.
+
+Seven tests, the complete second smoke (176 new queries plus eight ordinary restorations), and eight real-model zero-uncertainty identity checks passed. Independent encoding difference is 1.08e-7 and statistics difference 8.77e-8; all forecasts and mixtures replay exactly, no smoke accuracy was scored. The scalar negative-tail correction, original code and first smoke are retained. Existing fais heartbeat now targets R37 every 30 minutes and is quiet while a formal stage runs. Windows completion notification is active; no analysis or implementation until completion.
+
+
+## R37 completed; R38 and official data acquisition registered, 2026-09-17T08:54:43.483129+08:00
+
+R37 primary natural H24 MAE/MSE is 0.401590950/0.270854787, weaker than the old half_static_var and matched KNN/peer hybrids. All 5082 interventions and 231 restorations replay, and 32340 window/64680 target scores passed the independent audit. Stop fixed posterior-moment encoding without expanding numerical, variance or sample grids. See R37_POSTERIOR_MOMENT_RESULTS.md.
+
+R38 retains 140 old outputs and adds six fixed forecast-covariance combinations, with correlation_transport registered as primary on natural H24. No new foundation-model calls or fitting. Three focused numerical tests and eight unscored smoke cases passed; 48 new outputs independently replay within 1.56e-15, covariance factors within 1.45e-15. Formal population, code, protocol and environment are frozen before scoring. Strong matched controls and all panels remain mandatory.
+
+The separate HDB collection registers all C-type hourly snapshots from June 1 to July 26, 2025, using a fixed one-minute API query lag and one-hour freshness rule. Five parser checks and a four-snapshot independent raw-data audit passed on 7964 cells. Preserve original JSON, raw values, stale/invalid/type-missing categories and technical acquisition failures. No forecasts or method-based series selection, and no new-source or pretraining-independence claim.
+
+
+## R38 and HDB data pipeline launched, 2026-09-17T08:56:38.337298+08:00
+
+R38 worker 10372 verified alive: True; stage r38_forecast_correlation; child 47396 alive: True. HDB pipeline worker 41040 verified alive: True; child 45760 alive: True. The existing fais heartbeat monitors both every 30 minutes through September 17 night and stays quiet while work continues. No new accuracy was read at launch. Further analysis waits for completion and independent audits.
+
+
+## R38 completed; official HDB data audited; R39 registered, 2026-09-17T10:09:33.648868+08:00
+
+R38 primary correlation_transport loses to half_static_var, matched KNN/VAR and the diagonal mechanism control on natural H24. Stop the fixed correlation approach without expanding scales or weights. All 1386 new algebraic outputs, 32340 old outputs and complete scores passed independent checks; see R38_FORECAST_CORRELATION_RESULTS.md.
+
+The official 1344-hour, 2005-series HDB collection and all 2694720 cells passed independent raw-data reconstruction. No prediction scores were read. R39 registers a bounded generalization diagnostic of the existing static-Gaussian/VAR half combination, with matched imputation/VAR, native, long-history, seasonal and output-pool controls. It uses only the first 28 days: 14-day prefix and 14-day development. The remaining two 14-day blocks stay unscored. This is a known source group and a classical control, not an established new method or publication-ready confirmation.
+
+
+## R39 ready for full development evaluation, 2026-09-17T10:15:35.254814+08:00
+
+The fixed population includes all 18 eligible outage-prone targets among 1729 prefix-supported car parks: 19 natural, 32 native-grid and 32 artificial-tail tasks. All use six prefix-selected peers. No extra targets or windows were sought after the count became known. The 31-output matched comparison requires 913 frozen Chronos queries and 913 independent replays. Four focused checks and seven unscored smoke cases pass, including 77 exact query replays and three independent source-model fits; state-reference difference is 1.33e-15. Code, data-split identity, population and runtime are frozen. Only the first 672 hours enter this run, and the last 672 remain unscored.
+
+
+## R39 full run launched, 2026-09-17T10:17:00.910507+08:00
+
+Worker 15900 verified alive: True; stage r39_forecast_hdb; child 33016 alive: True. All 83 cases and 31 methods remain frozen, and no development forecast errors were read at launch. The existing fais heartbeat now targets R39 every 30 minutes through September 17 night and remains quiet during formal computation; Windows completion notification is retained. Analysis waits for all four stages and independent verification.
+
+
+## R39 completed; R40 attention mechanism registered, 2026-09-17T10:43:09.349701+08:00
+
+R39 primary natural HDB MAE/MSE is 1.560176/4.692843, worse than native192 by 23.66%/14.06% and native336 by 31.76%/19.97%. All 913 queries, 18 prefix models and 2573 scores passed the independent audit. The fixed half Gaussian/VAR combination did not transfer; stop this as a general method premise, without searching new weights on development outcomes. All three panels and 19 natural-task limitations are retained. The final 28 days remain unscored. See R39_HDB_GENERALIZATION_RESULTS.md.
+
+R40 registers a bounded frozen-attention intervention on all Beijing 231 and HDB 83 tasks. The static Gaussian conditional variance supplies a fixed explained-variance reliability proxy, used as a log key weight in time/group attention. Eight components distinguish temporal/group scope, observed fractions, shifted reliability, native input, and provenance encoding. All earlier strong controls and matched VAR halves remain; the primary is the non-hybrid gaussian_conditional_attention. UASA already combines imputation uncertainty with downstream attention, so this probe does not establish novelty merely from that concept or freezing weights. No posterior or downstream calibration guarantee is claimed.
+
+
+## R40 ready after exact neutral-interface recovery, 2026-09-17T10:49:21.537384+08:00
+
+Seven focused tests and all 15 unscored cross-source smoke cases passed. The 120 intervention queries, 30 ordinary restorations and 15 unit-reliability neutral checks replay exactly. Independent reliability difference is 2.78e-15 and log-mask reference difference 5.96e-8. The first smoke exposed a 1.14e-5 neutral discrepancy caused by a changed group-mask layout and signed zeros; preserve the original strides and neutral entries. No backbone backend, weights or tolerances changed. Failed smoke and original code are retained.
+
+Formal population remains Beijing 231 and HDB 83, with 162/47 outputs, 41323 window and 78745 target scores. Eight fixed interventions plus ordinary restorations require 3140 forward calls, with another 3140 for the independent audit. Runtime, installed attention source, protocol, population and source identities are frozen. No smoke accuracy or HDB held-out outcomes were read.
+
+
+## R40 full run launched, 2026-09-17T10:50:43.347377+08:00
+
+Worker 22464 verified alive: True; stage r40_forecast_attention; child 32428 alive: True. Both source populations, all strong controls and the non-hybrid primary remain frozen. No new forecast errors were read at launch. The existing fais heartbeat targets R40 every 30 minutes and remains quiet during computation; Windows completion notification is retained. Analysis waits for all four stages and the independent audit.
+
+
+## R40 completed; prefix-only lead/lag feasibility check, 2026-09-17T11:34:46.294665+08:00
+
+R40 improves relative to the same Gaussian input on both natural panels by less than 1% MAE, but remains worse than strong native and fixed/matched combination controls. The registered stopping criterion fails. Stop the fixed attention rule without expanding temperatures, layers, thresholds or training grids. All 2512 interventions, 628 restorations, 36299 old outputs and complete scores passed the independent audit. See R40_RELIABILITY_ATTENTION_RESULTS.md.
+
+The next bounded feasibility check reads training prefixes only to measure whether already authorized related series lead their targets. It does not run forecasts or read current outcome errors. Any future experiment must construct derived known covariates exclusively from observations available before the forecast origin, honor artificial hidden cells in every derived copy, retain strong long-history controls and preserve the HDB held-out periods.
+
+
+## R41 stopped at prefix feasibility; R42 capacity comparison registered, 2026-09-17T12:04:18.840058+08:00
+
+Only 1/72 Beijing peer relations has a positive best lag, of one hour; 71 have best lag zero. HDB has 28/108 positive lags, but median correlation improvement is zero in both source groups. No full lag-conditioning forecast experiment was launched. See R41_LEAD_LAG_FEASIBILITY.md.
+
+R42 changes the constraint to standard LoRA capacity adaptation, using the installed Chronos default projection scope/rank/alpha and matched natural-versus-corrupted source inputs. It is a capacity diagnostic, not a new algorithm claim or a continuation of the stopped fixed-reliability weight rule. The 1836-case source pool represents 204 underlying histories; balanced formal training gives each model 864 Beijing and 864 HDB updates, with the same initialization/order/labels/loss/optimizer. No evaluation labels or HDB held-out values enter fitting.
+
+Four tests, two real source-gradient checks, and complete unscored smoke passed. Both final optimizer updates reproduce parameters exactly; 30 adapted forecasts, 15 ordinary restorations and 15 zero-adapter checks are exact. The frozen base digest remains unchanged; 97 projections add 1206912 trainable parameters. Code, source/evaluation populations, environment and budget are frozen before formal fitting.
+
+
+## R42 full matched adaptation run launched, 2026-09-17T12:06:28.240651+08:00
+
+Worker 33732 verified alive: True; stage r42_prepare_lora; child 6744 alive: True. Both adapters use the same fixed 1728-update budget and original backbone. No new evaluation scores were read at launch. The existing fais heartbeat now targets R42 every 30 minutes, stays quiet during formal training/evaluation, and retains Windows completion notification. Analysis waits for all six stages and the independent audit.
+
+
+## R42 completed; R43 native-target repair references registered, 2026-09-17T13:01:37.013195+08:00
+
+Corruption-augmented LoRA improves over natural-history LoRA in several panels, especially HDB artificial outages, but does not beat both natural-panel strong controls. Beijing natural MAE/MSE is 0.506708/0.419863; HDB natural 1.233015/3.959462 remains behind native336. HDB artificial MAE/MSE improves 4.08%/7.42% over native336; preserve it as an auxiliary positive without relabeling the main outcome. Stop the fixed LoRA training family without extending ranks, rates or updates. All source identities, two final optimizer updates, 942 evaluation/restoration queries and complete metrics passed the audit.
+
+R43 preserves the original native rows and presents cached target repairs as extra group-context series. Existing pools are fixed at 12 Beijing and 6 HDB references, with single-reference, duplicate-row, median-reference and joint-readout controls. It adds no observations or training. Eight HDB complete-target cases share the registered native fallback and remain scored. All R42 controls, matched VAR halves and source/period restrictions remain. This representation still requires strong-baseline evidence and related-method assessment; group attention itself is an existing Chronos capability.
+
+
+## R43 ready for formal proxy representation evaluation, 2026-09-17T13:04:32.558263+08:00
+
+Four tests and all 16 unscored smoke tasks pass. The 105 proxy queries and 16 ordinary predictions replay exactly, 90 original-row normalization/encoding checks are exact, and all 1736 old outputs are retained. One complete-target smoke case exercises the common native fallback. No numerical or tolerance changes were needed.
+
+Formal membership remains 314 cases, with eight complete-target HDB fallbacks and 306 actual interventions. Seven queries per intervention plus 314 ordinary checks total 2456 model calls, with matching audit replays. Beijing has 12 fixed target reference trajectories and at most 41 input rows; HDB has six references and at most 13 rows. Old upstream imputer generation costs are not erased by cached execution. All code, pools, populations and definitions are frozen before formal prediction.
+
+
+## R43 full proxy representation run launched, 2026-09-17T13:06:09.842343+08:00
+
+Worker 40660 verified alive: True; stage r43_forecast_proxy; child 19344 alive: True. Population, all cached reference pools, common complete-target fallback and the original-target readout are frozen. No new accuracy was read at launch. The existing fais heartbeat now targets R43 every 30 minutes and stays quiet during formal work; Windows completion notification is retained. Analysis waits for all four stages and the independent audit.
+
+
+## R43 completed; matched group/scope diagnostic registered, 2026-09-17T14:06:04.751119+08:00
+
+The registered raw_plus_pool primary is worse than native, duplicate and strong controls on both natural panels. Stop this fixed representation without expanding pool size/order/weights. All 2456 queries, 1836 original-field checks, old outputs and complete metrics passed the audit. See R43_REPAIR_PROXY_RESULTS.md.
+
+A prespecified auxiliary control, proxy_pool_only_median, improves Beijing artificial MAE/MSE by 16.94%/24.28% versus half_var_local_ridge, with positive leave-one-station-out directions, but fails strong natural/HDB comparisons. Its input scope and candidate interactions both differ from previous controls. R44 therefore adds matched isolated-candidate target forecasts, raw-target-only forecasts, joint reference readouts and a target-only original-anchor comparison on the same 314 cases and unchanged pools. This is a baseline/interpretation diagnostic, not a relabeling of the failed primary or an independent confirmation.
+
+
+## R44 matched group/scope diagnostic ready, 2026-09-17T14:09:54.198670+08:00
+
+Three tests and all 16 unscored smoke cases pass: 64 matched queries, 144 serial candidate queries and 15 old joint-query restorations. Identical-shape replays and source fields are exact; batch-versus-serial maximum difference is 1.14e-5 within the preregistered 2e-5 relative/absolute bounds. All 2056 old outputs are preserved.
+
+Formal four-query diagnostics retain 314 cases and unchanged candidate pools, adding every isolated candidate, paired readouts, native target-only and target-only anchor controls plus matched VAR halves. Counts are Beijing 230/HDB103 methods, 61679 window/114809 target scores, 1256 model forward calls and matching audit replays. The isolated batch contains multiple logical groups. The eight old complete-target fallback results remain, while new diagnostic queries execute unconditionally to avoid mixing input-scope definitions.
+
+
+## R44 full matched scope diagnostic launched, 2026-09-17T14:12:06.877096+08:00
+
+Worker 15972 verified alive: True; stage r44_forecast_scope; child 3172 alive: True. All 314 tasks, candidate pools, matched grouping/scope definitions and old controls remain fixed. No new diagnostic accuracy was read at launch. Existing fais heartbeat now monitors R44 every 30 minutes and stays quiet during formal computation; Windows completion notification remains active. Interpretation waits for all four stages and the independent audit.
+
+
+## R44 completed; default native-context baseline registered, 2026-09-17T15:34:30.979609+08:00
+
+The matched isolated-candidate median (0.519947/0.612876) and isolated local-ridge forecast (0.508233/0.592891) beat the joint candidate median on Beijing artificial outages. The earlier auxiliary advantage cannot be attributed to cross-candidate interaction. The same forecast-variable removal harms natural/H96 cases; all panels and information-path qualifications remain. R43 primary stays failed/stopped. All 1256 queries, 306 old joint restorations and complete scores passed the audit. See R44_GROUP_SCOPE_RESULTS.md.
+
+R45 registers stronger native baselines using the frozen model-configured context limit8192, capped by pre-origin availability, with original versus prefix input units and full registered versus target-only variable scopes. Current last192 inputs, including artificial hidden target cells, are protected exactly. No context-length search or parameter change. Metrics retain the original prefix units. This adds a deployment-oriented stronger-history comparison and must not be interpreted as equal-information short-context superiority.
+
+
+## R45 full default-context baselines ready, 2026-09-17T15:40:27.120296+08:00
+
+Four focused boundary/unit tests and all 16 unscored smoke cases pass. The 80 query replays and 16 old short-context restorations are exact, retaining 2664 old outputs. Beijing consumes the full8192 configured points; HDB consumes available pre-origin history. Original masks, actual patch counts and future-unknown fields are verified. Smoke peak allocated CUDA memory is about0.79 GiB, so the fixed configured context can run on this device without shortening.
+
+Formal definitions retain 314 cases and old variables, add raw/prefix input-unit and peer/target scope controls with the same8192 cap, plus matched VAR halves. Total64191 window/119169 target scores and1570 forward calls with matching audit replays. All current last192 hidden cells remain hidden. Code, source population, actual model configuration and runtime are frozen before full prediction.
+
+
+## R45 full default-context baseline run launched, 2026-09-17T15:43:51.896732+08:00
+
+Worker 27396 verified alive: True; stage r45_prepare_long_native; child 35700 alive: True. The registered 8192 cap, original short-history masks, input-unit/scope factors and all 314 cases remain fixed. No new accuracy was read at launch. Existing fais heartbeat now targets R45 every 30 minutes and stays quiet during formal work; Windows completion notification remains active. Analysis waits for all four stages and independent verification.
+
+
+## R45 completed; fixed future-query role test registered, 2026-09-17T17:18:29.245802+08:00
+
+Default long native context improves Beijing natural MAE/MSE by8.55%/17.57% over192 and produces stronger H96 and HDB baselines. Raw/prefix input units differ only numerically. All1570 queries,314 old short restorations and complete scores pass. The earlier short-window comparisons therefore need these stronger baselines; no new method or equal-information gain is established. See R45_NATIVE_CONTEXT_RESULTS.md.
+
+R46 tests retaining all past covariate evidence while limiting unknown auxiliary future nodes as attention keys, with time/group decompositions and a read-only future control. The primary is fixed to the native long input; short native/Gaussian versions are representation controls. Input values, normalizers, weights, model backend and all old controls remain. Future nodes are internal unknown representations, not real future measurements; the test does not allege prior leakage or guarantee risk improvement. HDB held-out periods remain unscored.
+
+
+## R46 future-query role inference ready, 2026-09-17T17:22:09.460077+08:00
+
+Five mask tests and all 16 unscored smoke cases passed: 96 interventions, 48 ordinary restorations and 18 property queries replay exactly. The three registered examples have exact neutral identity and zero target-output change under auxiliary future-embedding perturbation for the primary/read-only rules; read-only horizon-extension difference is at most 1.91e-6 under the preset 2e-5 numerical bounds. Ordinary-model changes are representation diagnostics, not accuracy gains or evidence of invalid prior inference.
+
+Formal primary remains query_aux_both_native_long with no VAR. All 314 cases and stronger R45 baselines are retained. Six intervention outputs plus matched halves give Beijing250/HDB123 methods, 67959 window/125709 target scores. There are 2826 forward calls and matching audit replays; no property perturbations in formal evaluation. Runtime, roles, input bindings, source population and properties are frozen before formal prediction. HDB held-out data remains unscored.
+
+
+## R46 full future-query role test launched, 2026-09-17T17:24:02.598665+08:00
+
+Worker 45592 verified alive: True; stage r46_forecast_future_query; child 50716 alive: True. The primary, six fixed intervention outputs, three input representations, all 314 cases and stronger long-context controls are frozen. No new accuracy was read at launch. Existing fais heartbeat now targets R46 every 30 minutes and stays quiet during formal computation; Windows completion notification remains active. Analysis waits for all four stages and independent verification.
+
+
+## R46 completed; long fixed-repair baseline supplement and review handoff, 2026-09-17T18:49:04.919848+08:00
+
+R46 primary worsens Beijing natural MAE/MSE by5.71%/12.84% relative to the same long native input. HDB natural improves relative to long peer input but is a small MAE/MSE tradeoff against long targets. Stop the fixed query-role rule; computational properties are not an accuracy guarantee. All2826 model queries and all scores passed the independent audit. See R46_FUTURE_QUERY_RESULTS.md.
+
+A consolidated evidence handoff is now in PRO_RESEARCH_PROGRESS_20260917.md, explicitly stating that an ICLR method contribution has not been established. R47 adds existing fixed target repairs to the same default long histories, with matched direct-variable scopes and necessary HDB short references. It is a stronger-baseline supplement, not a new method claim. HDB held-out periods remain unscored.
+
+
+## R47 fixed long-repair baseline supplement ready, 2026-09-17T18:53:37.641866+08:00
+
+Four tests and the 16-case unscored smoke pass: 208 repaired-context queries, 32 native long restorations and 16 old HDB short target-repair controls replay exactly, preserving 2984 old outputs. Only current target gaps are filled; older target history, all non-target inputs and every original observation remain fixed. No imputer or model fitting is added.
+
+Formal scope is 314 tasks, Beijing266/HDB159 methods, 74643 window/136089 target scores and 3970 forward calls with matching audit replays. HDB receives the necessary matched short full-variable controls to avoid confounding auxiliary imputation with context length. The selected existing baselines are an explicit development-stage supplement, not an independent new algorithm or a new success claim. Code, source bindings, budget and population are frozen.
+
+
+### R47 formal launch — 2026-09-17T19:02:42.741751+08:00
+
+The 33 registered files and their runtime snapshots, plus the unscored smoke audit, matched their recorded SHA-256 values. The first-priority queue started with worker PID 22980; its live command and child processes were verified once. Four stages cover preparation, fixed long-history repair forecasts, evaluation, and independent replay. The existing 30-minute heartbeat now monitors R47. No prediction errors were read at launch; analysis remains deferred until every stage completes.
+
+
+### R47 completed and research scope reassessed — 2026-09-17T20:15:55.764660+08:00
+
+All four stages completed at 19:41 CST. Audit matched the forecast manifest SHA-256, replayed 3342 repair queries and 628 ordinary queries exactly, restored 166 existing HDB short controls, and preserved 67959 previous outputs. Metrics cover 74643 window and 136089 target scores. Stage records sum to 38.99 minutes. The 588 paired readout comparisons and the six-panel development minima are saved in long-repair-readout-v001; these are retrospective descriptions, not a selected deployable policy.
+
+Beijing natural long peer-ridge repair with equal VAR mixture reached 0.388052733/0.244687835, improving the previous best-MAE control by 2.25%/7.46%, with leave-one-station direction retained. Pure long Gaussian repair reached 0.391786965/0.252424825, 19.19%/29.75% below matched long native. HDB natural all new repairs remain worse than long native targets. Beijing synthetic marginal MAE gains are station-sensitive; H96 and HDB synthetic remain below existing strong comparisons. No new method, independent confirmation, or submission readiness is claimed.
+
+Reports R47_LONG_REPAIR_BASELINES_RESULTS.md, RESEARCH_REASSESSMENT_AFTER_R47_20260917.md and PRO_RESEARCH_PROGRESS_20260917.md are updated. Additional primary literature confirms selective imputation and joint missing-data forecasting already have precedents; no exhaustive novelty or equal-budget reproduction claim is made. No defensibly distinct R48 mechanism has been registered. Stop this batch of automatic GPU searches and pause idle checks; retain the method-paper objective and prior user authorization. HDB intervals [672,1008) and [1008,1344) remain unscored. No external report transmission or submission occurred.
+
+The official app automation update confirmed fais is PAUSED. Its existing 30-minute schedule and September 17 endpoint were preserved for reference. This stops idle polling; it does not mark the research objective complete or revoke user authorization.
